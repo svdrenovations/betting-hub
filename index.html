@@ -381,7 +381,15 @@ async function callClaude(prompt, useSearch) {
     body: JSON.stringify(body)
   });
   const data = await res.json();
-  return data.content.map(c => c.type === 'text' ? c.text : '').join('').trim();
+  if (!data || !data.content) {
+    const errMsg = data?.error?.message || JSON.stringify(data);
+    throw new Error(errMsg);
+  }
+  return data.content
+    .filter(c => c.type === 'text')
+    .map(c => c.text)
+    .join('')
+    .trim();
 }
 
 // ── LOAD GAMES ──────────────────────────────────────────────────────────────
