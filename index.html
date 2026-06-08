@@ -371,7 +371,7 @@ function goPage(name, btn) {
 async function callClaude(prompt, useSearch) {
   const body = {
     model: 'claude-sonnet-4-5',
-    max_tokens: 1500,
+    max_tokens: 800,
     messages: [{ role: 'user', content: prompt }]
   };
   if (useSearch) body.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
@@ -405,7 +405,7 @@ async function loadGames() {
 
   try {
     const raw = await callClaude(
-      `Search for the MLB schedule for ${displayDate}. List every game with: away team, home team, game time (ET), away starting pitcher, home starting pitcher, away moneyline, home moneyline, and game total (over/under). Format as JSON array only, no markdown. Example: [{"away":"Yankees","home":"Red Sox","time":"7:05 PM ET","awayPitcher":"Cole","homePitcher":"Sale","awayML":"-130","homeML":"+110","total":"8.5"}]. If a pitcher is TBD say TBD. Include all games found.`,
+      `Return ONLY a JSON array, no other text, no explanation, no markdown. MLB games on ${displayDate}. Format: [{"away":"Yankees","home":"Red Sox","time":"7:05 PM ET","awayPitcher":"Cole","homePitcher":"Sale","awayML":"-130","homeML":"+110","total":"8.5"}]. Use TBD for unknown values. Start your response with [ and end with ].`,
       true
     );
     let parsed;
