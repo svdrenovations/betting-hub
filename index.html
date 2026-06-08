@@ -414,10 +414,10 @@ async function loadGames() {
       const s = clean.indexOf('['), e = clean.lastIndexOf(']');
       parsed = JSON.parse(clean.substring(s, e + 1));
     } catch(e) {
-      throw new Error('Could not parse schedule');
+      throw new Error('Parse failed: ' + raw.substring(0, 300));
     }
 
-    if (!parsed || !parsed.length) throw new Error('No games found');
+    if (!parsed || !parsed.length) throw new Error('No games found for ' + displayDate + '. Raw: ' + raw.substring(0, 200));
 
     games = parsed.map((g, i) => ({
       id: 'game_' + i,
