@@ -373,7 +373,7 @@ function goPage(name, btn) {
 // ── CLAUDE API ──────────────────────────────────────────────────────────────
 async function callClaude(prompt, useSearch) {
   const body = {
-    model: 'claude-haiku-4-5-20251001',
+    model: 'claude-sonnet-4-5',
     max_tokens: 800,
     messages: [{ role: 'user', content: prompt }]
   };
@@ -586,13 +586,12 @@ async function analyzeGame(id) {
 
   try {
     const raw = await callClaude(
-      `You are an expert MLB betting analyst. Analyze this game using your knowledge of these teams, pitchers, and situational trends. Return ONLY valid JSON — no markdown, no extra text.
+      `You are an expert MLB betting analyst. Today is ${g.date}. Use web search to find CURRENT 2026 season data for this game — do not rely on training data. Search for injuries, pitcher stats, team form, and line movement right now.
 
 GAME: ${g.away} (${g.awayML}) @ ${g.home} (${g.homeML}) | Total: ${g.total}
 Pitchers: ${g.awayPitcher} (away) vs ${g.homePitcher} (home)
-Date: ${g.date}
 
-Search for current injury report, pitcher recent form, line movement, and team recent results for this game. Then score all four markets.
+Search for: "${g.away} vs ${g.home} MLB 2026 injuries lineup" and "${g.awayPitcher} ${g.homePitcher} MLB 2026 stats". Use what you find to score all four betting markets.
 
 Return ONLY this JSON:
 {
