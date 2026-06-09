@@ -474,7 +474,16 @@ async function analyzeAllGames() {
   const unanalyzed = games.filter(g => !g.analyzed && !g.analyzing);
   for (let i = 0; i < unanalyzed.length; i++) {
     btn.textContent = `Analyzing ${i+1}/${unanalyzed.length}...`;
-    await analyzeGame(unanalyzed[i].id);
+    try {
+      await Promise.race([
+        analyzeGame(unanalyzed[i].id),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 60000))
+      ]);
+    } catch(e) {
+      const g = games.find(x => x.id === unanalyzed[i].id);
+      if (g) { g.analyzing = false; g.analyzeError = 'Timed out — click retry'; }
+      renderGames();
+    }
   }
   btn.disabled = false;
   btn.textContent = 'Analyze all →';
