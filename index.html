@@ -592,7 +592,7 @@ GAME: ${g.away} (${g.awayML}) @ ${g.home} (${g.homeML}) | Total: ${g.total}
 Pitchers: ${g.awayPitcher} (away) vs ${g.homePitcher} (home)
 Date: ${g.date}
 
-Based on your knowledge: analyze pitcher matchup quality, team recent form, situational factors (revenge, travel, series context, rest), and line value. Score all four markets.
+Search for current injury report, pitcher recent form, line movement, and team recent results for this game. Then score all four markets.
 
 Return ONLY this JSON:
 {
@@ -621,7 +621,7 @@ Return ONLY this JSON:
 }
 
 Only include relevant situations in the array. If no situation flags apply, return empty array.`,
-      false
+      true
     );
 
     let p;
