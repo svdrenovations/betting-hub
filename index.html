@@ -371,7 +371,7 @@ function goPage(name, btn) {
 }
 
 // ── CLAUDE API ──────────────────────────────────────────────────────────────
-async function callClaude(prompt, useSearch, timeoutMs = 25000) {
+async function callClaude(prompt, useSearch, timeoutMs = 90000) {
   const body = {
     model: 'claude-sonnet-4-5',
     max_tokens: 1200,
@@ -422,7 +422,7 @@ async function loadGames() {
     const raw = await callClaude(
       `Search MLB schedule ${displayDate}. Output ONLY a JSON array like this with no other text: [{"away":"Yankees","home":"Red Sox","time":"7:05 PM ET","awayPitcher":"Cole","homePitcher":"Sale","awayML":"-130","homeML":"+110","total":"8.5"}]. TBD for unknowns. Output must start with [ and end with ].`,
       true,
-      28000
+      90000
     );
 
     let parsed;
