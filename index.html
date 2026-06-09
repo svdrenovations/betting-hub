@@ -507,16 +507,18 @@ function sitFlagHTML(flags) {
 function marketHTML(g) {
   if (!g.markets) return `<div class="markets" style="opacity:.3">${['ML','RL','TOT','F5'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
   const mdef = [
-    {key:'ml',label:'ML'},
-    {key:'rl',label:'RL'},
-    {key:'total',label:'TOTAL'},
-    {key:'f5',label:'F5'}
+    {key:'ml',evKey:'mlEV',label:'ML'},
+    {key:'rl',evKey:'rlEV',label:'RL'},
+    {key:'total',evKey:'totalEV',label:'TOTAL'},
+    {key:'f5',evKey:'f5EV',label:'F5'}
   ];
   return `<div class="markets">${mdef.map(m => {
     const v = g.markets[m.key] || 'SKIP';
+    const ev = g.markets[m.evKey];
     const isBest = g.markets.best === m.key;
     const cls = v.startsWith('BET') ? 'mv-bet' : v.includes('LEAN') ? 'mv-lean' : v.includes('OVER') ? 'mv-over' : v.includes('UNDER') ? 'mv-under' : 'mv-skip';
-    return `<div class="market-cell${isBest?' best':''}"><div class="market-label">${m.label}</div><div class="market-val ${cls}" style="font-size:11px">${v}</div></div>`;
+    const evStr = ev != null && ev > 0 ? `<div style="font-size:10px;color:var(--green);font-family:'DM Mono',monospace;margin-top:2px">+${parseFloat(ev).toFixed(1)}% EV</div>` : ev != null && ev < 0 ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px">${parseFloat(ev).toFixed(1)}%</div>` : '';
+    return `<div class="market-cell${isBest?' best':''}"><div class="market-label">${m.label}</div><div class="market-val ${cls}" style="font-size:11px">${v}</div>${evStr}</div>`;
   }).join('')}</div>`;
 }
 
@@ -604,9 +606,13 @@ Return ONLY this JSON:
 {
   "situations": ["revenge","travel","sharp","weather","rest","series","fade","mustwin"],
   "ml": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
+  "mlEV": NUMBER,
   "rl": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
+  "rlEV": NUMBER,
   "total": "BET OVER|BET UNDER|LEAN OVER|LEAN UNDER|SKIP",
+  "totalEV": NUMBER,
   "f5": "BET AWAY|BET HOME|BET OVER|BET UNDER|LEAN AWAY|LEAN HOME|LEAN OVER|LEAN UNDER|SKIP",
+  "f5EV": NUMBER,
   "best": "ml|rl|total|f5",
   "bestPlay": "one sentence — the single strongest play and why",
   "awayWinPct": NUMBER,
@@ -635,7 +641,11 @@ Only include relevant situations in the array. If no situation flags apply, retu
 
     g.situations = p.situations || [];
     g.markets = {
-      ml: p.ml, rl: p.rl, total: p.total, f5: p.f5, best: p.best,
+      ml: p.ml, mlEV: p.mlEV,
+      rl: p.rl, rlEV: p.rlEV,
+      total: p.total, totalEV: p.totalEV,
+      f5: p.f5, f5EV: p.f5EV,
+      best: p.best,
       awayWinPct: p.awayWinPct, homeWinPct: p.homeWinPct,
       projTotal: p.projTotal, edgePct: p.edgePct, confidence: p.confidence
     };
