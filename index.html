@@ -218,7 +218,10 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
       <h2><span class="pulse"></span>Today's MLB games</h2>
       <p id="games-subtitle">Enter a date and load today's schedule to begin analysis</p>
     </div>
-    <button class="btn-load" id="load-btn" onclick="loadGames()">Load today's games →</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn-load" id="analyze-all-btn" onclick="analyzeAllGames()" style="display:none">Analyze all →</button>
+      <button class="btn-load" id="load-btn" onclick="loadGames()">Load today's games →</button>
+    </div>
   </div>
 
   <div class="date-nav">
@@ -441,6 +444,7 @@ async function loadGames() {
 
     document.getElementById('games-subtitle').textContent = `${games.length} games on ${fmtDateShort(currentDate)} · click "Analyze" on any game`;
     document.getElementById('filters').style.display = 'flex';
+    document.getElementById('analyze-all-btn').style.display = 'block';
     renderGames();
 
   } catch(err) {
@@ -449,7 +453,16 @@ async function loadGames() {
   btn.disabled = false; btn.textContent = 'Reload games →';
 }
 
-// ── RENDER GAMES ─────────────────────────────────────────────────────────────
+// ── ANALYZE ALL ──────────────────────────────────────────────────────────────
+async function analyzeAllGames() {
+  const btn = document.getElementById('analyze-all-btn');
+  btn.disabled = true; btn.textContent = 'Analyzing all...';
+  const unanalyzed = games.filter(g => !g.analyzed && !g.analyzing);
+  await Promise.all(unanalyzed.map(g => analyzeGame(g.id)));
+  btn.disabled = false; btn.textContent = 'Analyze all →';
+}
+
+
 function renderGames() {
   let filtered = games;
   if (currentFilter === 'edge') filtered = games.filter(g => g.markets && getTopEdge(g) === 'high');
