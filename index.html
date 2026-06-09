@@ -470,10 +470,14 @@ async function loadGames() {
 // ── ANALYZE ALL ──────────────────────────────────────────────────────────────
 async function analyzeAllGames() {
   const btn = document.getElementById('analyze-all-btn');
-  btn.disabled = true; btn.textContent = 'Analyzing all...';
+  btn.disabled = true;
   const unanalyzed = games.filter(g => !g.analyzed && !g.analyzing);
-  await Promise.all(unanalyzed.map(g => analyzeGame(g.id)));
-  btn.disabled = false; btn.textContent = 'Analyze all →';
+  for (let i = 0; i < unanalyzed.length; i++) {
+    btn.textContent = `Analyzing ${i+1}/${unanalyzed.length}...`;
+    await analyzeGame(unanalyzed[i].id);
+  }
+  btn.disabled = false;
+  btn.textContent = 'Analyze all →';
 }
 
 
