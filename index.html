@@ -371,28 +371,40 @@ function goPage(name, btn) {
 }
 
 // ── CLAUDE API ──────────────────────────────────────────────────────────────
-async function callClaude(prompt, useSearch) {
+async function callClaude(prompt, useSearch, timeoutMs = 25000) {
   const body = {
     model: 'claude-sonnet-4-5',
     max_tokens: 1200,
     messages: [{ role: 'user', content: prompt }]
   };
   if (useSearch) body.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
-  const res = await fetch('https://betting-proxy.svdrenovations.workers.dev', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  const data = await res.json();
-  if (!data || !data.content) {
-    const errMsg = data?.error?.message || JSON.stringify(data);
-    throw new Error(errMsg);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch('https://betting-proxy.svdrenovations.workers.dev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    const data = await res.json();
+    if (!data || !data.content) {
+      const errMsg = data?.error?.message || JSON.stringify(data);
+      throw new Error(errMsg);
+    }
+    return data.content
+      .filter(c => c.type === 'text')
+      .map(c => c.text)
+      .join('')
+      .trim();
+  } catch(e) {
+    clearTimeout(timer);
+    if (e.name === 'AbortError') throw new Error('Request timed out — try again');
+    throw e;
   }
-  return data.content
-    .filter(c => c.type === 'text')
-    .map(c => c.text)
-    .join('')
-    .trim();
 }
 
 // ── LOAD GAMES ──────────────────────────────────────────────────────────────
@@ -543,7 +555,7 @@ function gameCardHTML(g) {
             <div class="analysis-section"><div class="analysis-label">Risks</div><p>${g.analysis.risks||''}</p></div>
           ` : ''}
         </div>`
-      : '';
+      : g.analyzeError ? `<div style="font-size:11px;color:var(--red);padding:6px 0">${g.analyzeError} — <button onclick="analyzeGame('${g.id}')" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:11px;text-decoration:underline">retry</button></div>` : '';
 
   const lineMoveHTML = g.lineMove ? `<div class="line-move">Line: <span>${g.awayML}/${g.homeML}</span> ${g.lineMove.sharp ? `<span class="lm-sharp">⚡ sharp → ${g.lineMove.sharpSide}</span>` : ''} ${g.lineMove.note ? `<span class="lm-pub">${g.lineMove.note}</span>` : ''}</div>` : '';
 
@@ -652,6 +664,7 @@ Only include relevant situations in the array. If no situation flags apply, retu
   } catch(err) {
     g.analyzing = false;
     g.analyzed = false;
+    g.analyzeError = err.message || 'Analysis failed';
   }
   renderGames();
   updateBestPlays();
