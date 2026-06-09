@@ -422,7 +422,8 @@ async function loadGames() {
     // Step 1: search for schedule info
     const searchRaw = await callClaude(
       `Search for MLB games on ${displayDate}. List every game: home team, away team, start time ET, starting pitchers, moneyline odds, and over/under total. Be thorough.`,
-      true
+      true,
+      45000
     );
 
     // Step 2: format into JSON (no search needed)
@@ -431,7 +432,8 @@ async function loadGames() {
 Data: ${searchRaw.substring(0, 2000)}
 Format: [{"away":"Yankees","home":"Red Sox","time":"7:05 PM ET","awayPitcher":"Cole","homePitcher":"Sale","awayML":"-130","homeML":"+110","total":"8.5"}]
 Use TBD for any unknown values. Start response with [ and end with ]`,
-      false
+      false,
+      20000
     );
 
     let parsed;
