@@ -229,7 +229,9 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     <span class="date-display" id="date-display"></span>
     <button class="date-btn" onclick="shiftDate(1)">next →</button>
     <button class="date-btn" onclick="setToday()">today</button>
+    <button class="date-btn" onclick="showDatePicker()" id="history-btn" style="display:none">history</button>
   </div>
+  <div id="date-picker" style="display:none;flex-wrap:wrap;gap:6px;margin-bottom:1rem"></div>
 
   <div class="filters" id="filters" style="display:none">
     <button class="filter-btn on" onclick="setFilter('all',this)">All games</button>
@@ -348,9 +350,13 @@ function shiftDate(n) {
   currentDate.setDate(currentDate.getDate() + n);
   document.getElementById('date-display').textContent = fmtDate(currentDate);
   games = [];
-  document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">Date changed</div><div class="empty-sub">Hit "Load today's games" to pull the schedule for ${fmtDateShort(currentDate)}.</div></div>`;
   document.getElementById('best-plays').classList.remove('show');
   document.getElementById('filters').style.display = 'none';
+  document.getElementById('analyze-all-btn').style.display = 'none';
+  // Try to load cache for new date
+  if (!loadGamesCache()) {
+    document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">${fmtDateShort(currentDate)}</div><div class="empty-sub">No saved data for this date.<br>Hit "Load today\'s games" to pull the schedule.</div></div>`;
+  }
 }
 function setToday() {
   currentDate = new Date();
@@ -371,7 +377,7 @@ function goPage(name, btn) {
 }
 
 // ── CLAUDE API ──────────────────────────────────────────────────────────────
-async function callClaude(prompt, useSearch, timeoutMs = 90000) {
+async function callClaude(prompt, useSearch, timeoutMs = 60000) {
   const body = {
     model: 'claude-sonnet-4-5',
     max_tokens: 1200,
@@ -459,6 +465,7 @@ async function loadGames() {
     document.getElementById('games-subtitle').textContent = `${games.length} games on ${fmtDateShort(currentDate)} · click "Analyze" on any game`;
     document.getElementById('filters').style.display = 'flex';
     document.getElementById('analyze-all-btn').style.display = 'block';
+    saveGamesCache();
     renderGames();
 
   } catch(err) {
@@ -472,19 +479,26 @@ async function analyzeAllGames() {
   const btn = document.getElementById('analyze-all-btn');
   btn.disabled = true;
   const unanalyzed = games.filter(g => !g.analyzed && !g.analyzing);
-  for (let i = 0; i < unanalyzed.length; i++) {
-    btn.textContent = `Analyzing ${i+1}/${unanalyzed.length}...`;
-    try {
-      await Promise.race([
-        analyzeGame(unanalyzed[i].id),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 60000))
-      ]);
-    } catch(e) {
-      const g = games.find(x => x.id === unanalyzed[i].id);
-      if (g) { g.analyzing = false; g.analyzeError = 'Timed out — click retry'; }
-      renderGames();
-    }
+  const batchSize = 3;
+  let done = 0;
+
+  for (let i = 0; i < unanalyzed.length; i += batchSize) {
+    const batch = unanalyzed.slice(i, i + batchSize);
+    btn.textContent = `Analyzing ${Math.min(i + batchSize, unanalyzed.length)}/${unanalyzed.length}...`;
+
+    await Promise.all(batch.map(g =>
+      Promise.race([
+        analyzeGame(g.id),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 55000))
+      ]).catch(e => {
+        const game = games.find(x => x.id === g.id);
+        if (game) { game.analyzing = false; game.analyzeError = 'Timed out — click retry'; }
+        renderGames();
+      })
+    ));
+    done += batch.length;
   }
+
   btn.disabled = false;
   btn.textContent = 'Analyze all →';
 }
@@ -681,6 +695,7 @@ Only include relevant situations in the array. If no situation flags apply, retu
     g.analyzed = false;
     g.analyzeError = err.message || 'Analysis failed';
   }
+  saveGamesCache();
   renderGames();
   updateBestPlays();
 }
@@ -895,9 +910,81 @@ function exportCSV() {
   a.click();
 }
 
+// ── HISTORY ──────────────────────────────────────────────────────────────────
+function showDatePicker() {
+  const el = document.getElementById('date-picker');
+  const dates = getAvailableDates();
+  if (!dates.length) { el.style.display = 'none'; return; }
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+  el.innerHTML = dates.map(d => {
+    const label = new Date(d + 'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    const isActive = d === isoDate(currentDate);
+    return `<button class="date-btn" style="${isActive?'border-color:var(--green);color:var(--green)':''}" onclick="jumpToDate('${d}')">${label}</button>`;
+  }).join('');
+}
+
+function jumpToDate(dateStr) {
+  currentDate = new Date(dateStr + 'T12:00:00');
+  document.getElementById('date-display').textContent = fmtDate(currentDate);
+  document.getElementById('date-picker').style.display = 'none';
+  games = [];
+  document.getElementById('best-plays').classList.remove('show');
+  if (!loadGamesCache()) {
+    document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">${fmtDateShort(currentDate)}</div><div class="empty-sub">No saved data for this date.</div></div>`;
+    document.getElementById('filters').style.display = 'none';
+    document.getElementById('analyze-all-btn').style.display = 'none';
+  }
+}
+
+// ── CACHE ────────────────────────────────────────────────────────────────────
+function saveGamesCache() {
+  const key = 'mlb_games_' + isoDate(currentDate);
+  localStorage.setItem(key, JSON.stringify(games));
+  if (document.getElementById('history-btn')) {
+    const dates = JSON.parse(localStorage.getItem('mlb_dates') || '[]');
+    if (dates.length > 1) document.getElementById('history-btn').style.display = 'block';
+  }
+  // Track which dates have data
+  const dates = JSON.parse(localStorage.getItem('mlb_dates') || '[]');
+  if (!dates.includes(isoDate(currentDate))) {
+    dates.unshift(isoDate(currentDate));
+    // Keep last 30 days only
+    const trimmed = dates.slice(0, 30);
+    localStorage.setItem('mlb_dates', JSON.stringify(trimmed));
+    // Clean up old keys
+    dates.slice(30).forEach(d => localStorage.removeItem('mlb_games_' + d));
+  }
+}
+
+function loadGamesCache() {
+  try {
+    const key = 'mlb_games_' + isoDate(currentDate);
+    const raw = localStorage.getItem(key);
+    if (!raw) return false;
+    games = JSON.parse(raw);
+    if (!games || !games.length) return false;
+    const analyzed = games.filter(g => g.analyzed).length;
+    document.getElementById('games-subtitle').textContent = `${games.length} games on ${fmtDateShort(currentDate)} · ${analyzed} analyzed · cached`;
+    document.getElementById('filters').style.display = 'flex';
+    document.getElementById('analyze-all-btn').style.display = 'block';
+    renderGames();
+    updateBestPlays();
+    return true;
+  } catch(e) { return false; }
+}
+
+function getAvailableDates() {
+  return JSON.parse(localStorage.getItem('mlb_dates') || '[]');
+}
+
 // ── INIT ─────────────────────────────────────────────────────────────────────
 initDate();
 updateNavRecord();
+loadGamesCache();
+if (getAvailableDates().length > 1) {
+  document.getElementById('history-btn').style.display = 'block';
+}
 </script>
 
 <div class="container" style="padding-top:0">
