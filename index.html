@@ -419,10 +419,21 @@ async function loadGames() {
   const displayDate = fmtDate(currentDate);
 
   try {
-    const raw = await callClaude(
-      `Search for MLB schedule ${displayDate}. Return ONLY a JSON array. No text before or after. Format exactly: [{"away":"Yankees","home":"Red Sox","time":"7:05 PM ET","awayPitcher":"Cole","homePitcher":"Sale","awayML":"-130","homeML":"+110","total":"8.5"}]. TBD for unknowns. Start with [ end with ]`,
+    // Step 1: search for schedule info
+    const searchRaw = await callClaude(
+      `Search for MLB games on ${displayDate}. List every game: home team, away team, start time ET, starting pitchers, moneyline odds, and over/under total. Be thorough.`,
       true
     );
+
+    // Step 2: format into JSON (no search needed)
+    const raw = await callClaude(
+      `Convert this MLB schedule data into a JSON array. Return ONLY the JSON array, nothing else, no explanation.
+Data: ${searchRaw.substring(0, 2000)}
+Format: [{"away":"Yankees","home":"Red Sox","time":"7:05 PM ET","awayPitcher":"Cole","homePitcher":"Sale","awayML":"-130","homeML":"+110","total":"8.5"}]
+Use TBD for any unknown values. Start response with [ and end with ]`,
+      false
+    );
+
     let parsed;
     try {
       const clean = raw.replace(/```json|```/g, '').trim();
