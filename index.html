@@ -425,18 +425,22 @@ async function loadGames() {
   const displayDate = fmtDate(currentDate);
 
   try {
-    // First search for the data
     const searchData = await callClaude(
-      `Search for MLB games on ${displayDate}. For each game list: teams, start time ET, starting pitchers, moneyline odds, over/under total.`,
+      `Search for MLB games on ${displayDate}. Find teams, times, pitchers, and betting lines.`,
       true,
       90000
     );
-    // Then format it strictly as JSON
+    // Extract JSON from search data or build it
     const raw = await callClaude(
-      `You are a JSON formatter. Convert the following MLB schedule information into a JSON array. Rules: output ONLY the JSON array, no explanation, no other text, start your entire response with [ and end with ]. Use exactly this format for each game: {"away":"Yankees","home":"Red Sox","time":"7:05 PM ET","awayPitcher":"Cole","homePitcher":"Sale","awayML":"-130","homeML":"+110","total":"8.5"}. Use "TBD" for any missing values.
+      `IMPORTANT: Respond with ONLY a JSON array. No words before it. No words after it. Just the array.
+      
+Based on this schedule data, create the JSON array:
+${searchData.substring(0, 3000)}
 
-Schedule data to convert:
-${searchData.substring(0, 3000)}`,
+Each game must use this exact format:
+{"away":"SEA","home":"BAL","time":"6:35 PM ET","awayPitcher":"Hancock","homePitcher":"Gibson","awayML":"-125","homeML":"+105","total":"9.5"}
+
+Your entire response must be valid JSON starting with [ and ending with ]`,
       false,
       30000
     );
@@ -445,12 +449,20 @@ ${searchData.substring(0, 3000)}`,
     try {
       const clean = raw.replace(/```json|```/g, '').trim();
       const s = clean.indexOf('['), e = clean.lastIndexOf(']');
+      if (s === -1 || e === -1) throw new Error('no array found');
       parsed = JSON.parse(clean.substring(s, e + 1));
     } catch(e) {
-      throw new Error('Parse failed: ' + raw.substring(0, 300));
+      // If formatting call failed, try to extract JSON directly from searchData
+      try {
+        const s2 = searchData.indexOf('['), e2 = searchData.lastIndexOf(']');
+        if (s2 !== -1 && e2 !== -1) {
+          parsed = JSON.parse(searchData.substring(s2, e2 + 1));
+        }
+      } catch(e2) { /* ignore */ }
+      if (!parsed || !parsed.length) throw new Error('Parse failed: ' + raw.substring(0, 200));
     }
 
-    if (!parsed || !parsed.length) throw new Error('No games found for ' + displayDate + '. Raw: ' + raw.substring(0, 200));
+    if (!parsed || !parsed.length) throw new Error('No games found for ' + displayDate);
 
     games = parsed.map((g, i) => ({
       id: 'game_' + i,
