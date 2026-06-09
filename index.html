@@ -373,7 +373,7 @@ function goPage(name, btn) {
 // ── CLAUDE API ──────────────────────────────────────────────────────────────
 async function callClaude(prompt, useSearch) {
   const body = {
-    model: 'claude-sonnet-4-5',
+    model: 'claude-haiku-4-5-20251001',
     max_tokens: 800,
     messages: [{ role: 'user', content: prompt }]
   };
@@ -586,21 +586,13 @@ async function analyzeGame(id) {
 
   try {
     const raw = await callClaude(
-      `You are an expert MLB betting analyst specializing in situational trends. Research and analyze this game for betting value. Return ONLY valid JSON — no markdown, no extra text.
+      `You are an expert MLB betting analyst. Analyze this game using your knowledge of these teams, pitchers, and situational trends. Return ONLY valid JSON — no markdown, no extra text.
 
 GAME: ${g.away} (${g.awayML}) @ ${g.home} (${g.homeML}) | Total: ${g.total}
 Pitchers: ${g.awayPitcher} (away) vs ${g.homePitcher} (home)
 Date: ${g.date}
 
-Search for:
-1. Current injury report for both teams
-2. Starting pitcher recent form (last 3 starts ERA/WHIP)
-3. Both teams' last 5 game results and current run differential
-4. Any line movement from opening to current (flag if line moved against public action)
-5. Weather conditions if outdoor park
-6. Situational factors: series context, travel, rest days, revenge spots, playoff positioning
-
-Then score all four markets. For each, give BET AWAY / BET HOME / BET OVER / BET UNDER / LEAN AWAY / LEAN HOME / LEAN OVER / LEAN UNDER / SKIP.
+Based on your knowledge: analyze pitcher matchup quality, team recent form, situational factors (revenge, travel, series context, rest), and line value. Score all four markets.
 
 Return ONLY this JSON:
 {
@@ -629,7 +621,7 @@ Return ONLY this JSON:
 }
 
 Only include relevant situations in the array. If no situation flags apply, return empty array.`,
-      true
+      false
     );
 
     let p;
