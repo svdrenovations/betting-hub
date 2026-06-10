@@ -291,6 +291,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 
 <script>
 const SUPABASE_URL = 'https://crfgkpqkmqfvyyifmprj.supabase.co';
+const ODDS_API_KEY = '3a041de5ae728cd0259c26d9d846e6ac';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNyZmdrcHFrbXFmdnl5aWZtcHJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwMzg5OTYsImV4cCI6MjA5NjYxNDk5Nn0.FH9ViDkYdnu_iR2s6kDAglBMb6waJljcaMTeqb8J8jY';
 
 let games = [];
@@ -305,6 +306,204 @@ let currentFilter = 'all';
 let trackerFilter = 'all';
 let pendingLog = null;
 let expanded = {};
+
+// ── LIVE LINES ───────────────────────────────────────────────────────────────
+const liveLineCache = {};
+let liveLineMode = 'manual'; // 'manual' or 'auto'
+let liveLineIntervals = {};
+
+async function fetchLiveLines(gameId, awayTeam, homeTeam) {
+  // Return cache if less than 5 minutes old
+  if (liveLineCache[gameId] && Date.now() - liveLineCache[gameId].ts < 300000) {
+    return liveLineCache[gameId].data;
+  }
+
+  try {
+    const url = `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=h2h,spreads,totals&oddsFormat=american&dateFormat=iso`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const games = await res.json();
+
+    const game = games.find(g =>
+      (g.away_team.includes(awayTeam.split(' ').pop()) || awayTeam.includes(g.away_team.split(' ').pop())) &&
+      (g.home_team.includes(homeTeam.split(' ').pop()) || homeTeam.includes(g.home_team.split(' ').pop()))
+    );
+    if (!game) return null;
+
+    const books = {};
+    for (const bm of (game.bookmakers || [])) {
+      const book = { name: bm.title };
+      for (const mkt of (bm.markets || [])) {
+        if (mkt.key === 'h2h') {
+          for (const o of mkt.outcomes) {
+            if (o.name === game.away_team) book.awayML = o.price > 0 ? `+${o.price}` : `${o.price}`;
+            if (o.name === game.home_team) book.homeML = o.price > 0 ? `+${o.price}` : `${o.price}`;
+          }
+        }
+        if (mkt.key === 'totals') {
+          const over = mkt.outcomes.find(o => o.name === 'Over');
+          const under = mkt.outcomes.find(o => o.name === 'Under');
+          if (over) {
+            book.total = over.point;
+            book.overOdds = over.price > 0 ? `+${over.price}` : `${over.price}`;
+            book.underOdds = under ? (under.price > 0 ? `+${under.price}` : `${under.price}`) : null;
+          }
+        }
+        if (mkt.key === 'spreads') {
+          for (const o of mkt.outcomes) {
+            if (o.name === game.away_team) {
+              book.awayRL = o.point > 0 ? `+${o.point}` : `${o.point}`;
+              book.awayRLOdds = o.price > 0 ? `+${o.price}` : `${o.price}`;
+            }
+            if (o.name === game.home_team) {
+              book.homeRL = o.point > 0 ? `+${o.point}` : `${o.point}`;
+              book.homeRLOdds = o.price > 0 ? `+${o.price}` : `${o.price}`;
+            }
+          }
+        }
+      }
+      if (book.awayML) books[bm.key] = book;
+    }
+
+    // Calculate best lines
+    const bookList = Object.values(books);
+    if (bookList.length) {
+      const best = {
+        awayML: bookList.reduce((b, x) => !b || parseFloat(x.awayML) > parseFloat(b) ? x.awayML : b, null),
+        homeML: bookList.reduce((b, x) => !b || parseFloat(x.homeML) > parseFloat(b) ? x.homeML : b, null),
+        overOdds: bookList.reduce((b, x) => !b || parseFloat(x.overOdds) > parseFloat(b) ? x.overOdds : b, null),
+        underOdds: bookList.reduce((b, x) => !b || parseFloat(x.underOdds) > parseFloat(b) ? x.underOdds : b, null),
+        awayRLOdds: bookList.reduce((b, x) => !b || parseFloat(x.awayRLOdds) > parseFloat(b) ? x.awayRLOdds : b, null),
+        homeRLOdds: bookList.reduce((b, x) => !b || parseFloat(x.homeRLOdds) > parseFloat(b) ? x.homeRLOdds : b, null),
+        total: bookList[0]?.total
+      };
+      books['_best'] = { name: '⭐ Best available', ...best, isBest: true };
+    }
+
+    liveLineCache[gameId] = { ts: Date.now(), data: { books, awayTeam: game.away_team, homeTeam: game.home_team } };
+    return liveLineCache[gameId].data;
+  } catch(e) {
+    console.error('Live lines error:', e);
+    return null;
+  }
+}
+
+function setLiveLineMode(mode) {
+  liveLineMode = mode;
+  // Update all visible mode buttons
+  document.querySelectorAll('[id^="ll-mode-"]').forEach(btn => {
+    const btnMode = btn.id.replace('ll-mode-', '');
+    if (btnMode === 'manual') {
+      btn.style.background = mode === 'manual' ? 'var(--s3)' : 'var(--s2)';
+      btn.style.color = mode === 'manual' ? 'var(--text)' : 'var(--muted)';
+    } else {
+      btn.style.background = mode === 'auto' ? 'var(--green-bg)' : 'var(--s2)';
+      btn.style.color = mode === 'auto' ? 'var(--green)' : 'var(--muted)';
+    }
+  });
+
+  if (mode === 'auto') {
+    // Start auto-refresh for all visible live line panels
+    document.querySelectorAll('[id^="livelines-"]').forEach(el => {
+      if (el.style.display !== 'none') {
+        const gameId = el.id.replace('livelines-', '');
+        const btn = document.getElementById('ll-btn-' + gameId);
+        // Find game data
+        const g = games.find(x => x.id === gameId);
+        if (g && !liveLineIntervals[gameId]) {
+          liveLineIntervals[gameId] = setInterval(() => {
+            // Force refresh by clearing cache
+            delete liveLineCache[gameId];
+            showLiveLines(gameId, g.away_team, g.home_team);
+          }, 30000);
+        }
+      }
+    });
+  } else {
+    // Stop all auto-refresh intervals
+    Object.keys(liveLineIntervals).forEach(id => {
+      clearInterval(liveLineIntervals[id]);
+      delete liveLineIntervals[id];
+    });
+  }
+}
+
+async function showLiveLines(gameId, awayTeam, homeTeam) {
+  const el = document.getElementById('livelines-' + gameId);
+  if (!el) return;
+
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = `<div style="padding:6px 8px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
+    <span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted)">LIVE LINES</span>
+    <div style="display:flex;gap:4px">
+      <button onclick="setLiveLineMode('manual')" id="ll-mode-manual" style="padding:2px 8px;font-size:10px;font-family:'DM Mono',monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='manual'?'var(--s3)':'var(--s2)'};color:${liveLineMode==='manual'?'var(--text)':'var(--muted)'}">manual</button>
+      <button onclick="setLiveLineMode('auto')" id="ll-mode-auto" style="padding:2px 8px;font-size:10px;font-family:'DM Mono',monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='auto'?'var(--green-bg)':'var(--s2)'};color:${liveLineMode==='auto'?'var(--green)':'var(--muted)'}">auto 30s</button>
+    </div>
+  </div>
+  <div style="padding:8px;color:var(--muted);font-size:11px;font-family:'DM Mono',monospace">Loading live lines...</div>`;
+
+  const data = await fetchLiveLines(gameId, awayTeam, homeTeam);
+  if (!data) {
+    el.innerHTML = '<div style="padding:8px;color:var(--red);font-size:11px;font-family:'DM Mono',monospace">Could not load lines</div>';
+    return;
+  }
+
+  const books = Object.values(data.books);
+  const away = data.awayTeam.split(' ').pop();
+  const home = data.homeTeam.split(' ').pop();
+
+  const rows = books.map(b => {
+    const isBest = b.isBest;
+    const style = isBest ? 'background:var(--green-bg);border-top:1px solid var(--green-dim)' : '';
+    const nameStyle = isBest ? 'color:var(--green);font-weight:600' : 'color:var(--text)';
+
+    function cell(val, bestVal) {
+      if (!val) return '<td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:11px;color:var(--dim)">—</td>';
+      const isTop = val === bestVal && !isBest;
+      const color = isTop ? 'var(--green)' : isBest ? 'var(--green)' : 'var(--text)';
+      const arrow = isTop ? ' ↑' : '';
+      const fw = (isTop || isBest) ? '600' : '400';
+      return '<td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:11px;color:' + color + ';font-weight:' + fw + '">' + val + arrow + '</td>';
+    }
+
+    const bestBook = data.books['_best'] || {};
+    return `<tr style="${style}">
+      <td style="padding:5px 8px;font-size:11px;${nameStyle};white-space:nowrap">${b.name}</td>
+      ${cell(b.awayML, bestBook.awayML)}
+      ${cell(b.homeML, bestBook.homeML)}
+      ${cell(b.awayRL ? b.awayRL + ' ' + (b.awayRLOdds||'') : null, bestBook.awayRL + ' ' + (bestBook.awayRLOdds||''))}
+      ${cell(b.homeRL ? b.homeRL + ' ' + (b.homeRLOdds||'') : null, bestBook.homeRL + ' ' + (bestBook.homeRLOdds||''))}
+      ${cell(b.total ? 'O' + b.total + ' ' + (b.overOdds||'') : null, 'O' + bestBook.total + ' ' + (bestBook.overOdds||''))}
+      ${cell(b.total ? 'U' + b.total + ' ' + (b.underOdds||'') : null, 'U' + bestBook.total + ' ' + (bestBook.underOdds||''))}
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `<div>
+    <div style="padding:6px 8px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
+      <span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted)">LIVE LINES · ${new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>
+      <div style="display:flex;gap:4px">
+        <button onclick="setLiveLineMode('manual')" style="padding:2px 8px;font-size:10px;font-family:'DM Mono',monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='manual'?'var(--s3)':'var(--s2)'};color:${liveLineMode==='manual'?'var(--text)':'var(--muted)'}">manual</button>
+        <button onclick="setLiveLineMode('auto')" style="padding:2px 8px;font-size:10px;font-family:'DM Mono',monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='auto'?'var(--green-bg)':'var(--s2)'};color:${liveLineMode==='auto'?'var(--green)':'var(--muted)'}">auto 30s</button>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="border-bottom:1px solid var(--border)">
+        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">Book</th>
+        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">${away} ML</th>
+        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">${home} ML</th>
+        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">${away} RL</th>
+        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">${home} RL</th>
+        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">Over</th>
+        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">Under</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;padding:4px 8px">↑ best available · ${liveLineMode==='auto'?'auto-refreshing 30s':'click manual to refresh'} · click header to hide</div>
+    </div>
+  </div>`;
+}
 
 // ── SUPABASE BETS ─────────────────────────────────────────────────────────────
 async function loadBetsFromSupabase() {
@@ -758,8 +957,10 @@ function gameCardHTML(g) {
       ${lineMoveHTML}
       ${notAnalyzed}
       ${analysisHTML}
+      <div id="livelines-${g.id}" style="display:none;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;overflow:hidden"></div>
       <div class="card-actions">
         ${g.analyzed ? `<button class="btn-expand" onclick="toggleExpand('${g.id}')">${isExpanded ? '− collapse' : '+ details'}</button>` : ''}
+        <button class="btn-expand" id="ll-btn-${g.id}" onclick="showLiveLines('${g.id}','${g.away_team}','${g.home_team}')">live lines</button>
         ${g.analyzed && edge !== 'skip' && edge !== 'none' ? `<button class="btn-log" onclick="openLog('${g.id}')">Log bet +</button>` : ''}
       </div>
     </div>
