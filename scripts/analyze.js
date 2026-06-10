@@ -295,7 +295,7 @@ async function fetchStatcast(pitcherName, pitcherId) {
     const endDate = new Date().toISOString().split('T')[0];
     const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     
-    const url = `https://baseballsavant.mlb.com/statcast_search/csv?player_type=pitcher&pitchers_lookup[]=${pitcherId}&game_date_gt=${startDate}&game_date_lt=${endDate}&type=details&hfStat=&hfInn=&hfBBT=&hfPR=&hfZ=&hfStadium=&hfBBL=&hfNewZones=&hfPull=&hfC=&hfSea=2026%7C&hfSit=&player_type=pitcher&hfOuts=&hfOpponent=&pitcher_throws=&batter_stands=&hfSA=&game_date_gt=${startDate}&game_date_lt=${endDate}&team=&position=&hfRO=&home_road=&hfFlag=&metric_1=&hfInn=&min_pitches=0&min_results=0&group_by=name&sort_col=pitches&player_event_sort=api_p_release_speed&sort_order=desc&min_abs=0`;
+    const url = 'https://baseballsavant.mlb.com/statcast_search/csv?player_type=pitcher&pitchers_lookup[]=' + pitcherId + '&game_date_gt=' + startDate + '&game_date_lt=' + endDate + '&type=details&hfSea=2026%7C&group_by=name&sort_col=pitches&sort_order=desc&min_abs=0';
 
     const res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' }
@@ -684,16 +684,22 @@ Return ONLY this JSON (no markdown):
   "situations": [],
   "ml": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
   "mlEV": NUMBER,
+  "mlAwayProb": NUMBER,
+  "mlHomeProb": NUMBER,
+  "mlBreakeven": "the worst American odds line that still has positive EV e.g. -118",
   "rl": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
   "rlEV": NUMBER,
+  "rlBreakeven": "worst American odds still +EV e.g. -105",
   "total": "BET OVER|BET UNDER|LEAN OVER|LEAN UNDER|SKIP",
   "totalEV": NUMBER,
   "totalLine": NUMBER,
   "projTotal": NUMBER,
+  "totalBreakeven": "worst total line still +EV e.g. Over 9.0 or Under 8.5",
   "f5": "BET AWAY|BET HOME|BET OVER|BET UNDER|LEAN AWAY|LEAN HOME|LEAN OVER|LEAN UNDER|SKIP",
   "f5EV": NUMBER,
   "f5Line": NUMBER,
   "f5ProjTotal": NUMBER,
+  "f5Breakeven": "worst f5 line still +EV",
   "best": "ml|rl|total|f5",
   "bestPlay": "one sentence on the strongest play",
   "awayWinPct": NUMBER,
@@ -708,7 +714,9 @@ Return ONLY this JSON (no markdown):
   "situation": "2 sentences on key situational and pitching factors",
   "factors": "2 sentences on stats, hot/cold streaks, and matchup",
   "risks": "1 sentence on biggest risk to the top play"
-}`;
+}
+
+For breakeven lines: calculate the maximum juice/line where the bet still has positive EV based on your probability estimate. Example: if you estimate Away wins 54% of the time, the breakeven ML is -117 (anything worse than -117 is negative EV). For totals: if you project 9.8 runs and the line is 9.5, the breakeven is Under 10.5 — any total above 10.5 flips to negative EV.`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -801,6 +809,12 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       f5_proj_total: analysis.f5ProjTotal,
       best_market: analysis.best,
       best_play: analysis.bestPlay,
+      ml_breakeven: analysis.mlBreakeven,
+      ml_away_prob: analysis.mlAwayProb,
+      ml_home_prob: analysis.mlHomeProb,
+      rl_breakeven: analysis.rlBreakeven,
+      total_breakeven: analysis.totalBreakeven,
+      f5_breakeven: analysis.f5Breakeven,
       away_win_pct: analysis.awayWinPct,
       home_win_pct: analysis.homeWinPct,
       edge_pct: analysis.edgePct,
