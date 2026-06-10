@@ -12,7 +12,7 @@ const RUN_TYPE = process.env.RUN_TYPE || '11am';
 // TUNE THIS from your own settled-bet results during calibration — lower = more
 // confident (bigger edges/EV), higher = more conservative. Keep it identical to
 // the TOTAL_SD in index.html or the card and modal will disagree.
-const TOTAL_SD = 4.5;
+const TOTAL_SD = 5.5;
 
 // MLB park coordinates and orientation
 // homeplateFacing = compass direction home plate faces (degrees)
