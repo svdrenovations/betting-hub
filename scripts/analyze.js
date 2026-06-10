@@ -222,6 +222,71 @@ async function fetchTeamStats(teamName) {
   }
 }
 
+// Fetch today's probable pitchers from MLB Stats API
+async function fetchProbablePitchers(gameDate) {
+  try {
+    const res = await fetch(
+      `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${gameDate}&gameType=R&hydrate=probablePitcher(note),team`
+    );
+    if (!res.ok) return {};
+    const data = await res.json();
+    const pitcherMap = {};
+    for (const date of (data.dates || [])) {
+      for (const game of (date.games || [])) {
+        const awayId = game.teams?.away?.team?.id;
+        const homeId = game.teams?.home?.team?.id;
+        const awayPitcher = game.teams?.away?.probablePitcher;
+        const homePitcher = game.teams?.home?.probablePitcher;
+        if (awayPitcher) pitcherMap[`away_${awayId}`] = {
+          id: awayPitcher.id,
+          name: awayPitcher.fullName,
+          note: awayPitcher.note || null
+        };
+        if (homePitcher) pitcherMap[`home_${homeId}`] = {
+          id: homePitcher.id,
+          name: homePitcher.fullName,
+          note: homePitcher.note || null
+        };
+      }
+    }
+    console.log(`Probable pitchers found: ${Object.keys(pitcherMap).length}`);
+    return pitcherMap;
+  } catch(e) {
+    console.log('Pitcher lookup failed:', e.message);
+    return {};
+  }
+}
+
+// Check if pitcher is making MLB debut
+async function checkMLBDebut(pitcherId) {
+  try {
+    if (!pitcherId) return false;
+    const res = await fetch(
+      `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=career&group=pitching`
+    );
+    if (!res.ok) return false;
+    const data = await res.json();
+    const career = data.stats?.[0]?.splits?.[0]?.stat;
+    // If no career stats or 0 games pitched, it's a debut
+    if (!career || parseInt(career.gamesStarted || 0) === 0) return true;
+    return false;
+  } catch(e) { return false; }
+}
+
+// Get team ID from Odds API team name
+async function getTeamId(teamName) {
+  try {
+    const res = await fetch('https://statsapi.mlb.com/api/v1/teams?sportId=1&season=2026');
+    if (!res.ok) return null;
+    const data = await res.json();
+    const team = data.teams?.find(t =>
+      t.name.toLowerCase().includes(teamName.toLowerCase().split(' ').pop().toLowerCase()) ||
+      teamName.toLowerCase().includes(t.name.toLowerCase().split(' ').pop().toLowerCase())
+    );
+    return team?.id || null;
+  } catch(e) { return null; }
+}
+
 async function fetchOddsAPI() {
   console.log('Fetching from The Odds API...');
   const url = `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=h2h,spreads,totals&oddsFormat=american&dateFormat=iso`;
@@ -469,15 +534,17 @@ Return ONLY this JSON (no markdown):
   }
 }
 
-async function upsertGame(game, lines, analysis, anData, f5Lines, weather) {
+async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData) {
   const row = {
     id: game.id,
     game_date: new Date(game.commence_time).toISOString().split('T')[0],
     away_team: game.away_team,
     home_team: game.home_team,
     commence_time: game.commence_time,
-    away_pitcher: 'TBD',
-    home_pitcher: 'TBD',
+    away_pitcher: awayPitcherData?.name || 'TBD',
+    home_pitcher: homePitcherData?.name || 'TBD',
+    away_pitcher_debut: awayPitcherData?.debut || false,
+    home_pitcher_debut: homePitcherData?.debut || false,
     away_ml: lines.awayML,
     home_ml: lines.homeML,
     total: lines.total,
@@ -558,8 +625,8 @@ async function main() {
   console.log(`\n=== MLB Analysis: ${RUN_TYPE} ===`);
   console.log(`${new Date().toLocaleString('en-US',{timeZone:'America/New_York'})} ET\n`);
 
-  const [games, f5Map] = await Promise.all([fetchOddsAPI(), fetchF5Lines()]);
   const today = new Date().toISOString().split('T')[0];
+  const [games, f5Map, pitcherMap] = await Promise.all([fetchOddsAPI(), fetchF5Lines(), fetchProbablePitchers(today)]);
   const now = new Date();
   const todayGames = games.filter(g => {
     if (!g.commence_time.startsWith(today)) return false;
@@ -578,6 +645,26 @@ async function main() {
     try {
       const lines = parseOddsData(game);
 
+      // Get team IDs for pitcher lookup
+      const [awayTeamId, homeTeamId] = await Promise.all([
+        getTeamId(game.away_team),
+        getTeamId(game.home_team)
+      ]);
+
+      const awayPitcherInfo = awayTeamId ? pitcherMap[`away_${awayTeamId}`] : null;
+      const homePitcherInfo = homeTeamId ? pitcherMap[`home_${homeTeamId}`] : null;
+
+      // Check for MLB debut
+      const [awayDebut, homeDebut] = await Promise.all([
+        awayPitcherInfo ? checkMLBDebut(awayPitcherInfo.id) : Promise.resolve(false),
+        homePitcherInfo ? checkMLBDebut(homePitcherInfo.id) : Promise.resolve(false)
+      ]);
+
+      if (awayPitcherInfo) awayPitcherInfo.debut = awayDebut;
+      if (homePitcherInfo) homePitcherInfo.debut = homeDebut;
+      if (awayDebut) console.log(`  🚨 MLB DEBUT: ${awayPitcherInfo.name} (${game.away_team})`);
+      if (homeDebut) console.log(`  🚨 MLB DEBUT: ${homePitcherInfo.name} (${game.home_team})`);
+
       const [anData, weather, awayStats, homeStats] = await Promise.all([
         fetchActionNetwork(game.away_team, game.home_team, game.commence_time),
         fetchWeather(game.home_team, game.commence_time),
@@ -588,10 +675,12 @@ async function main() {
       if (anData?.total) lines.total = validateTotal(lines.total, anData.total);
 
       const f5Lines = f5Map[game.id] || null;
-      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, null, null);
-      await upsertGame(game, lines, analysis, anData, f5Lines, weather);
+      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo);
+      await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo);
 
-      console.log(`  ✓ ${game.away_team} @ ${game.home_team} | ${lines.total} | ${weather?.summary||'dome/no weather'} | Public: ${anData?.overPct||'?'}% Over`);
+      const ap = awayPitcherInfo?.name || 'TBD';
+      const hp = homePitcherInfo?.name || 'TBD';
+      console.log(`  ✓ ${game.away_team} @ ${game.home_team} | ${ap} vs ${hp} | ${lines.total} | ${weather?.summary||'dome/no weather'}`);
       await new Promise(r => setTimeout(r, 2500));
     } catch(err) {
       console.error(`  ✗ ${game.away_team} @ ${game.home_team}:`, err.message);
