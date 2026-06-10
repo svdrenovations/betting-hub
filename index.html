@@ -19,14 +19,14 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);font-size:14px;min-height:100vh}
-.mono{font-family:'DM Mono',monospace}
+.mono{font-family:DM Mono,monospace}
 nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;display:flex;align-items:center;justify-content:space-between;height:56px;position:sticky;top:0;z-index:100}
 .nav-logo{font-weight:600;font-size:16px;letter-spacing:-.3px}
 .nav-logo span{color:var(--green)}
 .nav-tabs{display:flex}
 .nav-tab{padding:0 16px;height:56px;display:flex;align-items:center;font-size:13px;font-weight:500;color:var(--muted);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent}
 .nav-tab.on{color:var(--text);border-bottom-color:var(--green)}
-.nav-record{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)}
+.nav-record{font-family:DM Mono,monospace;font-size:12px;color:var(--muted)}
 .container{max-width:1100px;margin:0 auto;padding:1.5rem}
 .page{display:none}.page.on{display:block}
 .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem}
@@ -38,12 +38,12 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .btn:hover{background:var(--s3)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .date-nav{display:flex;align-items:center;gap:10px;margin-bottom:1.25rem;flex-wrap:wrap}
-.date-btn{padding:6px 12px;font-size:12px;font-family:'DM Mono',monospace;background:var(--s2);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer}
+.date-btn{padding:6px 12px;font-size:12px;font-family:DM Mono,monospace;background:var(--s2);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer}
 .date-btn:hover{background:var(--s3);color:var(--text)}
 .date-btn.on{border-color:var(--green);color:var(--green)}
-.date-display{font-family:'DM Mono',monospace;font-size:13px;font-weight:500;color:var(--text)}
+.date-display{font-family:DM Mono,monospace;font-size:13px;font-weight:500;color:var(--text)}
 .filters{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap}
-.filter-btn{padding:5px 12px;font-size:12px;border-radius:20px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:'DM Mono',monospace}
+.filter-btn{padding:5px 12px;font-size:12px;border-radius:20px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:DM Mono,monospace}
 .filter-btn.on{background:var(--s2);color:var(--text);border-color:var(--border2)}
 .games-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
 .game-card{background:var(--s1);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:border-color .15s}
@@ -52,11 +52,11 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .game-card.edge-med{border-color:var(--amber)}
 .card-header{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start}
 .card-matchup{font-size:15px;font-weight:600;letter-spacing:-.2px}
-.card-meta{font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px}
-.card-time{font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);text-align:right}
+.card-meta{font-size:11px;color:var(--muted);font-family:DM Mono,monospace;margin-top:3px}
+.card-time{font-size:12px;font-family:DM Mono,monospace;color:var(--muted);text-align:right}
 .card-body{padding:12px 14px}
 .sit-flags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;min-height:22px}
-.sit-flag{font-size:10px;font-weight:500;padding:2px 7px;border-radius:4px;font-family:'DM Mono',monospace}
+.sit-flag{font-size:10px;font-weight:500;padding:2px 7px;border-radius:4px;font-family:DM Mono,monospace}
 .sf-revenge{background:#1a1030;color:#9aa3b8}
 .sf-travel{background:#0d1825;color:#9aa3b8}
 .sf-sharp{background:#200d18;color:#9aa3b8}
@@ -68,31 +68,31 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .markets{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
 .market-cell{background:var(--s2);border-radius:6px;padding:7px 8px;text-align:center;border:1px solid transparent}
 .market-cell.best{border-color:var(--green)}
-.market-label{font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:3px}
+.market-label{font-size:10px;font-family:DM Mono,monospace;color:var(--muted);margin-bottom:3px}
 .market-val{font-size:12px;font-weight:600}
 .mv-bet{color:var(--green)}.mv-lean{color:var(--amber)}.mv-skip{color:var(--dim)}
 .mv-over{color:var(--over)}.mv-under{color:var(--under)}
-.ev-val{font-size:10px;font-family:'DM Mono',monospace;margin-top:2px}
+.ev-val{font-size:10px;font-family:DM Mono,monospace;margin-top:2px}
 .ev-pos{color:var(--green)}.ev-neg{color:var(--muted)}
-.line-move{display:flex;align-items:center;gap:8px;font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:8px}
+.line-move{display:flex;align-items:center;gap:8px;font-size:11px;font-family:DM Mono,monospace;color:var(--muted);margin-bottom:8px}
 .lm-sharp{color:var(--sharp);font-weight:500}
 .analysis-full{font-size:12px;line-height:1.7;color:#9aa3b8;margin-bottom:8px}
-.analysis-label{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;margin-top:8px}
-.edge-badge{display:inline-flex;align-items:center;font-size:11px;font-weight:500;padding:3px 8px;border-radius:4px;font-family:'DM Mono',monospace}
+.analysis-label{font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;margin-top:8px}
+.edge-badge{display:inline-flex;align-items:center;font-size:11px;font-weight:500;padding:3px 8px;border-radius:4px;font-family:DM Mono,monospace}
 .eb-high{background:var(--green-bg);color:var(--green);border:1px solid var(--green-dim)}
 .eb-med{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-dim)}
 .eb-skip{background:var(--red-bg);color:var(--red);border:1px solid var(--red-dim)}
 .card-actions{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
-.btn-expand{padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:'DM Mono',monospace}
+.btn-expand{padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:DM Mono,monospace}
 .btn-log{padding:6px 12px;font-size:12px;font-weight:500;border-radius:6px;border:1px solid var(--green-dim);background:var(--green-bg);color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif}
 .best-plays{background:var(--s1);border:1px solid var(--green-dim);border-radius:12px;padding:1rem 1.25rem;margin-bottom:1.5rem;display:none}
 .best-plays.show{display:block}
-.bp-title{font-size:12px;font-family:'DM Mono',monospace;color:var(--green);text-transform:uppercase;letter-spacing:.07em;margin-bottom:.75rem}
+.bp-title{font-size:12px;font-family:DM Mono,monospace;color:var(--green);text-transform:uppercase;letter-spacing:.07em;margin-bottom:.75rem}
 .bp-grid{display:flex;gap:10px;flex-wrap:wrap}
 .bp-item{background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer}
 .bp-item:hover{background:#0d2a1e}
 .bp-matchup{font-weight:600;margin-bottom:2px}
-.bp-play{font-family:'DM Mono',monospace;color:var(--green);font-size:11px}
+.bp-play{font-family:DM Mono,monospace;color:var(--green);font-size:11px}
 .bp-conf{font-size:10px;color:var(--muted);margin-top:2px}
 .empty-state{text-align:center;padding:4rem 2rem}
 .empty-icon{font-size:40px;margin-bottom:1rem;opacity:.3}
@@ -103,41 +103,41 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .loading-dots span:nth-child(2){animation-delay:.2s}
 .loading-dots span:nth-child(3){animation-delay:.4s}
 @keyframes dot{0%,80%,100%{transform:scale(1);opacity:.4}40%{transform:scale(1.4);opacity:1}}
-.last-updated{font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:1rem}
+.last-updated{font-size:11px;font-family:DM Mono,monospace;color:var(--muted);margin-bottom:1rem}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
 .modal-overlay.show{display:flex}
 .modal{background:var(--s1);border:1px solid var(--border2);border-radius:14px;padding:1.5rem;width:100%;max-width:440px}
 .modal-title{font-size:16px;font-weight:600;margin-bottom:1.25rem}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
-.form-field label{font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);display:block;margin-bottom:4px;text-transform:uppercase}
+.form-field label{font-size:11px;font-family:DM Mono,monospace;color:var(--muted);display:block;margin-bottom:4px;text-transform:uppercase}
 .form-field input,.form-field select{width:100%;padding:8px 10px;font-size:13px;background:var(--s2);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-family:'DM Sans',sans-serif;outline:none}
 .modal-actions{display:flex;gap:8px;margin-top:1rem}
 .btn-save{flex:1;padding:10px;font-size:13px;font-weight:500;background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif}
 .btn-cancel{padding:10px 16px;font-size:13px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);cursor:pointer;font-family:'DM Sans',sans-serif}
 .t-table-wrap{overflow-x:auto}
 .t-table{width:100%;border-collapse:collapse;min-width:700px}
-.t-table th{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);text-transform:uppercase;white-space:nowrap}
+.t-table th{font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);text-transform:uppercase;white-space:nowrap}
 .t-table td{font-size:12px;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
 .t-table tr:hover td{background:var(--s2)}
-.rsel button{padding:3px 7px;font-size:11px;border-radius:4px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--muted);margin-right:3px;font-family:'DM Mono',monospace}
+.rsel button{padding:3px 7px;font-size:11px;border-radius:4px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--muted);margin-right:3px;font-family:DM Mono,monospace}
 .rsel button.on{background:var(--s2);color:var(--text);border-color:var(--border2)}
 .ep{color:var(--green);font-weight:500}.en{color:var(--red);font-weight:500}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:1.5rem}
 .stat-card{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:1rem;text-align:center}
-.stat-label{font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.stat-label{font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
 .stat-val{font-size:26px;font-weight:600}
-.stat-sub{font-size:11px;color:var(--muted);margin-top:4px;font-family:'DM Mono',monospace}
+.stat-sub{font-size:11px;color:var(--muted);margin-top:4px;font-family:DM Mono,monospace}
 .bar-row{display:flex;align-items:center;gap:10px;margin-bottom:7px}
-.bar-lbl{font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);width:140px;flex-shrink:0;text-align:right}
+.bar-lbl{font-size:11px;font-family:DM Mono,monospace;color:var(--muted);width:140px;flex-shrink:0;text-align:right}
 .bar-track{flex:1;background:var(--s2);border-radius:3px;height:14px;overflow:hidden}
 .bar-fill{height:100%;border-radius:3px}
-.bar-val{font-size:11px;font-family:'DM Mono',monospace;font-weight:500;width:40px;text-align:right}
-.section-head{font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin:1.5rem 0 .75rem;padding-bottom:.5rem;border-bottom:1px solid var(--border)}
+.bar-val{font-size:11px;font-family:DM Mono,monospace;font-weight:500;width:40px;text-align:right}
+.section-head{font-size:11px;font-family:DM Mono,monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin:1.5rem 0 .75rem;padding-bottom:.5rem;border-bottom:1px solid var(--border)}
 .tracker-filters{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap}
 .ol{color:var(--muted);padding:4px 6px;text-align:left;white-space:nowrap}
 .ov{color:var(--text);padding:4px 6px}
 .ov strong{color:var(--green)}
-.disc{font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;line-height:1.6;padding:1.5rem 0;border-top:1px solid var(--border);margin-top:2rem}
+.disc{font-size:11px;color:var(--dim);font-family:DM Mono,monospace;line-height:1.6;padding:1.5rem 0;border-top:1px solid var(--border);margin-top:2rem}
 @media(max-width:600px){
   .markets{grid-template-columns:repeat(2,1fr)}
   .games-grid{grid-template-columns:1fr}
@@ -435,17 +435,17 @@ async function showLiveLines(gameId, awayTeam, homeTeam) {
   if (el.style.display !== 'none') { el.style.display = 'none'; return; }
   el.style.display = 'block';
   el.innerHTML = `<div style="padding:6px 8px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
-    <span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted)">LIVE LINES</span>
+    <span style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted)">LIVE LINES</span>
     <div style="display:flex;gap:4px">
-      <button onclick="setLiveLineMode('manual')" id="ll-mode-manual" style="padding:2px 8px;font-size:10px;font-family:'DM Mono',monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='manual'?'var(--s3)':'var(--s2)'};color:${liveLineMode==='manual'?'var(--text)':'var(--muted)'}">manual</button>
-      <button onclick="setLiveLineMode('auto')" id="ll-mode-auto" style="padding:2px 8px;font-size:10px;font-family:'DM Mono',monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='auto'?'var(--green-bg)':'var(--s2)'};color:${liveLineMode==='auto'?'var(--green)':'var(--muted)'}">auto 30s</button>
+      <button onclick="setLiveLineMode('manual')" id="ll-mode-manual" style="padding:2px 8px;font-size:10px;font-family:DM Mono,monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='manual'?'var(--s3)':'var(--s2)'};color:${liveLineMode==='manual'?'var(--text)':'var(--muted)'}">manual</button>
+      <button onclick="setLiveLineMode('auto')" id="ll-mode-auto" style="padding:2px 8px;font-size:10px;font-family:DM Mono,monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='auto'?'var(--green-bg)':'var(--s2)'};color:${liveLineMode==='auto'?'var(--green)':'var(--muted)'}">auto 30s</button>
     </div>
   </div>
-  <div style="padding:8px;color:var(--muted);font-size:11px;font-family:'DM Mono',monospace">Loading live lines...</div>`;
+  <div style="padding:8px;color:var(--muted);font-size:11px;font-family:DM Mono,monospace">Loading live lines...</div>`;
 
   const data = await fetchLiveLines(gameId, awayTeam, homeTeam);
   if (!data) {
-    el.innerHTML = '<div style="padding:8px;color:var(--red);font-size:11px;font-family:'DM Mono',monospace">Could not load lines</div>';
+    el.innerHTML = '<div style="padding:8px;color:var(--red);font-size:11px;font-family:DM Mono,monospace">Could not load lines</div>';
     return;
   }
 
@@ -481,26 +481,26 @@ async function showLiveLines(gameId, awayTeam, homeTeam) {
 
   el.innerHTML = `<div>
     <div style="padding:6px 8px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
-      <span style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted)">LIVE LINES · ${new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>
+      <span style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted)">LIVE LINES · ${new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>
       <div style="display:flex;gap:4px">
-        <button onclick="setLiveLineMode('manual')" style="padding:2px 8px;font-size:10px;font-family:'DM Mono',monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='manual'?'var(--s3)':'var(--s2)'};color:${liveLineMode==='manual'?'var(--text)':'var(--muted)'}">manual</button>
-        <button onclick="setLiveLineMode('auto')" style="padding:2px 8px;font-size:10px;font-family:'DM Mono',monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='auto'?'var(--green-bg)':'var(--s2)'};color:${liveLineMode==='auto'?'var(--green)':'var(--muted)'}">auto 30s</button>
+        <button onclick="setLiveLineMode('manual')" style="padding:2px 8px;font-size:10px;font-family:DM Mono,monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='manual'?'var(--s3)':'var(--s2)'};color:${liveLineMode==='manual'?'var(--text)':'var(--muted)'}">manual</button>
+        <button onclick="setLiveLineMode('auto')" style="padding:2px 8px;font-size:10px;font-family:DM Mono,monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='auto'?'var(--green-bg)':'var(--s2)'};color:${liveLineMode==='auto'?'var(--green)':'var(--muted)'}">auto 30s</button>
       </div>
     </div>
     <div style="overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:11px">
       <thead><tr style="border-bottom:1px solid var(--border)">
-        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">Book</th>
-        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">${away} ML</th>
-        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">${home} ML</th>
-        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">${away} RL</th>
-        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">${home} RL</th>
-        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">Over</th>
-        <th style="padding:5px 8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left">Under</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">Book</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">${away} ML</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">${home} ML</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">${away} RL</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">${home} RL</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">Over</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">Under</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;padding:4px 8px">↑ best available · ${liveLineMode==='auto'?'auto-refreshing 30s':'click manual to refresh'} · click header to hide</div>
+    <div style="font-size:10px;color:var(--muted);font-family:DM Mono,monospace;padding:4px 8px">↑ best available · ${liveLineMode==='auto'?'auto-refreshing 30s':'click manual to refresh'} · click header to hide</div>
     </div>
   </div>`;
 }
@@ -696,8 +696,8 @@ function marketCell(label, verdict, ev, isBest, line, projTotal, breakeven) {
   const v = verdict || 'SKIP';
   const cls = v.startsWith('BET') ? 'mv-bet' : v.includes('LEAN') ? 'mv-lean' : v.includes('OVER') ? 'mv-over' : v.includes('UNDER') ? 'mv-under' : 'mv-skip';
   const evHtml = ev != null && ev !== 0 ? `<div class="ev-val ${ev >= 0 ? 'ev-pos' : 'ev-neg'}">${ev >= 0 ? '+' : ''}${parseFloat(ev).toFixed(1)}% EV</div>` : '';
-  const lineHtml = line != null && projTotal != null && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>` : '';
-  const breakHtml = breakeven && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--amber);font-family:'DM Mono',monospace;margin-top:1px">max: ${breakeven}</div>` : '';
+  const lineHtml = line != null && projTotal != null && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--muted);font-family:DM Mono,monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>` : '';
+  const breakHtml = breakeven && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>` : '';
   return `<div class="market-cell${isBest ? ' best' : ''}"><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}</div>`;
 }
 
@@ -760,7 +760,7 @@ function statcastHTML(g) {
   }
 
   if (!rows.length) return '';
-  return `<table style="width:100%;border-collapse:collapse;margin-bottom:8px;font-size:11px;font-family:'DM Mono',monospace">
+  return `<table style="width:100%;border-collapse:collapse;margin-bottom:8px;font-size:11px;font-family:DM Mono,monospace">
     <thead><tr>
       <th class="ol" style="color:var(--muted);padding:3px 6px;border-bottom:1px solid var(--border);text-align:left">Statcast</th>
       <th style="color:var(--muted);padding:3px 6px;border-bottom:1px solid var(--border);text-align:left">Velo</th>
@@ -797,36 +797,36 @@ function juiceSensitivityHTML(g) {
       const evColor = ev >= 4 ? 'var(--green)' : ev >= 2 ? 'var(--amber)' : 'var(--muted)';
       const juiceStr = juice > 0 ? '+' + juice : juice;
       return `<tr>
-        <td style="padding:4px 8px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text)">${l.direction} ${l.line}</td>
-        <td style="padding:4px 8px;font-family:'DM Mono',monospace;font-size:11px;color:${juiceColor};font-weight:500">max: ${juiceStr}</td>
-        <td style="padding:4px 8px;font-family:'DM Mono',monospace;font-size:11px;color:${evColor}">${ev >= 0 ? '+' : ''}${ev.toFixed(1)}% EV</td>
+        <td style="padding:4px 8px;font-family:DM Mono,monospace;font-size:11px;color:var(--text)">${l.direction} ${l.line}</td>
+        <td style="padding:4px 8px;font-family:DM Mono,monospace;font-size:11px;color:${juiceColor};font-weight:500">max: ${juiceStr}</td>
+        <td style="padding:4px 8px;font-family:DM Mono,monospace;font-size:11px;color:${evColor}">${ev >= 0 ? '+' : ''}${ev.toFixed(1)}% EV</td>
       </tr>`;
     }).join('');
   }
 
   return `<div style="margin-bottom:8px">
     <button onclick="document.getElementById('${id}').style.display=document.getElementById('${id}').style.display==='none'?'block':'none'" 
-      style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;cursor:pointer;width:100%">
+      style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted);background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;cursor:pointer;width:100%">
       line shopping guide ▾
     </button>
     <div id="${id}" style="display:none;background:var(--s2);border:1px solid var(--border);border-radius:0 0 6px 6px;overflow:hidden">
       ${totalData?.lines?.length && hasTotalBet ? `
-        <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);padding:6px 8px 2px;text-transform:uppercase;letter-spacing:.05em">Full game total</div>
+        <div style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted);padding:6px 8px 2px;text-transform:uppercase;letter-spacing:.05em">Full game total</div>
         <table style="width:100%;border-collapse:collapse">
           <thead><tr>
-            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Line</th>
-            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Max juice</th>
-            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">EV @-110</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Line</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Max juice</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">EV @-110</th>
           </tr></thead>
           <tbody>${buildRows(totalData.lines)}</tbody>
         </table>` : ''}
       ${f5Data?.lines?.length && hasF5Bet ? `
-        <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);padding:6px 8px 2px;text-transform:uppercase;letter-spacing:.05em;border-top:1px solid var(--border)">F5 total</div>
+        <div style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted);padding:6px 8px 2px;text-transform:uppercase;letter-spacing:.05em;border-top:1px solid var(--border)">F5 total</div>
         <table style="width:100%;border-collapse:collapse">
           <thead><tr>
-            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Line</th>
-            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Max juice</th>
-            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">EV @-110</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Line</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Max juice</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">EV @-110</th>
           </tr></thead>
           <tbody>${buildRows(f5Data.lines)}</tbody>
         </table>` : ''}
@@ -838,7 +838,7 @@ function pitcherEdgeHTML(g) {
   if (!g.pitcher_edge || g.pitcher_edge === 'EVEN' || !g.analyzed) return '';
   const color = g.pitcher_edge === g.away_team ? 'var(--blue)' : 'var(--purple)';
   const side = g.pitcher_edge === g.away_team ? g.away_team.split(' ').pop() : g.home_team.split(' ').pop();
-  return `<div style="font-size:11px;font-family:'DM Mono',monospace;color:${color};margin-bottom:6px">⚾ pitcher edge → ${side}</div>`;
+  return `<div style="font-size:11px;font-family:DM Mono,monospace;color:${color};margin-bottom:6px">⚾ pitcher edge → ${side}</div>`;
 }
 
 function weatherHTML(g) {
@@ -868,7 +868,7 @@ function weatherHTML(g) {
     <span style="color:var(--muted)">${g.weather_wind_speed}mph</span>` : 
     `<span style="color:var(--muted)">${g.weather_wind_speed||'?'}mph</span>`;
 
-  return `<div style="font-size:11px;font-family:'DM Mono',monospace;margin-bottom:8px">
+  return `<div style="font-size:11px;font-family:DM Mono,monospace;margin-bottom:8px">
     <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
       <span>${hasFlag ? '⚠️' : '🌤️'}</span>
       <span style="color:var(--muted)">${g.weather_temp||'?'}°F, ${g.weather_summary.split(',')[1]?.trim().split(',')[0]||''}</span>
@@ -897,7 +897,7 @@ function oddsTableHTML(g) {
     rows.push(`<tr><td class="ol">F5 Tot</td><td class="ov">O${g.f5_total} <strong>${g.f5_over_odds||'?'}</strong></td><td class="ov">U${g.f5_total} <strong>${g.f5_under_odds||'?'}</strong></td><td class="ov">—</td></tr>`);
   }
   if (!rows.length) return '';
-  return `<table style="width:100%;border-collapse:collapse;margin-bottom:10px;font-size:11px;font-family:'DM Mono',monospace">
+  return `<table style="width:100%;border-collapse:collapse;margin-bottom:10px;font-size:11px;font-family:DM Mono,monospace">
     <thead><tr><th class="ol" style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)"></th><th style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">Away</th><th style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">Home</th><th style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">Public %</th></tr></thead>
     <tbody>${rows.join('')}</tbody>
   </table>`;
@@ -943,7 +943,7 @@ function gameCardHTML(g) {
       </div>
       <div class="card-time" style="text-align:right">
         ${time}<br>${edgeBadge(g)}
-        ${g.ml_away_prob && g.ml_home_prob ? `<div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);margin-top:3px">${Math.round(g.ml_away_prob)}% / ${Math.round(g.ml_home_prob)}%</div>` : ''}
+        ${g.ml_away_prob && g.ml_home_prob ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted);margin-top:3px">${Math.round(g.ml_away_prob)}% / ${Math.round(g.ml_home_prob)}%</div>` : ''}
       </div>
     </div>
     <div class="card-body">
