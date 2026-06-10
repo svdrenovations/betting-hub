@@ -1,1124 +1,1538 @@
-#!/usr/bin/env node
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLB Betting Hub</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600&display=swap');
+:root {
+  --bg:#0a0c0f;--s1:#111318;--s2:#181c23;--s3:#1f242d;
+  --border:#252b35;--border2:#2f3847;
+  --text:#e2e6f0;--muted:#6b7489;--dim:#363d4e;
+  --green:#34d399;--green-bg:#0a1f16;--green-dim:#1a3d2a;
+  --red:#f87171;--red-bg:#200d0d;--red-dim:#3d1a1a;
+  --amber:#fbbf24;--amber-bg:#1f1508;--amber-dim:#3d2c0a;
+  --blue:#60a5fa;--blue-bg:#0a1525;--blue-dim:#0f2540;
+  --purple:#a78bfa;--purple-bg:#130f24;
+  --over:#38bdf8;--under:#fb923c;--sharp:#f472b6;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);font-size:14px;min-height:100vh}
+.mono{font-family:DM Mono,monospace}
+nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;display:flex;align-items:center;justify-content:space-between;height:56px;position:sticky;top:0;z-index:100}
+.nav-logo{font-weight:600;font-size:16px;letter-spacing:-.3px}
+.nav-logo span{color:var(--green)}
+.nav-tabs{display:flex}
+.nav-tab{padding:0 16px;height:56px;display:flex;align-items:center;font-size:13px;font-weight:500;color:var(--muted);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent}
+.nav-tab.on{color:var(--text);border-bottom-color:var(--green)}
+.nav-record{font-family:DM Mono,monospace;font-size:12px;color:var(--muted)}
+.container{max-width:1100px;margin:0 auto;padding:1.5rem}
+.page{display:none}.page.on{display:block}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem}
+.topbar-left h2{font-size:18px;font-weight:600;letter-spacing:-.3px}
+.topbar-left p{font-size:13px;color:var(--muted);margin-top:2px}
+.pulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:5px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
+.btn{padding:9px 18px;font-size:13px;font-weight:500;background:var(--s2);border:1px solid var(--border2);border-radius:8px;color:var(--text);cursor:pointer;font-family:'DM Sans',sans-serif}
+.btn:hover{background:var(--s3)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.date-nav{display:flex;align-items:center;gap:10px;margin-bottom:1.25rem;flex-wrap:wrap}
+.date-btn{padding:6px 12px;font-size:12px;font-family:DM Mono,monospace;background:var(--s2);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer}
+.date-btn:hover{background:var(--s3);color:var(--text)}
+.date-btn.on{border-color:var(--green);color:var(--green)}
+.date-display{font-family:DM Mono,monospace;font-size:13px;font-weight:500;color:var(--text)}
+.filters{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap}
+.filter-btn{padding:5px 12px;font-size:12px;border-radius:20px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:DM Mono,monospace}
+.filter-btn.on{background:var(--s2);color:var(--text);border-color:var(--border2)}
+.games-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+.game-card{background:var(--s1);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:border-color .15s}
+.game-card:hover{border-color:var(--border2)}
+.game-card.edge-high{border-color:var(--green);box-shadow:0 0 0 1px var(--green-bg)}
+.game-card.edge-med{border-color:var(--amber)}
+.card-header{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start}
+.card-matchup{font-size:15px;font-weight:600;letter-spacing:-.2px}
+.card-meta{font-size:11px;color:var(--muted);font-family:DM Mono,monospace;margin-top:3px}
+.card-time{font-size:12px;font-family:DM Mono,monospace;color:var(--muted);text-align:right}
+.card-body{padding:12px 14px}
+.sit-flags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;min-height:22px}
+.sit-flag{font-size:10px;font-weight:500;padding:2px 7px;border-radius:4px;font-family:DM Mono,monospace}
+.sf-revenge{background:#1a1030;color:#9aa3b8}
+.sf-travel{background:#0d1825;color:#9aa3b8}
+.sf-sharp{background:#200d18;color:#9aa3b8}
+.sf-weather{background:#0d1a10;color:#9aa3b8}
+.sf-rest{background:var(--amber-bg);color:#9aa3b8}
+.sf-series{background:#0d1820;color:#9aa3b8}
+.sf-fade{background:var(--red-bg);color:#9aa3b8}
+.sf-none{background:var(--s2);color:#9aa3b8;font-size:10px}
+.markets{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
+.market-cell{background:var(--s2);border-radius:6px;padding:7px 8px;text-align:center;border:1px solid transparent}
+.market-cell.best{border-color:var(--green)}
+.market-label{font-size:10px;font-family:DM Mono,monospace;color:var(--muted);margin-bottom:3px}
+.market-val{font-size:12px;font-weight:600}
+.mv-bet{color:var(--green)}.mv-lean{color:var(--amber)}.mv-skip{color:var(--dim)}
+.mv-over{color:var(--over)}.mv-under{color:var(--under)}
+.ev-val{font-size:10px;font-family:DM Mono,monospace;margin-top:2px}
+.ev-pos{color:var(--green)}.ev-neg{color:var(--muted)}
+.line-move{display:flex;align-items:center;gap:8px;font-size:11px;font-family:DM Mono,monospace;color:var(--muted);margin-bottom:8px}
+.lm-sharp{color:var(--sharp);font-weight:500}
+.analysis-full{font-size:12px;line-height:1.7;color:#9aa3b8;margin-bottom:8px}
+.analysis-label{font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;margin-top:8px}
+.edge-badge{display:inline-flex;align-items:center;font-size:11px;font-weight:500;padding:3px 8px;border-radius:4px;font-family:DM Mono,monospace}
+.eb-high{background:var(--green-bg);color:var(--green);border:1px solid var(--green-dim)}
+.eb-med{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-dim)}
+.eb-skip{background:var(--red-bg);color:var(--red);border:1px solid var(--red-dim)}
+.card-actions{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
+.btn-expand{padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:DM Mono,monospace}
+.btn-log{padding:6px 12px;font-size:12px;font-weight:500;border-radius:6px;border:1px solid var(--green-dim);background:var(--green-bg);color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif}
+.best-plays{background:var(--s1);border:1px solid var(--green-dim);border-radius:12px;padding:1rem 1.25rem;margin-bottom:1.5rem;display:none}
+.best-plays.show{display:block}
+.bp-title{font-size:12px;font-family:DM Mono,monospace;color:var(--green);text-transform:uppercase;letter-spacing:.07em;margin-bottom:.75rem}
+.bp-grid{display:flex;gap:10px;flex-wrap:wrap}
+.bp-item{background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer}
+.bp-item:hover{background:#0d2a1e}
+.bp-matchup{font-weight:600;margin-bottom:2px}
+.bp-play{font-family:DM Mono,monospace;color:var(--green);font-size:11px}
+.bp-conf{font-size:10px;color:var(--muted);margin-top:2px}
+.empty-state{text-align:center;padding:4rem 2rem}
+.empty-icon{font-size:40px;margin-bottom:1rem;opacity:.3}
+.empty-title{font-size:16px;font-weight:500;margin-bottom:.5rem}
+.empty-sub{font-size:13px;color:var(--muted);line-height:1.6}
+.loading-wrap{text-align:center;padding:4rem}
+.loading-dots span{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--muted);margin:0 3px;animation:dot 1.2s infinite}
+.loading-dots span:nth-child(2){animation-delay:.2s}
+.loading-dots span:nth-child(3){animation-delay:.4s}
+@keyframes dot{0%,80%,100%{transform:scale(1);opacity:.4}40%{transform:scale(1.4);opacity:1}}
+.last-updated{font-size:11px;font-family:DM Mono,monospace;color:var(--muted);margin-bottom:1rem}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
+.modal-overlay.show{display:flex}
+.modal{background:var(--s1);border:1px solid var(--border2);border-radius:14px;padding:1.5rem;width:100%;max-width:440px}
+.modal-title{font-size:16px;font-weight:600;margin-bottom:1.25rem}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.form-field label{font-size:11px;font-family:DM Mono,monospace;color:var(--muted);display:block;margin-bottom:4px;text-transform:uppercase}
+.form-field input,.form-field select{width:100%;padding:8px 10px;font-size:13px;background:var(--s2);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-family:'DM Sans',sans-serif;outline:none}
+.modal-actions{display:flex;gap:8px;margin-top:1rem}
+.btn-save{flex:1;padding:10px;font-size:13px;font-weight:500;background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif}
+.btn-cancel{padding:10px 16px;font-size:13px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);cursor:pointer;font-family:'DM Sans',sans-serif}
+.t-table-wrap{overflow-x:auto}
+.t-table{width:100%;border-collapse:collapse;min-width:700px}
+.t-table th{font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);text-transform:uppercase;white-space:nowrap}
+.t-table td{font-size:12px;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+.t-table tr:hover td{background:var(--s2)}
+.rsel button{padding:3px 7px;font-size:11px;border-radius:4px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--muted);margin-right:3px;font-family:DM Mono,monospace}
+.rsel button.on{background:var(--s2);color:var(--text);border-color:var(--border2)}
+.rsel button.win-btn.on{background:var(--green-bg);color:var(--green);border-color:var(--green-dim)}
+.rsel button.loss-btn.on{background:var(--red-bg);color:var(--red);border-color:var(--red-dim)}
+.rsel button.push-btn.on{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-dim)}
+.rsel button.pending-btn.on{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-dim)}
+.ep{color:var(--green);font-weight:500}.en{color:var(--red);font-weight:500}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:1.5rem}
+.stat-card{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:1rem;text-align:center}
+.stat-label{font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.stat-val{font-size:26px;font-weight:600}
+.stat-sub{font-size:11px;color:var(--muted);margin-top:4px;font-family:DM Mono,monospace}
+.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:7px}
+.bar-lbl{font-size:11px;font-family:DM Mono,monospace;color:var(--muted);width:140px;flex-shrink:0;text-align:right}
+.bar-track{flex:1;background:var(--s2);border-radius:3px;height:14px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px}
+.bar-val{font-size:11px;font-family:DM Mono,monospace;font-weight:500;width:40px;text-align:right}
+.section-head{font-size:11px;font-family:DM Mono,monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin:1.5rem 0 .75rem;padding-bottom:.5rem;border-bottom:1px solid var(--border)}
+.tracker-filters{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap}
+.ol{color:var(--muted);padding:4px 6px;text-align:left;white-space:nowrap}
+.ov{color:var(--text);padding:4px 6px}
+.ov strong{color:var(--green)}
+.disc{font-size:11px;color:var(--dim);font-family:DM Mono,monospace;line-height:1.6;padding:1.5rem 0;border-top:1px solid var(--border);margin-top:2rem}
+@media(max-width:600px){
+  .markets{grid-template-columns:repeat(2,1fr)}
+  .games-grid{grid-template-columns:1fr}
+  nav{padding:0 1rem}
+  .container{padding:1rem}
+  .form-row{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
 
-const ODDS_API_KEY = process.env.ODDS_API_KEY;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
-const RUN_TYPE = process.env.RUN_TYPE || '11am';
+<nav>
+  <div class="nav-logo">MLB <span>Hub</span></div>
+  <div class="nav-tabs">
+    <button class="nav-tab on" onclick="goPage('games',this)">Games</button>
+    <button class="nav-tab" onclick="goPage('tracker',this)">Tracker</button>
+    <button class="nav-tab" onclick="goPage('stats',this)">Stats</button>
+  </div>
+  <div class="nav-record mono" id="nav-record">—</div>
+</nav>
 
-// MLB park coordinates and orientation
-// homeplateFacing = compass direction home plate faces (degrees)
-// Wind blowing FROM opposite direction = blowing OUT to CF
-const PARK_COORDS = {
-  'Arizona Diamondbacks': { lat: 33.4453, lon: -112.0667, dome: true },
-  'Atlanta Braves': { lat: 33.8908, lon: -84.4681, dome: false , homeplateFacing: 15},
-  'Baltimore Orioles': { lat: 39.2838, lon: -76.6218, dome: false , homeplateFacing: 95},
-  'Boston Red Sox': { lat: 42.3467, lon: -71.0972, dome: false , homeplateFacing: 95},
-  'Chicago Cubs': { lat: 41.9484, lon: -87.6553, dome: false , homeplateFacing: 140},
-  'Chicago White Sox': { lat: 41.8300, lon: -87.6339, dome: false , homeplateFacing: 135},
-  'Cincinnati Reds': { lat: 39.0979, lon: -84.5082, dome: false , homeplateFacing: 0},
-  'Cleveland Guardians': { lat: 41.4962, lon: -81.6852, dome: false , homeplateFacing: 150},
-  'Colorado Rockies': { lat: 39.7559, lon: -104.9942, dome: false , homeplateFacing: 20},
-  'Detroit Tigers': { lat: 42.3390, lon: -83.0485, dome: false , homeplateFacing: 170},
-  'Houston Astros': { lat: 29.7573, lon: -95.3555, dome: true },
-  'Kansas City Royals': { lat: 39.0517, lon: -94.4803, dome: false , homeplateFacing: 5},
-  'Los Angeles Angels': { lat: 33.8003, lon: -117.8827, dome: false , homeplateFacing: 180},
-  'Los Angeles Dodgers': { lat: 34.0739, lon: -118.2400, dome: false , homeplateFacing: 335},
-  'Miami Marlins': { lat: 25.7781, lon: -80.2197, dome: true },
-  'Milwaukee Brewers': { lat: 43.0280, lon: -87.9712, dome: true },
-  'Minnesota Twins': { lat: 44.9817, lon: -93.2777, dome: false , homeplateFacing: 100},
-  'New York Mets': { lat: 40.7571, lon: -73.8458, dome: false , homeplateFacing: 335},
-  'New York Yankees': { lat: 40.8296, lon: -73.9262, dome: false , homeplateFacing: 325},
-  'Oakland Athletics': { lat: 37.7516, lon: -122.2005, dome: false , homeplateFacing: 60},
-  'Philadelphia Phillies': { lat: 39.9061, lon: -75.1665, dome: false , homeplateFacing: 340},
-  'Pittsburgh Pirates': { lat: 40.4469, lon: -80.0057, dome: false , homeplateFacing: 30},
-  'San Diego Padres': { lat: 32.7076, lon: -117.1570, dome: false , homeplateFacing: 300},
-  'San Francisco Giants': { lat: 37.7786, lon: -122.3893, dome: false , homeplateFacing: 30},
-  'Seattle Mariners': { lat: 47.5914, lon: -122.3325, dome: true },
-  'St. Louis Cardinals': { lat: 38.6226, lon: -90.1928, dome: false , homeplateFacing: 108},
-  'Tampa Bay Rays': { lat: 27.7683, lon: -82.6534, dome: true },
-  'Texas Rangers': { lat: 32.7473, lon: -97.0845, dome: true },
-  'Toronto Blue Jays': { lat: 43.6414, lon: -79.3894, dome: true },
-  'Washington Nationals': { lat: 38.8730, lon: -77.0074, dome: false , homeplateFacing: 80}
-};
+<div class="page on" id="page-games">
+<div class="container">
+  <div class="topbar">
+    <div class="topbar-left">
+      <h2><span class="pulse"></span>Today's MLB games</h2>
+      <p id="games-subtitle">Loading today's analysis...</p>
+    </div>
+    <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px">
+      <button class="btn" id="settle-btn" onclick="settleBets()">Settle pending →</button>
+      <button class="btn" onclick="exportCSV()">Export CSV</button>
+    </div>
+      <button class="btn" onclick="loadGames(true)" id="refresh-btn">Refresh →</button>
+    </div>
+  </div>
 
-// Fetch weather for home park
-async function fetchWeather(homeTeam, gameTime) {
+  <div class="date-nav">
+    <button class="date-btn" onclick="shiftDate(-1)">← prev</button>
+    <span class="date-display" id="date-display"></span>
+    <button class="date-btn" onclick="shiftDate(1)">next →</button>
+    <button class="date-btn" onclick="setToday()">today</button>
+    <span id="last-updated" class="last-updated"></span>
+  </div>
+
+  <div class="filters" id="filters" style="display:none">
+    <button class="filter-btn on" onclick="setFilter('all',this)">All games</button>
+    <button class="filter-btn" onclick="setFilter('edge',this)">Edge plays only</button>
+    <button class="filter-btn" onclick="setFilter('sit',this)">Has situation flag</button>
+    <button class="filter-btn" onclick="setFilter('sharp',this)">Sharp action</button>
+    <button class="filter-btn" onclick="setFilter('skip',this)">Skip games</button>
+  </div>
+
+  <div class="best-plays" id="best-plays">
+    <div class="bp-title">Top plays today</div>
+    <div class="bp-grid" id="bp-grid"></div>
+  </div>
+
+  <div id="games-container">
+    <div class="loading-wrap">
+      <div class="loading-dots"><span></span><span></span><span></span></div>
+      <p style="color:var(--muted);font-size:13px;margin-top:1rem">Loading today's games...</p>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="page" id="page-tracker">
+<div class="container">
+  <div class="topbar">
+    <div class="topbar-left">
+      <h2>Bet tracker</h2>
+      <p id="tracker-subtitle">Your logged bets</p>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" id="settle-btn" onclick="settleBets()">Settle pending →</button>
+      <button class="btn" onclick="exportCSV()">Export CSV</button>
+    </div>
+  </div>
+  <div class="tracker-filters">
+    <button class="filter-btn on" onclick="setTrackerFilter('all',this)">All</button>
+    <button class="filter-btn" onclick="setTrackerFilter('pending',this)">Pending</button>
+    <button class="filter-btn" onclick="setTrackerFilter('win',this)">Wins</button>
+    <button class="filter-btn" onclick="setTrackerFilter('loss',this)">Losses</button>
+  </div>
+  <div class="t-table-wrap" id="tracker-table">
+    <div class="empty-state"><div class="empty-title">No bets logged yet</div></div>
+  </div>
+</div>
+</div>
+
+<div class="page" id="page-stats">
+<div class="container">
+  <div class="topbar">
+    <div class="topbar-left"><h2>My edge stats</h2><p>Where your real edge lives</p></div>
+  </div>
+  <div id="stats-content">
+    <div class="empty-state"><div class="empty-title">No data yet</div><div class="empty-sub">Log and settle bets to see your stats.</div></div>
+  </div>
+</div>
+</div>
+
+<div class="modal-overlay" id="log-modal">
+  <div class="modal">
+    <div class="modal-title">Log bet</div>
+    <div class="form-row">
+      <div class="form-field"><label>Matchup</label><input id="log-matchup" readonly></div>
+      <div class="form-field"><label>Date</label><input id="log-date" readonly></div>
+    </div>
+    <div class="form-row">
+      <div class="form-field"><label>Bet type</label>
+        <select id="log-type">
+          <option>Moneyline (away)</option><option>Moneyline (home)</option>
+          <option>RL -1.5</option><option>RL +1.5</option>
+          <option>Game total over</option><option>Game total under</option>
+          <option>F5 moneyline (away)</option><option>F5 moneyline (home)</option>
+          <option>F5 total over</option><option>F5 total under</option>
+        </select>
+      </div>
+      <div class="form-field"><label>Book</label>
+        <select id="log-book">
+          <option value="">Select book</option>
+          <option>DraftKings</option>
+          <option>FanDuel</option>
+          <option>Caesars</option>
+          <option>BetMGM</option>
+          <option>Bet365</option>
+          <option>ESPNBet</option>
+          <option>Fanatics</option>
+          <option>PointsBet</option>
+          <option>BetRivers</option>
+          <option>Hard Rock</option>
+          <option>Kalshi</option>
+          <option>Coinbase</option>
+          <option>Polymarket</option>
+          <option>Other</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-field"><label>Odds</label><input id="log-odds" placeholder="-115" oninput="calcLiveEV()"></div>
+      <div class="form-field"><label>Spread / Total</label><input id="log-line" placeholder="e.g. 7.5, -1.5"></div>
+    </div>
+    <div style="font-size:13px;font-weight:600;font-family:DM Mono,monospace;margin-bottom:8px;min-height:20px;padding:0 4px" id="log-ev-display"></div>
+    <input type="hidden" id="log-sit">
+    <div class="form-row">
+      <div class="form-field"><label>Units risked</label><input id="log-units" type="number" min="0.5" max="10" step="0.5" placeholder="1.0"></div>
+      <div class="form-field"><label>Max juice</label><input id="log-max-juice" placeholder="e.g. -112"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-field"><label>Notes</label><input id="log-notes" placeholder="optional"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-save" onclick="saveBet()">Save bet</button>
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT MODAL -->
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal">
+    <div class="modal-title">Edit bet</div>
+    <div class="form-row">
+      <div class="form-field"><label>Matchup</label><input id="edit-matchup"></div>
+      <div class="form-field"><label>Date</label><input id="edit-date"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-field"><label>Bet type</label>
+        <select id="edit-type">
+          <option>Moneyline (away)</option><option>Moneyline (home)</option>
+          <option>RL -1.5</option><option>RL +1.5</option>
+          <option>Game total over</option><option>Game total under</option>
+          <option>F5 moneyline (away)</option><option>F5 moneyline (home)</option>
+          <option>F5 total over</option><option>F5 total under</option>
+        </select>
+      </div>
+      <div class="form-field"><label>Book</label>
+        <select id="edit-book">
+          <option value="">Select book</option>
+          <option>DraftKings</option><option>FanDuel</option><option>Caesars</option>
+          <option>BetMGM</option><option>Bet365</option><option>ESPNBet</option>
+          <option>Fanatics</option><option>PointsBet</option><option>BetRivers</option>
+          <option>Hard Rock</option><option>Kalshi</option><option>Coinbase</option>
+          <option>Polymarket</option><option>Other</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-field"><label>Odds</label><input id="edit-odds" placeholder="-115"></div>
+      <div class="form-field"><label>Spread / Total</label><input id="edit-line" placeholder="e.g. 7.5, -1.5"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-field"><label>Units risked</label><input id="edit-units" type="number" min="0.5" max="10" step="0.5"></div>
+      <div class="form-field"><label>Max juice</label><input id="edit-max-juice" placeholder="e.g. -112"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-field"><label>Result</label>
+        <select id="edit-result">
+          <option>pending</option><option>win</option><option>loss</option><option>push</option>
+        </select>
+      </div>
+      <div class="form-field"><label>Notes</label><input id="edit-notes"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-save" onclick="saveEdit()">Save changes</button>
+      <button class="btn-cancel" onclick="closeEditModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUPABASE_URL = 'https://crfgkpqkmqfvyyifmprj.supabase.co';
+const ODDS_API_KEY = '3a041de5ae728cd0259c26d9d846e6ac';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNyZmdrcHFrbXFmdnl5aWZtcHJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwMzg5OTYsImV4cCI6MjA5NjYxNDk5Nn0.FH9ViDkYdnu_iR2s6kDAglBMb6waJljcaMTeqb8J8jY';
+
+let games = [];
+let bets = [];
+// Use local date to avoid UTC offset issues
+function getLocalDate() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+let currentDate = getLocalDate();
+let currentFilter = 'all';
+let trackerFilter = 'all';
+let pendingLog = null;
+let expanded = {};
+
+// ── LIVE LINES ───────────────────────────────────────────────────────────────
+const liveLineCache = {};
+let liveLineMode = 'manual'; // 'manual' or 'auto'
+let liveLineIntervals = {};
+
+async function fetchLiveLines(gameId, awayTeam, homeTeam) {
+  // Return cache if less than 5 minutes old
+  if (liveLineCache[gameId] && Date.now() - liveLineCache[gameId].ts < 300000) {
+    return liveLineCache[gameId].data;
+  }
+
   try {
-    let park = PARK_COORDS[homeTeam];
-    if (!park) {
-      // fuzzy match
-      const key = Object.keys(PARK_COORDS).find(k => k.includes(homeTeam.split(' ').pop()) || homeTeam.includes(k.split(' ').pop()));
-      if (key) park = PARK_COORDS[key];
-    }
-    if (!park) { console.log(`  No park found for ${homeTeam}`); return null; }
-    if (park.dome) return { dome: true, description: 'Indoor dome — weather not a factor' };
-
-    const res = await fetch(
-      `https://api.openweathermap.org/data/2.5/forecast?lat=${park.lat}&lon=${park.lon}&appid=${WEATHER_API_KEY}&units=imperial`
-    );
+    const url = `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=h2h,spreads,totals&oddsFormat=american&dateFormat=iso`;
+    const res = await fetch(url);
     if (!res.ok) return null;
-    const data = await res.json();
+    const games = await res.json();
 
-    const gameTs = new Date(gameTime).getTime();
-    const closest = data.list.reduce((best, item) => {
-      const diff = Math.abs(new Date(item.dt * 1000).getTime() - gameTs);
-      return !best || diff < Math.abs(new Date(best.dt * 1000).getTime() - gameTs) ? item : best;
-    }, null);
-
-    if (!closest) return null;
-
-    const wind = closest.wind;
-    const temp = Math.round(closest.main.temp);
-    const desc = closest.weather[0].description;
-    const windSpeed = Math.round(wind.speed);
-    const windDeg = wind.deg;
-
-    // Calculate wind direction relative to stadium
-    const homeplateFacing = park.homeplateFacing || 0;
-    
-    // Wind blowing FROM a direction means it travels TO the opposite
-    // If wind is FROM the west (270°) and home plate faces west, wind blows IN from CF
-    // If wind is FROM the east (90°) and home plate faces west, wind blows OUT to CF
-    
-    // Angle between wind source and home plate facing
-    const windFrom = windDeg; // meteorological: direction wind comes FROM
-    const windTo = (windDeg + 180) % 360; // direction wind is going TO
-    
-    // Relative angle: how wind aligns with home plate to CF axis
-    let relAngle = ((windTo - homeplateFacing) + 360) % 360;
-    
-    // Determine field direction
-    let fieldWindDir, windImpact, windArrow;
-    if (relAngle <= 45 || relAngle >= 315) {
-      fieldWindDir = 'OUT to CF';
-      windArrow = '↑';
-      windImpact = windSpeed >= 10 ? 'over' : 'neutral';
-    } else if (relAngle >= 135 && relAngle <= 225) {
-      fieldWindDir = 'IN from CF';
-      windArrow = '↓';
-      windImpact = windSpeed >= 10 ? 'under' : 'neutral';
-    } else if (relAngle > 45 && relAngle < 135) {
-      fieldWindDir = 'L to R';
-      windArrow = '→';
-      windImpact = 'neutral';
-    } else {
-      fieldWindDir = 'R to L';
-      windArrow = '←';
-      windImpact = 'neutral';
-    }
-
-    // Cardinal direction wind is coming from
-    const windCard = windDeg < 22.5 || windDeg >= 337.5 ? 'N' :
-                     windDeg < 67.5 ? 'NE' : windDeg < 112.5 ? 'E' :
-                     windDeg < 157.5 ? 'SE' : windDeg < 202.5 ? 'S' :
-                     windDeg < 247.5 ? 'SW' : windDeg < 292.5 ? 'W' : 'NW';
-
-    // Upgrade wind impact for strong winds
-    if (windSpeed >= 18 && windImpact === 'over') windImpact = 'significant over';
-    if (windSpeed >= 18 && windImpact === 'under') windImpact = 'significant under';
-
-    // Flag significant weather
-    const flags = [];
-    if (windSpeed >= 15) flags.push(windSpeed >= 20 ? 'HIGH WIND' : 'WIND FACTOR');
-    if (temp <= 45) flags.push('COLD WEATHER');
-    if (temp >= 90) flags.push('HOT WEATHER');
-    if (desc.includes('rain') || desc.includes('storm')) flags.push('RAIN RISK');
-    if (windSpeed >= 10 && (fieldWindDir === 'OUT to CF' || fieldWindDir === 'IN from CF')) {
-      flags.push(windImpact.toUpperCase());
-    }
-
-    return {
-      dome: false,
-      temp,
-      desc,
-      windSpeed,
-      windCard,
-      fieldWindDir,
-      windArrow,
-      windImpact,
-      flags,
-      summary: `${temp}°F, ${desc}, wind ${windSpeed}mph ${windCard} (${windArrow} ${fieldWindDir})${flags.length ? ' — ' + flags.join(', ') : ''}`
-    };
-  } catch(e) {
-    console.log(`  Weather error for ${homeTeam}:`, e.message);
-    return null;
-  }
-}
-
-// Fetch MLB pitcher stats from MLB Stats API (free, no key needed)
-async function fetchPitcherStats(pitcherName) {
-  try {
-    if (!pitcherName || pitcherName === 'TBD') return null;
-    const lastName = pitcherName.split(' ').pop();
-    const searchRes = await fetch(
-      `https://statsapi.mlb.com/api/v1/people/search?names=${encodeURIComponent(lastName)}&sportId=1`
+    const game = games.find(g =>
+      (g.away_team.includes(awayTeam.split(' ').pop()) || awayTeam.includes(g.away_team.split(' ').pop())) &&
+      (g.home_team.includes(homeTeam.split(' ').pop()) || homeTeam.includes(g.home_team.split(' ').pop()))
     );
-    if (!searchRes.ok) return null;
-    const searchData = await searchRes.json();
-    const people = searchData.people || [];
-    if (!people.length) return null;
+    if (!game) return null;
 
-    const pitcher = people.find(p =>
-      p.fullName.toLowerCase().includes(pitcherName.toLowerCase().split(' ')[0].toLowerCase())
-    ) || people[0];
-
-    const statsRes = await fetch(
-      `https://statsapi.mlb.com/api/v1/people/${pitcher.id}/stats?stats=season,gameLog&group=pitching&season=2026&limit=5`
-    );
-    if (!statsRes.ok) return null;
-    const statsData = await statsRes.json();
-
-    const seasonStats = statsData.stats?.find(s => s.type?.displayName === 'season')?.splits?.[0]?.stat;
-    const gameLog = statsData.stats?.find(s => s.type?.displayName === 'gameLog')?.splits?.slice(0, 5) || [];
-
-    if (!seasonStats) return null;
-
-    const last3 = gameLog.slice(0, 3).map(g => ({
-      era: g.stat?.era,
-      ip: g.stat?.inningsPitched,
-      er: g.stat?.earnedRuns,
-      date: g.date
-    }));
-
-    const recentERA = last3.length > 0
-      ? (last3.reduce((sum, g) => sum + parseFloat(g.er || 0), 0) /
-         last3.reduce((sum, g) => sum + parseFloat(g.ip || 1), 0) * 9).toFixed(2)
-      : null;
-
-    const trending = recentERA && seasonStats.era
-      ? parseFloat(recentERA) < parseFloat(seasonStats.era) - 0.5 ? 'HOT' :
-        parseFloat(recentERA) > parseFloat(seasonStats.era) + 0.5 ? 'COLD' : 'NEUTRAL'
-      : 'UNKNOWN';
-
-    return {
-      name: pitcher.fullName,
-      era: seasonStats.era,
-      whip: seasonStats.whip,
-      strikeouts: seasonStats.strikeOuts,
-      wins: seasonStats.wins,
-      losses: seasonStats.losses,
-      ip: seasonStats.inningsPitched,
-      recentERA,
-      trending,
-      last3
-    };
-  } catch(e) {
-    return null;
-  }
-}
-
-// Fetch team batting stats and hot/cold hitters
-async function fetchTeamStats(teamName) {
-  try {
-    const teamsRes = await fetch('https://statsapi.mlb.com/api/v1/teams?sportId=1&season=2026');
-    if (!teamsRes.ok) return null;
-    const teamsData = await teamsRes.json();
-    const team = teamsData.teams?.find(t =>
-      t.name.toLowerCase().includes(teamName.toLowerCase().split(' ').pop().toLowerCase()) ||
-      teamName.toLowerCase().includes(t.name.toLowerCase().split(' ').pop().toLowerCase())
-    );
-    if (!team) return null;
-
-    const statsRes = await fetch(
-      `https://statsapi.mlb.com/api/v1/teams/${team.id}/stats?stats=season&group=hitting&season=2026`
-    );
-    if (!statsRes.ok) return null;
-    const statsData = await statsRes.json();
-    const stats = statsData.stats?.[0]?.splits?.[0]?.stat;
-    if (!stats) return null;
-
-    // Get last 10 games record
-    const schedRes = await fetch(
-      `https://statsapi.mlb.com/api/v1/schedule?teamId=${team.id}&sportId=1&season=2026&gameType=R&startDate=2026-01-01&endDate=${new Date().toISOString().split('T')[0]}`
-    );
-    let last10 = null;
-    if (schedRes.ok) {
-      const schedData = await schedRes.json();
-      const games = schedData.dates?.flatMap(d => d.games) || [];
-      const completed = games.filter(g => g.status?.abstractGameState === 'Final').slice(-10);
-      const wins = completed.filter(g => {
-        const isHome = g.teams?.home?.team?.id === team.id;
-        return isHome ? g.teams?.home?.isWinner : g.teams?.away?.isWinner;
-      }).length;
-      last10 = `${wins}-${completed.length - wins}`;
-    }
-
-    return {
-      teamId: team.id,
-      teamName: team.name,
-      avg: stats.avg,
-      ops: stats.ops,
-      runs: stats.runs,
-      hr: stats.homeRuns,
-      obp: stats.obp,
-      slg: stats.slg,
-      last10
-    };
-  } catch(e) {
-    return null;
-  }
-}
-
-// Fetch today's probable pitchers from MLB Stats API
-async function fetchProbablePitchers(gameDate) {
-  try {
-    const res = await fetch(
-      `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${gameDate}&gameType=R&hydrate=probablePitcher(note),team`
-    );
-    if (!res.ok) return {};
-    const data = await res.json();
-    const pitcherMap = {};
-    for (const date of (data.dates || [])) {
-      for (const game of (date.games || [])) {
-        const awayId = game.teams?.away?.team?.id;
-        const homeId = game.teams?.home?.team?.id;
-        const awayPitcher = game.teams?.away?.probablePitcher;
-        const homePitcher = game.teams?.home?.probablePitcher;
-        if (awayPitcher) pitcherMap[`away_${awayId}`] = {
-          id: awayPitcher.id,
-          name: awayPitcher.fullName,
-          note: awayPitcher.note || null
-        };
-        if (homePitcher) pitcherMap[`home_${homeId}`] = {
-          id: homePitcher.id,
-          name: homePitcher.fullName,
-          note: homePitcher.note || null
-        };
+    const books = {};
+    for (const bm of (game.bookmakers || [])) {
+      const book = { name: bm.title };
+      for (const mkt of (bm.markets || [])) {
+        if (mkt.key === 'h2h') {
+          for (const o of mkt.outcomes) {
+            if (o.name === game.away_team) book.awayML = o.price > 0 ? `+${o.price}` : `${o.price}`;
+            if (o.name === game.home_team) book.homeML = o.price > 0 ? `+${o.price}` : `${o.price}`;
+          }
+        }
+        if (mkt.key === 'totals') {
+          const over = mkt.outcomes.find(o => o.name === 'Over');
+          const under = mkt.outcomes.find(o => o.name === 'Under');
+          if (over) {
+            book.total = over.point;
+            book.overOdds = over.price > 0 ? `+${over.price}` : `${over.price}`;
+            book.underOdds = under ? (under.price > 0 ? `+${under.price}` : `${under.price}`) : null;
+          }
+        }
+        if (mkt.key === 'spreads') {
+          for (const o of mkt.outcomes) {
+            if (o.name === game.away_team) {
+              book.awayRL = o.point > 0 ? `+${o.point}` : `${o.point}`;
+              book.awayRLOdds = o.price > 0 ? `+${o.price}` : `${o.price}`;
+            }
+            if (o.name === game.home_team) {
+              book.homeRL = o.point > 0 ? `+${o.point}` : `${o.point}`;
+              book.homeRLOdds = o.price > 0 ? `+${o.price}` : `${o.price}`;
+            }
+          }
+        }
       }
+      if (book.awayML) books[bm.key] = book;
     }
-    console.log(`Probable pitchers found: ${Object.keys(pitcherMap).length}`);
-    return pitcherMap;
+
+    // Calculate best lines
+    const bookList = Object.values(books);
+    if (bookList.length) {
+      const best = {
+        awayML: bookList.reduce((b, x) => !b || parseFloat(x.awayML) > parseFloat(b) ? x.awayML : b, null),
+        homeML: bookList.reduce((b, x) => !b || parseFloat(x.homeML) > parseFloat(b) ? x.homeML : b, null),
+        overOdds: bookList.reduce((b, x) => !b || parseFloat(x.overOdds) > parseFloat(b) ? x.overOdds : b, null),
+        underOdds: bookList.reduce((b, x) => !b || parseFloat(x.underOdds) > parseFloat(b) ? x.underOdds : b, null),
+        awayRLOdds: bookList.reduce((b, x) => !b || parseFloat(x.awayRLOdds) > parseFloat(b) ? x.awayRLOdds : b, null),
+        homeRLOdds: bookList.reduce((b, x) => !b || parseFloat(x.homeRLOdds) > parseFloat(b) ? x.homeRLOdds : b, null),
+        total: bookList[0]?.total
+      };
+      books['_best'] = { name: '⭐ Best available', ...best, isBest: true };
+    }
+
+    liveLineCache[gameId] = { ts: Date.now(), data: { books, awayTeam: game.away_team, homeTeam: game.home_team } };
+    return liveLineCache[gameId].data;
   } catch(e) {
-    console.log('Pitcher lookup failed:', e.message);
-    return {};
+    console.error('Live lines error:', e);
+    return null;
   }
 }
 
-// Check if pitcher is making MLB debut
-async function checkMLBDebut(pitcherId) {
+function setLiveLineMode(mode) {
+  liveLineMode = mode;
+  // Update all visible mode buttons
+  document.querySelectorAll('[id^="ll-mode-"]').forEach(btn => {
+    const btnMode = btn.id.replace('ll-mode-', '');
+    if (btnMode === 'manual') {
+      btn.style.background = mode === 'manual' ? 'var(--s3)' : 'var(--s2)';
+      btn.style.color = mode === 'manual' ? 'var(--text)' : 'var(--muted)';
+    } else {
+      btn.style.background = mode === 'auto' ? 'var(--green-bg)' : 'var(--s2)';
+      btn.style.color = mode === 'auto' ? 'var(--green)' : 'var(--muted)';
+    }
+  });
+
+  if (mode === 'auto') {
+    // Start auto-refresh for all visible live line panels
+    document.querySelectorAll('[id^="livelines-"]').forEach(el => {
+      if (el.style.display !== 'none') {
+        const gameId = el.id.replace('livelines-', '');
+        const btn = document.getElementById('ll-btn-' + gameId);
+        // Find game data
+        const g = games.find(x => x.id === gameId);
+        if (g && !liveLineIntervals[gameId]) {
+          liveLineIntervals[gameId] = setInterval(() => {
+            // Force refresh by clearing cache
+            delete liveLineCache[gameId];
+            showLiveLines(gameId, g.away_team, g.home_team);
+          }, 30000);
+        }
+      }
+    });
+  } else {
+    // Stop all auto-refresh intervals
+    Object.keys(liveLineIntervals).forEach(id => {
+      clearInterval(liveLineIntervals[id]);
+      delete liveLineIntervals[id];
+    });
+  }
+}
+
+async function showLiveLines(gameId, awayTeam, homeTeam) {
+  const el = document.getElementById('livelines-' + gameId);
+  if (!el) return;
+
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = `<div style="padding:6px 8px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
+    <span style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted)">LIVE LINES</span>
+    <div style="display:flex;gap:4px">
+      <button onclick="setLiveLineMode('manual')" id="ll-mode-manual" style="padding:2px 8px;font-size:10px;font-family:DM Mono,monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='manual'?'var(--s3)':'var(--s2)'};color:${liveLineMode==='manual'?'var(--text)':'var(--muted)'}">manual</button>
+      <button onclick="setLiveLineMode('auto')" id="ll-mode-auto" style="padding:2px 8px;font-size:10px;font-family:DM Mono,monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='auto'?'var(--green-bg)':'var(--s2)'};color:${liveLineMode==='auto'?'var(--green)':'var(--muted)'}">auto 30s</button>
+    </div>
+  </div>
+  <div style="padding:8px;color:var(--muted);font-size:11px;font-family:DM Mono,monospace">Loading live lines...</div>`;
+
+  const data = await fetchLiveLines(gameId, awayTeam, homeTeam);
+  if (!data) {
+    el.innerHTML = '<div style="padding:8px;color:var(--red);font-size:11px;font-family:DM Mono,monospace">Could not load lines</div>';
+    return;
+  }
+
+  const books = Object.values(data.books);
+  const away = data.awayTeam.split(' ').pop();
+  const home = data.homeTeam.split(' ').pop();
+
+  const rows = books.map(b => {
+    const isBest = b.isBest;
+    const style = isBest ? 'background:var(--green-bg);border-top:1px solid var(--green-dim)' : '';
+    const nameStyle = isBest ? 'color:var(--green);font-weight:600' : 'color:var(--text)';
+
+    function cell(val, bestVal) {
+      if (!val) return '<td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:11px;color:var(--dim)">—</td>';
+      const isTop = val === bestVal && !isBest;
+      const color = isTop ? 'var(--green)' : isBest ? 'var(--green)' : 'var(--text)';
+      const arrow = isTop ? ' ↑' : '';
+      const fw = (isTop || isBest) ? '600' : '400';
+      return '<td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:11px;color:' + color + ';font-weight:' + fw + '">' + val + arrow + '</td>';
+    }
+
+    const bestBook = data.books['_best'] || {};
+    return `<tr style="${style}">
+      <td style="padding:5px 8px;font-size:11px;${nameStyle};white-space:nowrap">${b.name}</td>
+      ${cell(b.awayML, bestBook.awayML)}
+      ${cell(b.homeML, bestBook.homeML)}
+      ${cell(b.awayRL ? b.awayRL + ' ' + (b.awayRLOdds||'') : null, bestBook.awayRL + ' ' + (bestBook.awayRLOdds||''))}
+      ${cell(b.homeRL ? b.homeRL + ' ' + (b.homeRLOdds||'') : null, bestBook.homeRL + ' ' + (bestBook.homeRLOdds||''))}
+      ${cell(b.total ? 'O' + b.total + ' ' + (b.overOdds||'') : null, 'O' + bestBook.total + ' ' + (bestBook.overOdds||''))}
+      ${cell(b.total ? 'U' + b.total + ' ' + (b.underOdds||'') : null, 'U' + bestBook.total + ' ' + (bestBook.underOdds||''))}
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `<div>
+    <div style="padding:6px 8px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
+      <span style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted)">LIVE LINES · ${new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>
+      <div style="display:flex;gap:4px">
+        <button onclick="setLiveLineMode('manual')" style="padding:2px 8px;font-size:10px;font-family:DM Mono,monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='manual'?'var(--s3)':'var(--s2)'};color:${liveLineMode==='manual'?'var(--text)':'var(--muted)'}">manual</button>
+        <button onclick="setLiveLineMode('auto')" style="padding:2px 8px;font-size:10px;font-family:DM Mono,monospace;border-radius:4px;border:1px solid var(--border);cursor:pointer;background:${liveLineMode==='auto'?'var(--green-bg)':'var(--s2)'};color:${liveLineMode==='auto'?'var(--green)':'var(--muted)'}">auto 30s</button>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="border-bottom:1px solid var(--border)">
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">Book</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">${away} ML</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">${home} ML</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">${away} RL</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">${home} RL</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">Over</th>
+        <th style="padding:5px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--muted);text-align:left">Under</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="font-size:10px;color:var(--muted);font-family:DM Mono,monospace;padding:4px 8px">↑ best available · ${liveLineMode==='auto'?'auto-refreshing 30s':'click manual to refresh'} · click header to hide</div>
+    </div>
+  </div>`;
+}
+
+// ── SUPABASE BETS ─────────────────────────────────────────────────────────────
+async function loadBetsFromSupabase() {
   try {
-    if (!pitcherId) return false;
-    const res = await fetch(
-      `https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=career&group=pitching`
-    );
-    if (!res.ok) return false;
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?order=id.desc&limit=500`, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) return;
     const data = await res.json();
-    const career = data.stats?.[0]?.splits?.[0]?.stat;
-    // If no career stats or 0 games pitched, it's a debut
-    if (!career || parseInt(career.gamesStarted || 0) === 0) return true;
-    return false;
+    bets = data.map(b => ({
+      id: b.id,
+      date: b.game_date,
+      matchup: b.matchup,
+      awayPitcher: b.away_pitcher,
+      homePitcher: b.home_pitcher,
+      type: b.bet_type,
+      odds: b.odds,
+      betLine: b.bet_line,
+      maxJuice: b.max_juice,
+      book: b.book,
+      units: b.units,
+      notes: b.notes,
+      ev: b.ev,
+      situations: b.situations,
+      confidence: b.confidence,
+      result: b.result,
+      awayScore: b.away_score,
+      homeScore: b.home_score
+    }));
+    updateNavRecord();
+    // Migrate any existing localStorage bets to Supabase
+    const local = JSON.parse(localStorage.getItem('mlb_bets_v2') || '[]');
+    if (local.length > 0) {
+      console.log(`Migrating ${local.length} local bets to Supabase...`);
+      for (const b of local) await saveBetToSupabase(b);
+      localStorage.removeItem('mlb_bets_v2');
+    }
+  } catch(e) { console.error('loadBets error:', e); }
+}
+
+async function saveBetToSupabase(bet) {
+  try {
+    const row = {
+      id: bet.id,
+      game_date: bet.date,
+      matchup: bet.matchup,
+      away_pitcher: bet.awayPitcher,
+      home_pitcher: bet.homePitcher,
+      bet_type: bet.type,
+      odds: bet.odds,
+      bet_line: bet.betLine || null,
+      max_juice: bet.maxJuice || null,
+      book: bet.book || null,
+      units: bet.units,
+      notes: bet.notes,
+      ev: bet.ev,
+      situations: bet.situations,
+      confidence: bet.confidence,
+      result: bet.result || 'pending'
+    };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify(row)
+    });
+    return res.ok;
   } catch(e) { return false; }
 }
 
-// Get team ID from Odds API team name
-async function getTeamId(teamName) {
+async function updateBetResult(id, result) {
   try {
-    const res = await fetch('https://statsapi.mlb.com/api/v1/teams?sportId=1&season=2026');
-    if (!res.ok) return null;
-    const data = await res.json();
-    const team = data.teams?.find(t =>
-      t.name.toLowerCase().includes(teamName.toLowerCase().split(' ').pop().toLowerCase()) ||
-      teamName.toLowerCase().includes(t.name.toLowerCase().split(' ').pop().toLowerCase())
-    );
-    return team?.id || null;
-  } catch(e) { return null; }
-}
-
-
-// Fetch Statcast pitcher metrics from Baseball Savant
-async function fetchStatcast(pitcherName, pitcherId) {
-  try {
-    if (!pitcherId) return null;
-    const endDate = new Date().toISOString().split('T')[0];
-    const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    
-    const url = 'https://baseballsavant.mlb.com/statcast_search/csv?player_type=pitcher&pitchers_lookup[]=' + pitcherId + '&game_date_gt=' + startDate + '&game_date_lt=' + endDate + '&type=details&hfSea=2026%7C&group_by=name&sort_col=pitches&sort_order=desc&min_abs=0';
-
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' }
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({ result })
     });
-    if (!res.ok) return null;
-    const csv = await res.text();
-    const lines = csv.trim().split('\n');
-    if (lines.length < 2) return null;
+    return res.ok;
+  } catch(e) { return false; }
+}
 
-    const headers = lines[0].split(',');
-    const getCol = (row, name) => {
-      const idx = headers.indexOf(name);
-      return idx >= 0 ? row.split(',')[idx] : null;
-    };
-
-    // Parse all pitches
-    let totalPitches = 0, totalVelo = 0, swings = 0, whiffs = 0;
-    let barrels = 0, hardHits = 0, batted = 0;
-    const startVelos = {};
-
-    for (let i = 1; i < lines.length; i++) {
-      const row = lines[i];
-      if (!row.trim()) continue;
-      const velo = parseFloat(getCol(row, 'release_speed'));
-      const gameDate = getCol(row, 'game_date');
-      const description = getCol(row, 'description');
-      const exitVelo = parseFloat(getCol(row, 'launch_speed'));
-      const isBarrel = getCol(row, 'barrel');
-
-      if (!isNaN(velo) && velo > 0) {
-        totalPitches++;
-        totalVelo += velo;
-        if (gameDate) {
-          if (!startVelos[gameDate]) startVelos[gameDate] = { total: 0, count: 0 };
-          startVelos[gameDate].total += velo;
-          startVelos[gameDate].count++;
-        }
+async function deleteBetFromSupabase(id) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${id}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`
       }
-      if (description && (description.includes('swing') || description.includes('foul') || description.includes('hit'))) swings++;
-      if (description && description.includes('swinging_strike')) whiffs++;
-      if (!isNaN(exitVelo) && exitVelo > 0) {
-        batted++;
-        if (exitVelo >= 95) hardHits++;
-        if (isBarrel === '1') barrels++;
-      }
-    }
-
-    const avgVelo = totalPitches > 0 ? (totalVelo / totalPitches).toFixed(1) : null;
-    const whiffRate = swings > 0 ? ((whiffs / swings) * 100).toFixed(1) : null;
-    const hardHitRate = batted > 0 ? ((hardHits / batted) * 100).toFixed(1) : null;
-    const barrelRate = batted > 0 ? ((barrels / batted) * 100).toFixed(1) : null;
-
-    // Velocity trend — compare last start to average
-    const startDates = Object.keys(startVelos).sort().slice(-5);
-    const lastStartVelo = startDates.length > 0
-      ? (startVelos[startDates[startDates.length-1]].total / startVelos[startDates[startDates.length-1]].count).toFixed(1)
-      : null;
-    const veloTrend = avgVelo && lastStartVelo
-      ? parseFloat(lastStartVelo) < parseFloat(avgVelo) - 1.5 ? 'DOWN' :
-        parseFloat(lastStartVelo) > parseFloat(avgVelo) + 1.0 ? 'UP' : 'STABLE'
-      : 'UNKNOWN';
-
-    return {
-      avgVelo,
-      lastStartVelo,
-      veloTrend,
-      whiffRate,
-      hardHitRate,
-      barrelRate,
-      pitches: totalPitches
-    };
-  } catch(e) {
-    console.log(`  Statcast error for ${pitcherName}:`, e.message);
-    return null;
-  }
-}
-
-// Fetch confirmed lineup from MLB Stats API
-async function fetchLineup(teamId, gameDate) {
-  try {
-    if (!teamId) return null;
-    const res = await fetch(
-      `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${gameDate}&teamId=${teamId}&gameType=R&hydrate=lineups`
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const game = data.dates?.[0]?.games?.[0];
-    if (!game) return null;
-
-    const isHome = game.teams?.home?.team?.id === teamId;
-    const lineup = isHome
-      ? game.lineups?.homePlayers
-      : game.lineups?.awayPlayers;
-
-    if (!lineup || !lineup.length) return null;
-    return lineup.map(p => ({ id: p.id, name: p.fullName, position: p.primaryPosition?.abbreviation }));
-  } catch(e) { return null; }
-}
-
-// Fetch batter vs pitcher career matchup stats
-async function fetchMatchupStats(batterId, pitcherId) {
-  try {
-    if (!batterId || !pitcherId) return null;
-    const res = await fetch(
-      `https://statsapi.mlb.com/api/v1/people/${batterId}/stats?stats=vsPlayer&opposingPlayerId=${pitcherId}&group=hitting&sportId=1`
-    );
-    if (!res.ok) return null;
-    const data = await res.json();
-    const stats = data.stats?.[0]?.splits?.[0]?.stat;
-    if (!stats) return null;
-    return {
-      ab: stats.atBats || 0,
-      avg: stats.avg || '.000',
-      ops: stats.ops || '.000',
-      hr: stats.homeRuns || 0,
-      so: stats.strikeOuts || 0
-    };
-  } catch(e) { return null; }
-}
-
-// Build full lineup matchup profile vs starting pitcher
-async function fetchLineupMatchups(teamId, pitcherId, gameDate) {
-  try {
-    const lineup = await fetchLineup(teamId, gameDate);
-    if (!lineup || !lineup.length) return null;
-
-    const matchups = await Promise.all(
-      lineup.slice(0, 9).map(batter => fetchMatchupStats(batter.id, pitcherId))
-    );
-
-    // Aggregate matchup stats (minimum 10 AB for meaningful data)
-    const meaningful = matchups.filter(m => m && m.ab >= 10);
-    if (!meaningful.length) return { lineup: lineup.slice(0,9), matchups, meaningful: 0, note: 'Insufficient sample vs this pitcher' };
-
-    const avgOPS = meaningful.reduce((sum, m) => sum + parseFloat(m.ops || 0), 0) / meaningful.length;
-    const avgAVG = meaningful.reduce((sum, m) => sum + parseFloat(m.avg || 0), 0) / meaningful.length;
-    const totalK = meaningful.reduce((sum, m) => sum + m.so, 0);
-    const totalAB = meaningful.reduce((sum, m) => sum + m.ab, 0);
-    const kRate = totalAB > 0 ? ((totalK / totalAB) * 100).toFixed(1) : null;
-
-    // Flag notable individual matchups
-    const hotBatters = meaningful.filter(m => parseFloat(m.ops) > .900).length;
-    const coldBatters = meaningful.filter(m => parseFloat(m.ops) < .550).length;
-
-    return {
-      lineup: lineup.slice(0, 9),
-      meaningful: meaningful.length,
-      avgOPS: avgOPS.toFixed(3),
-      avgAVG: avgAVG.toFixed(3),
-      kRate,
-      hotBatters,
-      coldBatters,
-      sample: `${meaningful.length} of 9 batters with 10+ AB vs this pitcher`
-    };
-  } catch(e) {
-    console.log('  Lineup matchup error:', e.message);
-    return null;
-  }
-}
-
-async function fetchOddsAPI() {
-  console.log('Fetching from The Odds API...');
-  const url = `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=h2h,spreads,totals&oddsFormat=american&dateFormat=iso`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Odds API: ${res.status}`);
-  const data = await res.json();
-  console.log(`Found ${data.length} games`);
-  return data;
-}
-
-async function fetchF5Lines() {
-  try {
-    const url = `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=h2h_h1,totals_h1&oddsFormat=american&dateFormat=iso`;
-    const res = await fetch(url);
-    if (!res.ok) return {};
-    const data = await res.json();
-    const map = {};
-    for (const game of data) {
-      const lines = {};
-      for (const bm of (game.bookmakers || [])) {
-        for (const mkt of (bm.markets || [])) {
-          if (mkt.key === 'h2h_h1' && !lines.f5AwayML) {
-            for (const o of mkt.outcomes) {
-              if (o.name === game.away_team) lines.f5AwayML = o.price > 0 ? `+${o.price}` : `${o.price}`;
-              if (o.name === game.home_team) lines.f5HomeML = o.price > 0 ? `+${o.price}` : `${o.price}`;
-            }
-          }
-          if (mkt.key === 'totals_h1' && !lines.f5Total) {
-            const over = mkt.outcomes.find(o => o.name === 'Over');
-            const under = mkt.outcomes.find(o => o.name === 'Under');
-            if (over) {
-              lines.f5Total = `${over.point}`;
-              lines.f5OverOdds = over.price > 0 ? `+${over.price}` : `${over.price}`;
-              lines.f5UnderOdds = under ? (under.price > 0 ? `+${under.price}` : `${under.price}`) : null;
-            }
-          }
-        }
-        if (lines.f5AwayML && lines.f5Total) break;
-      }
-      map[game.id] = lines;
-    }
-    return map;
-  } catch(e) { return {}; }
-}
-
-async function fetchActionNetwork(awayTeam, homeTeam, gameDate) {
-  try {
-    console.log(`  Fetching Action Network for ${awayTeam} @ ${homeTeam}...`);
-    const dateStr = gameDate.split('T')[0];
-    const url = `https://api.actionnetwork.com/web/v1/games?sport=baseball&date=${dateStr}&league=mlb`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const games = data.games || [];
-    const match = games.find(g => {
-      const at = (g.away_team?.full_name || '').toLowerCase();
-      const ht = (g.home_team?.full_name || '').toLowerCase();
-      return (at.includes(awayTeam.toLowerCase().split(' ').pop()) || awayTeam.toLowerCase().includes(at.split(' ').pop())) &&
-             (ht.includes(homeTeam.toLowerCase().split(' ').pop()) || homeTeam.toLowerCase().includes(ht.split(' ').pop()));
     });
-    if (!match) { console.log(`  No AN match found for ${awayTeam} @ ${homeTeam}`); return null; }
-    return {
-      total: match.total || null,
-      awayML: match.away_ml || null,
-      homeML: match.home_ml || null,
-      awayMLPct: match.away_ml_pct || null,
-      homeMLPct: match.home_ml_pct || null,
-      overPct: match.over_pct || null,
-      underPct: match.under_pct || null,
-      awayMoneyPct: match.away_money_pct || null,
-      homeMoneyPct: match.home_money_pct || null
-    };
-  } catch(e) { return null; }
+    return res.ok;
+  } catch(e) { return false; }
 }
 
-function parseOddsData(game) {
-  let awayML=null,homeML=null,total=null,overOdds=null,underOdds=null,awayRL=null,homeRL=null,awayRLOdds=null,homeRLOdds=null;
-  for (const bm of (game.bookmakers||[])) {
-    for (const mkt of (bm.markets||[])) {
-      if (mkt.key==='h2h'&&!awayML) {
-        for (const o of mkt.outcomes) {
-          if (o.name===game.away_team) awayML=o.price>0?`+${o.price}`:`${o.price}`;
-          if (o.name===game.home_team) homeML=o.price>0?`+${o.price}`:`${o.price}`;
-        }
-      }
-      if (mkt.key==='totals') {
-        const over=mkt.outcomes.find(o=>o.name==='Over');
-        const under=mkt.outcomes.find(o=>o.name==='Under');
-        if (over) {
-          const pt = parseFloat(over.point);
-          // Only use if within realistic MLB range AND better than current
-          if (pt >= 6.5 && pt <= 13.5) {
-            if (!total) {
-              total=`${over.point}`; 
-              overOdds=over.price>0?`+${over.price}`:`${over.price}`; 
-              underOdds=under?(under.price>0?`+${under.price}`:`${under.price}`):null;
-            }
-          } else if (!total) {
-            // Store unrealistic total temporarily
-            total=`${over.point}`;
-            overOdds=over.price>0?`+${over.price}`:`${over.price}`;
-            underOdds=under?(under.price>0?`+${under.price}`:`${under.price}`):null;
-          }
-        }
-      }
-      if (mkt.key==='spreads'&&!awayRL) {
-        for (const o of mkt.outcomes) {
-          if (o.name===game.away_team) { awayRL=o.point>0?`+${o.point}`:`${o.point}`; awayRLOdds=o.price>0?`+${o.price}`:`${o.price}`; }
-          if (o.name===game.home_team) { homeRL=o.point>0?`+${o.point}`:`${o.point}`; homeRLOdds=o.price>0?`+${o.price}`:`${o.price}`; }
-        }
-      }
-    }
-    if (awayML&&homeML&&total&&awayRL) break;
-  }
-  return {awayML,homeML,total,overOdds,underOdds,awayRL,homeRL,awayRLOdds,homeRLOdds};
+function fmtDate(d) { return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}); }
+function fmtDateShort(d) { return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+function isoDate(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return year + '-' + month + '-' + day;
 }
 
-function validateTotal(oddsTotal, anTotal) {
-  const ot=parseFloat(oddsTotal), at=parseFloat(anTotal);
-  // Prefer Action Network if available and realistic
-  if (anTotal&&!isNaN(at)&&at>=6.5&&at<=13.5) return `${at}`;
-  // Use Odds API if realistic
-  if (!isNaN(ot)&&ot>=6.5&&ot<=13.5) return `${ot}`;
-  // If both out of range, try to find best bookmaker line from raw data
-  console.log(`  Warning: unusual total ${oddsTotal} - may be alt market`);
-  return oddsTotal;
+function goPage(name, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
+  document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('on'));
+  document.getElementById('page-' + name).classList.add('on');
+  btn.classList.add('on');
+  if (name === 'tracker') renderTracker();
+  if (name === 'stats') renderStats();
 }
 
-async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups) {
-  console.log(`  Analyzing ${game.away_team} @ ${game.home_team}...`);
+async function loadGames(forceRefresh = false) {
+  const dateStr = isoDate(currentDate);
+  document.getElementById('date-display').textContent = fmtDate(currentDate);
+  document.getElementById('games-subtitle').textContent = 'Loading...';
+  document.getElementById('games-container').innerHTML = `<div class="loading-wrap"><div class="loading-dots"><span></span><span></span><span></span></div><p style="color:var(--muted);font-size:13px;margin-top:1rem">Fetching analysis for ${fmtDateShort(currentDate)}...</p></div>`;
 
-  const weatherInfo = weather
-    ? weather.dome ? 'Indoor dome — weather not a factor'
-    : `${weather.summary}${weather.flags?.length ? '\nWeather flags: ' + weather.flags.join(', ') : ''}`
-    : 'Weather data unavailable';
-
-  const awayPitcherInfo = awayPitcher
-    ? `${awayPitcher.name}: ERA ${awayPitcher.era}, WHIP ${awayPitcher.whip}, ${awayPitcher.wins}W-${awayPitcher.losses}L, Recent ERA ${awayPitcher.recentERA} (${awayPitcher.trending}), Last 3: ${awayPitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}`
-    : 'Away pitcher: TBD';
-
-  const homePitcherInfo = homePitcher
-    ? `${homePitcher.name}: ERA ${homePitcher.era}, WHIP ${homePitcher.whip}, ${homePitcher.wins}W-${homePitcher.losses}L, Recent ERA ${homePitcher.recentERA} (${homePitcher.trending}), Last 3: ${homePitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}`
-    : 'Home pitcher: TBD';
-
-  const awayTeamInfo = awayStats
-    ? `${awayStats.teamName}: AVG ${awayStats.avg}, OPS ${awayStats.ops}, ${awayStats.runs} runs scored, ${awayStats.hr} HR, Last 10: ${awayStats.last10||'N/A'}`
-    : `${game.away_team}: Stats unavailable`;
-
-  const homeTeamInfo = homeStats
-    ? `${homeStats.teamName}: AVG ${homeStats.avg}, OPS ${homeStats.ops}, ${homeStats.runs} runs scored, ${homeStats.hr} HR, Last 10: ${homeStats.last10||'N/A'}`
-    : `${game.home_team}: Stats unavailable`;
-
-  const publicInfo = anData
-    ? `ML public: Away ${anData.awayMLPct||'?'}% bets/${anData.awayMoneyPct||'?'}% money | Home ${anData.homeMLPct||'?'}% bets/${anData.homeMoneyPct||'?'}% money\nTotal public: ${anData.overPct||'?'}% Over / ${anData.underPct||'?'}% Under`
-    : 'Public betting data unavailable';
-
-  const awayStatcastInfo = awayStatcast
-    ? `${awayPitcher?.name||'Away'} Statcast: avg velo ${awayStatcast.avgVelo}mph (${awayStatcast.veloTrend}), last start ${awayStatcast.lastStartVelo}mph, whiff% ${awayStatcast.whiffRate}, hard hit% ${awayStatcast.hardHitRate}, barrel% ${awayStatcast.barrelRate}`
-    : 'Away pitcher Statcast: unavailable';
-
-  const homeStatcastInfo = homeStatcast
-    ? `${homePitcher?.name||'Home'} Statcast: avg velo ${homeStatcast.avgVelo}mph (${homeStatcast.veloTrend}), last start ${homeStatcast.lastStartVelo}mph, whiff% ${homeStatcast.whiffRate}, hard hit% ${homeStatcast.hardHitRate}, barrel% ${homeStatcast.barrelRate}`
-    : 'Home pitcher Statcast: unavailable';
-
-  const awayMatchupInfo = awayMatchups
-    ? `${game.away_team} lineup vs ${homePitcher?.name||'home pitcher'}: avg OPS ${awayMatchups.avgOPS}, avg AVG ${awayMatchups.avgAVG}, K% ${awayMatchups.kRate}, hot bats ${awayMatchups.hotBatters}, cold bats ${awayMatchups.coldBatters} (${awayMatchups.sample})`
-    : `${game.away_team} lineup matchup data: unavailable (lineup not yet posted or no history vs this pitcher)`;
-
-  const homeMatchupInfo = homeMatchups
-    ? `${game.home_team} lineup vs ${awayPitcher?.name||'away pitcher'}: avg OPS ${homeMatchups.avgOPS}, avg AVG ${homeMatchups.avgAVG}, K% ${homeMatchups.kRate}, hot bats ${homeMatchups.hotBatters}, cold bats ${homeMatchups.coldBatters} (${homeMatchups.sample})`
-    : `${game.home_team} lineup matchup data: unavailable (lineup not yet posted or no history vs this pitcher)`;
-
-  const f5Info = f5Lines
-    ? `F5 ML: Away ${f5Lines.f5AwayML||'N/A'} / Home ${f5Lines.f5HomeML||'N/A'}\nF5 Total: ${f5Lines.f5Total||'N/A'} (Over ${f5Lines.f5OverOdds||'N/A'} / Under ${f5Lines.f5UnderOdds||'N/A'})`
-    : 'F5 lines unavailable';
-
-  const prompt = `You are an expert MLB betting analyst. Today is ${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}. Analyze this game using all provided data and return ONLY valid JSON.
-
-GAME: ${game.away_team} @ ${game.home_team}
-Time: ${new Date(game.commence_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/New_York'})} ET
-
-FULL GAME LINES:
-ML: Away ${lines.awayML||'?'} / Home ${lines.homeML||'?'}
-RL: Away ${lines.awayRL||'?'} (${lines.awayRLOdds||'?'}) / Home ${lines.homeRL||'?'} (${lines.homeRLOdds||'?'})
-Total: ${lines.total||'?'} — Over ${lines.overOdds||'?'} / Under ${lines.underOdds||'?'}
-
-FIRST 5 INNINGS:
-${f5Info}
-
-WEATHER:
-${weatherInfo}
-
-PITCHING MATCHUP:
-Away: ${awayPitcherInfo}
-${awayStatcastInfo}
-Home: ${homePitcherInfo}
-${homeStatcastInfo}
-
-LINEUP VS PITCHER MATCHUPS (career stats — min 10 AB):
-${awayMatchupInfo}
-${homeMatchupInfo}
-
-TEAM STATS (2026 season):
-Away: ${awayTeamInfo}
-Home: ${homeTeamInfo}
-
-PUBLIC BETTING:
-${publicInfo}
-
-ANALYSIS INSTRUCTIONS — CRITICAL:
-- The "situations" array must ONLY contain these exact lowercase values: revenge, travel, sharp, weather, rest, series, fade, mustwin, debut. DO NOT add any other values. DO NOT use situations to flag data availability issues. If data is missing just work with what you have.
-- ANALYSIS INSTRUCTIONS — CRITICAL:
-- USE ONLY 2026 SEASON STATS for all total projections. IGNORE all prior year data entirely.
-- TOTAL PROJECTION METHOD: (away team 2026 runs/game + home team 2026 runs/game) × pitcher adjustment × park factor × weather adjustment = projected total. Compare to line for edge.
-- STATCAST IS CRITICAL: A pitcher with velocity DOWN trend is significantly worse than ERA suggests — fade. A pitcher with low barrel rate and high whiff rate is elite regardless of ERA — back. Hard hit rate above 42% means the pitcher is getting hit hard even if runs haven't scored yet.
-- LINEUP MATCHUPS OVERRIDE SEASON STATS for total projections: if the opposing lineup has OPS below .600 vs this pitcher with 25%+ K rate, project runs 20-25% lower than season average. If lineup has OPS above .850 vs this pitcher, project runs 20-25% higher.
-- Velocity DOWN on last start vs season average = COLD flag, reduce confidence, lean against this pitcher
-- Velocity UP or STABLE = trust the ERA and recent form
-- Hot pitchers (trending HOT — recent ERA significantly lower than season ERA) = team edge
-- Cold pitchers (trending COLD) = fade regardless of reputation or contract
-- Wind 15+ mph blowing out = over lean, 15+ mph in = under lean
-- Current season form only — a team 2-8 in last 10 is a fade regardless of brand
-- For EACH market with positive EV include the EXACT LINE in projTotal and f5ProjTotal
-
-Return ONLY this JSON (no markdown):
-{
-  "situations": ["revenge","travel","sharp","weather","rest","series","fade","mustwin","debut"],
-  "ml": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
-  "mlEV": NUMBER,
-  "mlAwayProb": NUMBER,
-  "mlHomeProb": NUMBER,
-  "mlBreakeven": "the worst American odds line that still has positive EV e.g. -118",
-  "rl": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
-  "rlEV": NUMBER,
-  "rlBreakeven": "worst American odds still +EV e.g. -105",
-  "total": "BET OVER|BET UNDER|LEAN OVER|LEAN UNDER|SKIP",
-  "totalEV": NUMBER,
-  "totalLine": NUMBER,
-  "projTotal": NUMBER,
-  "totalBreakeven": "worst total line still +EV e.g. Over 9.0 or Under 8.5",
-  "totalJuiceSensitivity": {
-    "description": "max juice at each nearby line where bet still has +EV",
-    "lines": [
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER}
-    ]
-  },
-  "f5": "BET AWAY|BET HOME|BET OVER|BET UNDER|LEAN AWAY|LEAN HOME|LEAN OVER|LEAN UNDER|SKIP",
-  "f5EV": NUMBER,
-  "f5Line": NUMBER,
-  "f5ProjTotal": NUMBER,
-  "f5Breakeven": "worst f5 line still +EV",
-  "f5JuiceSensitivity": {
-    "lines": [
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER}
-    ]
-  },
-  "best": "ml|rl|total|f5",
-  "bestPlay": "one sentence on the strongest play",
-  "awayWinPct": NUMBER,
-  "homeWinPct": NUMBER,
-  "edgePct": NUMBER,
-  "confidence": "LOW|MEDIUM|HIGH",
-  "lineSharp": true|false,
-  "sharpSide": "${game.away_team}|${game.home_team}|NONE",
-  "lineNote": "brief note on line movement or public action",
-  "weatherImpact": "none|over|under|significant",
-  "pitcherEdge": "${game.away_team}|${game.home_team}|EVEN",
-  "situation": "2 sentences on key situational and pitching factors",
-  "factors": "2 sentences on stats, hot/cold streaks, and matchup",
-  "risks": "1 sentence on biggest risk to the top play"
-}
-
-For juice sensitivity: for each half-point line near the projected total (projTotal ± 1.5), calculate:
-- The maximum American odds (juice) where the bet still has positive EV at that line
-- CRITICAL: As the total line goes HIGHER on an OVER, the win probability DECREASES, so the max juice must get BETTER (less negative, closer to even money). Example: Over 7.0 might allow -257 max juice, but Over 8.0 only allows -108 max juice because probability is lower.
-- As the total line goes LOWER on an OVER, win probability INCREASES, so you can accept worse juice. Over 6.5 might allow -500 max juice because you win 85% of the time.
-- Formula: maxJuice = -(winProbability / (1 - winProbability)) * 100. If result > 0 format as +X, if < -1000 cap at -1000.
-- maxJuice is the breakeven juice — anything worse (more negative) than this is negative EV
-- ev is the estimated EV% at standard -110 juice for that line
-
-For breakeven lines: calculate the maximum juice/line where the bet still has positive EV based on your probability estimate. Example: if you estimate Away wins 54% of the time, the breakeven ML is -117 (anything worse than -117 is negative EV). For totals: if you project 9.8 runs and the line is 9.5, the breakeven is Under 10.5 — any total above 10.5 flips to negative EV.`;
-
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 1200, messages: [{ role: 'user', content: prompt }] })
-  });
-
-  if (!res.ok) throw new Error(`Claude error: ${res.status}`);
-  const data = await res.json();
-  const text = data.content.map(c => c.text||'').join('').trim();
   try {
-    const clean = text.replace(/```json|```/g,'').trim();
-    const s=clean.indexOf('{'), e=clean.lastIndexOf('}');
-    return JSON.parse(clean.substring(s,e+1));
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${dateStr}&order=commence_time.asc`, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) throw new Error(`Supabase error: ${res.status}`);
+    const data = await res.json();
+    games = data;
+
+    if (!games.length) {
+      document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-icon">⚾</div><div class="empty-title">No games found for ${fmtDateShort(currentDate)}</div><div class="empty-sub">Analysis runs automatically at 11am and 4pm ET.<br>Check back then or use the date navigation to view another day.</div></div>`;
+      document.getElementById('games-subtitle').textContent = `No games for ${fmtDateShort(currentDate)}`;
+      document.getElementById('filters').style.display = 'none';
+      document.getElementById('best-plays').classList.remove('show');
+      return;
+    }
+
+    const analyzed = games.filter(g => g.analyzed).length;
+    const lastRun = games.reduce((a, b) => (!a || new Date(b.updated_at) > new Date(a)) ? b.updated_at : a, null);
+    document.getElementById('games-subtitle').textContent = `${games.length} games · ${analyzed} analyzed`;
+    if (lastRun) {
+      const ago = Math.round((Date.now() - new Date(lastRun)) / 60000);
+      document.getElementById('last-updated').textContent = `Updated ${ago < 60 ? ago + 'm ago' : Math.round(ago/60) + 'h ago'}`;
+    }
+    document.getElementById('filters').style.display = 'flex';
+    renderGames();
+    renderBestPlays();
   } catch(err) {
-    console.error(`Parse error:`, text.substring(0,200));
-    return null;
+    document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">Could not load games</div><div class="empty-sub">${err.message}</div></div>`;
+    document.getElementById('games-subtitle').textContent = 'Error loading games';
   }
 }
 
-async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData) {
-  const row = {
-    id: game.id,
-    game_date: new Date(game.commence_time).toLocaleDateString('en-CA', {timeZone: 'America/New_York'}),
-    away_team: game.away_team,
-    home_team: game.home_team,
-    commence_time: game.commence_time,
-    away_pitcher: awayPitcherData?.name || 'TBD',
-    home_pitcher: homePitcherData?.name || 'TBD',
-    away_pitcher_debut: awayPitcherData?.debut || false,
-    home_pitcher_debut: homePitcherData?.debut || false,
-    away_ml: lines.awayML,
-    home_ml: lines.homeML,
-    total: lines.total,
-    over_odds: lines.overOdds,
-    under_odds: lines.underOdds,
-    away_rl: lines.awayRL,
-    home_rl: lines.homeRL,
-    away_rl_odds: lines.awayRLOdds,
-    home_rl_odds: lines.homeRLOdds,
-    f5_away_ml: f5Lines?.f5AwayML||null,
-    f5_home_ml: f5Lines?.f5HomeML||null,
-    f5_total: f5Lines?.f5Total||null,
-    f5_over_odds: f5Lines?.f5OverOdds||null,
-    f5_under_odds: f5Lines?.f5UnderOdds||null,
-    away_ml_pct: anData?.awayMLPct||null,
-    home_ml_pct: anData?.homeMLPct||null,
-    over_pct: anData?.overPct||null,
-    under_pct: anData?.underPct||null,
-    weather_summary: weather?.summary||null,
-    weather_temp: weather?.temp||null,
-    weather_wind_speed: weather?.windSpeed||null,
-    weather_wind_dir: weather?.windCard||null,
-    weather_field_wind_dir: weather?.fieldWindDir||null,
-    weather_wind_arrow: weather?.windArrow||null,
-    weather_flags: weather?.flags||[],
-    weather_dome: weather?.dome||false,
-    run_type: RUN_TYPE,
-    updated_at: new Date().toISOString(),
-    away_velo: awayStatcastData?.avgVelo || null,
-    away_velo_trend: awayStatcastData?.veloTrend || null,
-    away_whiff_rate: awayStatcastData?.whiffRate || null,
-    away_barrel_rate: awayStatcastData?.barrelRate || null,
-    away_hard_hit: awayStatcastData?.hardHitRate || null,
-    home_velo: homeStatcastData?.avgVelo || null,
-    home_velo_trend: homeStatcastData?.veloTrend || null,
-    home_whiff_rate: homeStatcastData?.whiffRate || null,
-    home_barrel_rate: homeStatcastData?.barrelRate || null,
-    home_hard_hit: homeStatcastData?.hardHitRate || null,
-    away_lineup_ops: awayMatchupData?.avgOPS || null,
-    away_lineup_k_rate: awayMatchupData?.kRate || null,
-    home_lineup_ops: homeMatchupData?.avgOPS || null,
-    home_lineup_k_rate: homeMatchupData?.kRate || null
+function getTopEdge(g) {
+  if (!g.analyzed) return 'none';
+  const verdicts = [g.ml_verdict, g.rl_verdict, g.total_verdict, g.f5_verdict];
+  if (verdicts.some(v => v && v.startsWith('BET'))) return 'high';
+  if (verdicts.some(v => v && v.startsWith('LEAN'))) return 'med';
+  return 'skip';
+}
+
+function sitFlagHTML(sits) {
+  if (!sits || sits.length === 0) return '<span class="sit-flag sf-none">no situation flags</span>';
+  const map = {
+    revenge:['sf-revenge','revenge spot'],travel:['sf-travel','travel fatigue'],
+    sharp:['sf-sharp','sharp action'],weather:['sf-weather','weather factor'],
+    rest:['sf-rest','rest edge'],series:['sf-series','series opener'],
+    fade:['sf-fade','fade spot'],mustwin:['sf-revenge','must-win'],debut:['sf-rest','pitcher debut'],
+    weather_concern:['sf-weather','weather'],pitcher_uncertainty:['sf-rest','pitcher TBD'],
+    limited_data:['sf-none','limited data'],high_total:['sf-fade','high total'],
+    tbd_pitchers:['sf-rest','pitchers TBD'],extreme_line:['sf-sharp','extreme line'],
+    line_movement:['sf-sharp','line move'],hot_team:['sf-series','hot team'],cold_team:['sf-fade','cold team']
+  };
+  const validFlags = (sits||[]).filter(f => f && typeof f === 'string' && f.length < 40);
+  if (!validFlags.length) return '<span class="sit-flag sf-none">no situation flags</span>';
+  return validFlags.map(f => {
+    const key = f.toLowerCase().replace(/[^a-z_]/g,'');
+    const info = map[key] || ['sf-none', f.toLowerCase().replace(/_/g,' ').substring(0,20)];
+    return `<span class="sit-flag ${info[0]}">${info[1]}</span>`;
+  }).join('');
+}
+
+function marketCell(label, verdict, ev, isBest, line, projTotal, breakeven, gId) {
+  const v = verdict || 'SKIP';
+  const cls = v.startsWith('BET') ? 'mv-bet' : v.includes('LEAN') ? 'mv-lean' : v.includes('OVER') ? 'mv-over' : v.includes('UNDER') ? 'mv-under' : 'mv-skip';
+  const evHtml = ev != null && ev !== 0 ? `<div class="ev-val ${ev >= 0 ? 'ev-pos' : 'ev-neg'}">${ev >= 0 ? '+' : ''}${parseFloat(ev).toFixed(1)}% EV</div>` : '';
+  const lineHtml = line != null && projTotal != null && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--muted);font-family:DM Mono,monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>` : '';
+  const breakHtml = breakeven && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>` : '';
+  const clickable = v !== 'SKIP' && ev > 0 ? `style="cursor:pointer" onclick="quickLog('${gId}','${label}','${v}','${line||''}','${breakeven||''}')"` : '';
+  return `<div class="market-cell${isBest ? ' best' : ''}" ${clickable}><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}</div>`;
+}
+
+function edgeBadge(g) {
+  if (!g.analyzed) return '';
+  const e = getTopEdge(g);
+  if (e === 'high') return '<span class="edge-badge eb-high">HIGH EDGE</span>';
+  if (e === 'med') return '<span class="edge-badge eb-med">LEAN</span>';
+  return '<span class="edge-badge eb-skip">SKIP</span>';
+}
+
+function statcastHTML(g) {
+  if (!g.analyzed) return '';
+  const rows = [];
+
+  // Away pitcher Statcast
+  if (g.away_velo) {
+    const trendColor = g.away_velo_trend === 'DOWN' ? 'var(--red)' : g.away_velo_trend === 'UP' ? 'var(--green)' : 'var(--muted)';
+    const trendIcon = g.away_velo_trend === 'DOWN' ? '↓' : g.away_velo_trend === 'UP' ? '↑' : '→';
+    rows.push(`<tr>
+      <td class="ol">${g.away_pitcher?.split(' ').pop()||'Away'}</td>
+      <td class="ov"><span style="color:${trendColor}">${trendIcon}</span> ${g.away_velo}mph</td>
+      <td class="ov">whiff ${g.away_whiff_rate||'?'}%</td>
+      <td class="ov">barrel ${g.away_barrel_rate||'?'}%</td>
+    </tr>`);
+  }
+
+  // Home pitcher Statcast
+  if (g.home_velo) {
+    const trendColor = g.home_velo_trend === 'DOWN' ? 'var(--red)' : g.home_velo_trend === 'UP' ? 'var(--green)' : 'var(--muted)';
+    const trendIcon = g.home_velo_trend === 'DOWN' ? '↓' : g.home_velo_trend === 'UP' ? '↑' : '→';
+    rows.push(`<tr>
+      <td class="ol">${g.home_pitcher?.split(' ').pop()||'Home'}</td>
+      <td class="ov"><span style="color:${trendColor}">${trendIcon}</span> ${g.home_velo}mph</td>
+      <td class="ov">whiff ${g.home_whiff_rate||'?'}%</td>
+      <td class="ov">barrel ${g.home_barrel_rate||'?'}%</td>
+    </tr>`);
+  }
+
+  // Lineup matchup OPS
+  if (g.away_lineup_ops || g.home_lineup_ops) {
+    if (g.away_lineup_ops) {
+      const opsVal = parseFloat(g.away_lineup_ops);
+      const opsColor = opsVal > .800 ? 'var(--red)' : opsVal < .600 ? 'var(--green)' : 'var(--muted)';
+      rows.push(`<tr>
+        <td class="ol">Away lineup</td>
+        <td class="ov" colspan="2">OPS vs starter: <span style="color:${opsColor};font-weight:500">${g.away_lineup_ops}</span></td>
+        <td class="ov">K% ${g.away_lineup_k_rate||'?'}%</td>
+      </tr>`);
+    }
+    if (g.home_lineup_ops) {
+      const opsVal = parseFloat(g.home_lineup_ops);
+      const opsColor = opsVal > .800 ? 'var(--red)' : opsVal < .600 ? 'var(--green)' : 'var(--muted)';
+      rows.push(`<tr>
+        <td class="ol">Home lineup</td>
+        <td class="ov" colspan="2">OPS vs starter: <span style="color:${opsColor};font-weight:500">${g.home_lineup_ops}</span></td>
+        <td class="ov">K% ${g.home_lineup_k_rate||'?'}%</td>
+      </tr>`);
+    }
+  }
+
+  if (!rows.length) return '';
+  return `<table style="width:100%;border-collapse:collapse;margin-bottom:8px;font-size:11px;font-family:DM Mono,monospace">
+    <thead><tr>
+      <th class="ol" style="color:var(--muted);padding:3px 6px;border-bottom:1px solid var(--border);text-align:left">Statcast</th>
+      <th style="color:var(--muted);padding:3px 6px;border-bottom:1px solid var(--border);text-align:left">Velo</th>
+      <th style="color:var(--muted);padding:3px 6px;border-bottom:1px solid var(--border);text-align:left">Whiff</th>
+      <th style="color:var(--muted);padding:3px 6px;border-bottom:1px solid var(--border);text-align:left">Barrel</th>
+    </tr></thead>
+    <tbody>${rows.join('')}</tbody>
+  </table>`;
+}
+
+function juiceSensitivityHTML(g) {
+  if (!g.analyzed) return '';
+  
+  // Parse total juice sensitivity
+  let totalData = null, f5Data = null;
+  try { if (g.total_juice_sensitivity) totalData = JSON.parse(g.total_juice_sensitivity); } catch(e) {}
+  try { if (g.f5_juice_sensitivity) f5Data = JSON.parse(g.f5_juice_sensitivity); } catch(e) {}
+  
+  if (!totalData?.lines?.length && !f5Data?.lines?.length) return '';
+
+  // Only show if there's a positive EV total or F5 play
+  const hasTotalBet = g.total_verdict && (g.total_verdict.startsWith('BET') || g.total_verdict.startsWith('LEAN'));
+  const hasF5Bet = g.f5_verdict && (g.f5_verdict.includes('OVER') || g.f5_verdict.includes('UNDER'));
+  if (!hasTotalBet && !hasF5Bet) return '';
+
+  const id = 'juice-' + g.id;
+  
+  function buildRows(lines) {
+    if (!lines?.length) return '';
+    return lines.map(l => {
+      const juice = l.maxJuice;
+      const ev = parseFloat(l.ev || 0);
+      const juiceColor = juice >= -110 ? 'var(--green)' : juice >= -118 ? 'var(--amber)' : 'var(--muted)';
+      const evColor = ev >= 4 ? 'var(--green)' : ev >= 2 ? 'var(--amber)' : 'var(--muted)';
+      const juiceStr = juice > 0 ? '+' + juice : juice;
+      return `<tr>
+        <td style="padding:4px 8px;font-family:DM Mono,monospace;font-size:11px;color:var(--text)">${l.direction} ${l.line}</td>
+        <td style="padding:4px 8px;font-family:DM Mono,monospace;font-size:11px;color:${juiceColor};font-weight:500">max: ${juiceStr}</td>
+        <td style="padding:4px 8px;font-family:DM Mono,monospace;font-size:11px;color:${evColor}">${ev >= 0 ? '+' : ''}${ev.toFixed(1)}% EV</td>
+      </tr>`;
+    }).join('');
+  }
+
+  return `<div style="margin-bottom:8px">
+    <button onclick="document.getElementById('${id}').style.display=document.getElementById('${id}').style.display==='none'?'block':'none'" 
+      style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted);background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;cursor:pointer;width:100%">
+      line shopping guide ▾
+    </button>
+    <div id="${id}" style="display:none;background:var(--s2);border:1px solid var(--border);border-radius:0 0 6px 6px;overflow:hidden">
+      ${totalData?.lines?.length && hasTotalBet ? `
+        <div style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted);padding:6px 8px 2px;text-transform:uppercase;letter-spacing:.05em">Full game total</div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Line</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Max juice</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">EV @-110</th>
+          </tr></thead>
+          <tbody>${buildRows(totalData.lines)}</tbody>
+        </table>` : ''}
+      ${f5Data?.lines?.length && hasF5Bet ? `
+        <div style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted);padding:6px 8px 2px;text-transform:uppercase;letter-spacing:.05em;border-top:1px solid var(--border)">F5 total</div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Line</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Max juice</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">EV @-110</th>
+          </tr></thead>
+          <tbody>${buildRows(f5Data.lines)}</tbody>
+        </table>` : ''}
+    </div>
+  </div>`;
+}
+
+function pitcherEdgeHTML(g) {
+  if (!g.pitcher_edge || g.pitcher_edge === 'EVEN' || !g.analyzed) return '';
+  const color = g.pitcher_edge === g.away_team ? 'var(--blue)' : 'var(--purple)';
+  const side = g.pitcher_edge === g.away_team ? g.away_team.split(' ').pop() : g.home_team.split(' ').pop();
+  return `<div style="font-size:11px;font-family:DM Mono,monospace;color:${color};margin-bottom:6px">⚾ pitcher edge → ${side}</div>`;
+}
+
+function weatherHTML(g) {
+  if (!g.weather_summary) return '';
+  if (g.weather_dome) return '';
+  const hasFlag = g.weather_flags && g.weather_flags.length > 0;
+  const impact = g.weather_impact;
+
+  // Parse wind direction arrow and field direction from summary
+  const arrowMatch = g.weather_summary.match(/\((↑|↓|←|→)\s+([^)]+)\)/);
+  const windArrow = arrowMatch ? arrowMatch[1] : '';
+  const fieldDir = arrowMatch ? arrowMatch[2] : '';
+
+  // Color based on impact
+  const impactColor = impact && impact.includes('over') ? 'var(--over)' :
+                      impact && impact.includes('under') ? 'var(--under)' :
+                      'var(--muted)';
+
+  const arrowSize = g.weather_wind_speed >= 15 ? '20px' : '16px';
+  const arrowColor = impact && impact.includes('over') ? 'var(--over)' :
+                     impact && impact.includes('under') ? 'var(--under)' :
+                     'var(--muted)';
+
+  const windDisplay = windArrow ? `
+    <span style="font-size:${arrowSize};color:${arrowColor};font-weight:bold">${windArrow}</span>
+    <span style="color:${arrowColor};font-weight:500">${fieldDir}</span>
+    <span style="color:var(--muted)">${g.weather_wind_speed}mph</span>` : 
+    `<span style="color:var(--muted)">${g.weather_wind_speed||'?'}mph</span>`;
+
+  return `<div style="font-size:11px;font-family:DM Mono,monospace;margin-bottom:8px">
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <span>${hasFlag ? '⚠️' : '🌤️'}</span>
+      <span style="color:var(--muted)">${g.weather_temp||'?'}°F, ${g.weather_summary.split(',')[1]?.trim().split(',')[0]||''}</span>
+      ${windDisplay}
+      ${impact && impact !== 'none' && impact !== 'neutral' ? `<span style="color:${impactColor};font-weight:500;font-size:10px">→ ${impact.toUpperCase()}</span>` : ''}
+    </div>
+    ${hasFlag ? `<div style="color:var(--amber);font-size:10px;margin-top:2px">${(g.weather_flags||[]).join(' · ')}</div>` : ''}
+  </div>`;
+}
+
+function oddsTableHTML(g) {
+  const rows = [];
+  if (g.away_ml || g.home_ml) {
+    rows.push(`<tr><td class="ol">ML</td><td class="ov">${g.away_team?.split(' ').pop()||'Away'} <strong>${g.away_ml||'?'}</strong></td><td class="ov">${g.home_team?.split(' ').pop()||'Home'} <strong>${g.home_ml||'?'}</strong></td><td class="ov">${g.away_ml_pct ? g.away_ml_pct+'% / '+g.home_ml_pct+'%' : '—'}</td></tr>`);
+  }
+  if (g.away_rl || g.home_rl) {
+    rows.push(`<tr><td class="ol">RL</td><td class="ov">${g.away_rl||'?'} <strong>${g.away_rl_odds||'?'}</strong></td><td class="ov">${g.home_rl||'?'} <strong>${g.home_rl_odds||'?'}</strong></td><td class="ov">—</td></tr>`);
+  }
+  if (g.total) {
+    rows.push(`<tr><td class="ol">Total</td><td class="ov">O${g.total} <strong>${g.over_odds||'?'}</strong></td><td class="ov">U${g.total} <strong>${g.under_odds||'?'}</strong></td><td class="ov">${g.over_pct ? g.over_pct+'% / '+g.under_pct+'%' : '—'}</td></tr>`);
+  }
+  if (g.f5_away_ml || g.f5_home_ml) {
+    rows.push(`<tr><td class="ol">F5 ML</td><td class="ov">Away <strong>${g.f5_away_ml||'?'}</strong></td><td class="ov">Home <strong>${g.f5_home_ml||'?'}</strong></td><td class="ov">—</td></tr>`);
+  }
+  if (g.f5_total) {
+    rows.push(`<tr><td class="ol">F5 Tot</td><td class="ov">O${g.f5_total} <strong>${g.f5_over_odds||'?'}</strong></td><td class="ov">U${g.f5_total} <strong>${g.f5_under_odds||'?'}</strong></td><td class="ov">—</td></tr>`);
+  }
+  if (!rows.length) return '';
+  return `<table style="width:100%;border-collapse:collapse;margin-bottom:10px;font-size:11px;font-family:DM Mono,monospace">
+    <thead><tr><th class="ol" style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)"></th><th style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">Away</th><th style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">Home</th><th style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">Public %</th></tr></thead>
+    <tbody>${rows.join('')}</tbody>
+  </table>`;
+}
+
+function gameCardHTML(g) {
+  const edge = getTopEdge(g);
+  const edgeCls = edge === 'high' ? 'edge-high' : edge === 'med' ? 'edge-med' : '';
+  const time = g.commence_time ? new Date(g.commence_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/New_York'}) + ' ET' : 'TBD';
+  const isExpanded = expanded[g.id];
+
+  const marketsHTML = g.analyzed
+    ? `<div class="markets">
+        ${marketCell('ML', g.ml_verdict, g.ml_ev, g.best_market === 'ml', null, null, g.ml_breakeven, g.id)}
+        ${marketCell('RL', g.rl_verdict, g.rl_ev, g.best_market === 'rl', null, null, g.rl_breakeven, g.id)}
+        ${marketCell('TOTAL', g.total_verdict, g.total_ev, g.best_market === 'total', g.total_line, g.proj_total, g.total_breakeven, g.id)}
+        ${marketCell('F5', g.f5_verdict, g.f5_ev, g.best_market === 'f5', g.f5_line, g.f5_proj_total, g.f5_breakeven, g.id)}
+      </div>`
+    : `<div class="markets" style="opacity:.3">${['ML','RL','TOTAL','F5'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
+
+  const lineMoveHTML = g.line_sharp ? `<div class="line-move">Line: <span>${g.away_ml||'?'}/${g.home_ml||'?'}</span> <span class="lm-sharp">⚡ sharp → ${g.sharp_side}</span> ${g.line_note ? `<span style="color:var(--muted)">${g.line_note}</span>` : ''}</div>` : '';
+
+  const analysisHTML = g.analyzed && isExpanded ? `
+    <div class="analysis-full">
+      <div class="analysis-label">Situation read</div><p>${(g.situation_text||'').replace(/<[^>]*>/g,'')}</p>
+      <div class="analysis-label">Key factors</div><p>${(g.factors_text||'').replace(/<[^>]*>/g,'')}</p>
+      <div class="analysis-label">Best play</div><p>${(g.best_play||'').replace(/<[^>]*>/g,'')}</p>
+      <div class="analysis-label">Risks</div><p>${(g.risks_text||'').replace(/<[^>]*>/g,'')}</p>
+    </div>` : '';
+
+  const notAnalyzed = !g.analyzed ? `<p style="font-size:12px;color:var(--muted);margin-bottom:8px">Analysis runs at 11am and 4pm ET</p>` : '';
+
+  return `<div class="game-card ${edgeCls}" id="card-${g.id}">
+    <div class="card-header">
+      <div>
+        <div class="card-matchup">${g.away_team} @ ${g.home_team}</div>
+        <div class="card-meta">
+          ${g.away_pitcher||'TBD'}${g.away_pitcher_debut ? ' <span style="color:var(--amber);font-weight:500">★ MLB DEBUT</span>' : ''}
+          vs
+          ${g.home_pitcher||'TBD'}${g.home_pitcher_debut ? ' <span style="color:var(--amber);font-weight:500">★ MLB DEBUT</span>' : ''}
+          · Total ${g.total||'?'}
+        </div>
+      </div>
+      <div class="card-time" style="text-align:right">
+        ${time}<br>${edgeBadge(g)}
+        ${g.ml_away_prob && g.ml_home_prob ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted);margin-top:3px">${Math.round(g.ml_away_prob)}% / ${Math.round(g.ml_home_prob)}%</div>` : ''}
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="sit-flags">${sitFlagHTML(g.situations)}</div>
+      ${weatherHTML(g)}
+      ${oddsTableHTML(g)}
+      ${marketsHTML}
+      ${statcastHTML(g)}
+      ${juiceSensitivityHTML(g)}
+      ${pitcherEdgeHTML(g)}
+      ${lineMoveHTML}
+      ${notAnalyzed}
+      ${analysisHTML}
+      <div id="livelines-${g.id}" style="display:none;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;overflow:hidden"></div>
+      <div class="card-actions">
+        ${g.analyzed ? `<button class="btn-expand" onclick="toggleExpand('${g.id}')">${isExpanded ? '− collapse' : '+ details'}</button>` : ''}
+        <button class="btn-expand" id="ll-btn-${g.id}" onclick="showLiveLines('${g.id}','${g.away_team}','${g.home_team}')">live lines</button>
+        ${g.analyzed && edge !== 'skip' && edge !== 'none' ? `<button class="btn-log" onclick="openLog('${g.id}')">Log bet +</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderGames() {
+  let filtered = games;
+  if (currentFilter === 'edge') filtered = games.filter(g => getTopEdge(g) === 'high');
+  if (currentFilter === 'sit') filtered = games.filter(g => g.situations && g.situations.length > 0);
+  if (currentFilter === 'sharp') filtered = games.filter(g => g.line_sharp);
+  if (currentFilter === 'skip') filtered = games.filter(g => g.analyzed && getTopEdge(g) === 'skip');
+  if (!filtered.length) {
+    document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">No games match this filter</div></div>`;
+    return;
+  }
+  document.getElementById('games-container').innerHTML = `<div class="games-grid">${filtered.map(gameCardHTML).join('')}</div>`;
+}
+
+function renderBestPlays() {
+  const top = games.filter(g => g.analyzed && getTopEdge(g) === 'high')
+    .sort((a,b) => (b.edge_pct||0) - (a.edge_pct||0)).slice(0, 5);
+  if (!top.length) { document.getElementById('best-plays').classList.remove('show'); return; }
+  document.getElementById('bp-grid').innerHTML = top.map(g => {
+    const bk = g.best_market; const bv = bk ? g[bk+'_verdict'] : '';
+    const bev = bk ? g[bk+'_ev'] : null;
+    return `<div class="bp-item" onclick="scrollToGame('${g.id}')">
+      <div class="bp-matchup">${g.away_team} @ ${g.home_team}</div>
+      <div class="bp-play">${bv||'BET'} (${(bk||'ml').toUpperCase()})</div>
+      <div class="bp-conf">${g.confidence||''} · ${bev != null ? '+'+parseFloat(bev).toFixed(1)+'% EV' : ''}</div>
+    </div>`;
+  }).join('');
+  document.getElementById('best-plays').classList.add('show');
+}
+
+function scrollToGame(id) {
+  const el = document.getElementById('card-' + id);
+  if (el) el.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+function toggleExpand(id) {
+  expanded[id] = !expanded[id];
+  renderGames();
+}
+
+function setFilter(f, btn) {
+  currentFilter = f;
+  document.querySelectorAll('#filters .filter-btn').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  renderGames();
+}
+
+function shiftDate(n) {
+  currentDate.setDate(currentDate.getDate() + n);
+  expanded = {};
+  loadGames();
+}
+function setToday() { currentDate = getLocalDate(); expanded = {}; loadGames(); }
+
+function quickLog(gameId, market, verdict, line, breakeven) {
+  const g = games.find(x => x.id === gameId);
+  if (!g) return;
+  pendingLog = g;
+  document.getElementById('log-matchup').value = `${g.away_team} @ ${g.home_team}`;
+  document.getElementById('log-date').value = g.game_date;
+
+  // Pre-select bet type based on market and verdict
+  const lt = document.getElementById('log-type');
+  const v = verdict.toUpperCase();
+  if (market === 'ML') {
+    lt.value = v.includes('AWAY') ? 'Moneyline (away)' : 'Moneyline (home)';
+  } else if (market === 'RL') {
+    lt.value = v.includes('AWAY') ? 'RL -1.5' : 'RL +1.5';
+  } else if (market === 'TOTAL') {
+    lt.value = v.includes('OVER') ? 'Game total over' : 'Game total under';
+  } else if (market === 'F5') {
+    if (v.includes('AWAY')) lt.value = 'F5 moneyline (away)';
+    else if (v.includes('HOME')) lt.value = 'F5 moneyline (home)';
+    else if (v.includes('OVER')) lt.value = 'F5 total over';
+    else lt.value = 'F5 total under';
+  }
+
+  // Pre-fill line
+  if (line) document.getElementById('log-line').value = line;
+  if (breakeven) document.getElementById('log-max-juice').value = breakeven;
+
+  // Pre-fill odds from odds table
+  if (market === 'ML') {
+    const odds = v.includes('AWAY') ? g.away_ml : g.home_ml;
+    if (odds) document.getElementById('log-odds').value = odds;
+  } else if (market === 'RL') {
+    const odds = v.includes('AWAY') ? g.away_rl_odds : g.home_rl_odds;
+    if (odds) document.getElementById('log-odds').value = odds;
+  } else if (market === 'TOTAL') {
+    const odds = v.includes('OVER') ? g.over_odds : g.under_odds;
+    if (odds) document.getElementById('log-odds').value = odds;
+  } else if (market === 'F5') {
+    const odds = v.includes('OVER') ? g.f5_over_odds : v.includes('UNDER') ? g.f5_under_odds : v.includes('AWAY') ? g.f5_away_ml : g.f5_home_ml;
+    if (odds) document.getElementById('log-odds').value = odds;
+  }
+
+  document.getElementById('log-sit').value = (g.situations||[]).join(', ') || 'none';
+  document.getElementById('log-modal').classList.add('show');
+  calcLiveEV();
+}
+
+function calcLiveEV() {
+  const odds = parseFloat(document.getElementById('log-odds').value);
+  const type = document.getElementById('log-type').value.toLowerCase();
+  const betLine = parseFloat(document.getElementById('log-line').value);
+  const el = document.getElementById('log-ev-display');
+  if (!pendingLog || isNaN(odds)) { if(el) el.textContent = ''; return; }
+  const g = pendingLog;
+  let prob = null;
+
+  if (type.includes('over')) {
+    const proj = parseFloat(g.proj_total) || parseFloat(g.f5_proj_total) || 0;
+    const line = !isNaN(betLine) ? betLine : parseFloat(g.total_line) || 7.5;
+    if (proj > 0) {
+      const z = (line - proj) / 2.5;
+      prob = 1 / (1 + Math.exp(1.7 * z));
+    } else prob = 0.52;
+  } else if (type.includes('under')) {
+    const proj = parseFloat(g.proj_total) || parseFloat(g.f5_proj_total) || 0;
+    const line = !isNaN(betLine) ? betLine : parseFloat(g.total_line) || 7.5;
+    if (proj > 0) {
+      const z = (line - proj) / 2.5;
+      prob = 1 - (1 / (1 + Math.exp(1.7 * z)));
+    } else prob = 0.48;
+  } else if (type.includes('moneyline (away)') || type.includes('f5 moneyline (away)')) {
+    prob = (g.ml_away_prob || g.away_win_pct || 50) / 100;
+  } else if (type.includes('moneyline (home)') || type.includes('f5 moneyline (home)')) {
+    prob = (g.ml_home_prob || g.home_win_pct || 50) / 100;
+  } else if (type.includes('rl -1.5')) {
+    prob = Math.max(0.1, ((g.ml_away_prob || 50) / 100) - 0.08);
+  } else if (type.includes('rl +1.5')) {
+    prob = Math.min(0.9, ((g.ml_home_prob || 50) / 100) + 0.08);
+  } else prob = 0.50;
+
+  const payout = odds > 0 ? odds / 100 : 100 / Math.abs(odds);
+  const ev = ((prob * payout) - (1 - prob)) * 100;
+  if (el) {
+    el.textContent = 'EV: ' + (ev >= 0 ? '+' : '') + ev.toFixed(1) + '% (win prob: ' + Math.round(prob*100) + '%)';
+    el.style.color = ev >= 2 ? 'var(--green)' : ev >= 0 ? 'var(--amber)' : 'var(--red)';
+  }
+}
+
+function openLog(id) {
+  const g = games.find(x => x.id === id);
+  if (!g) return;
+  pendingLog = g;
+  document.getElementById('log-matchup').value = `${g.away_team} @ ${g.home_team}`;
+  document.getElementById('log-date').value = g.game_date;
+  const bk = g.best_market; const bv = bk ? g[bk+'_verdict'] : '';
+  const lt = document.getElementById('log-type');
+  if (bv && bv.includes('AWAY') && bk === 'ml') lt.value = 'Moneyline (away)';
+  else if (bv && bv.includes('HOME') && bk === 'ml') lt.value = 'Moneyline (home)';
+  else if (bv && bv.includes('OVER') && bk === 'total') lt.value = 'Game total over';
+  else if (bv && bv.includes('UNDER') && bk === 'total') lt.value = 'Game total under';
+  else if (bv && bv.includes('AWAY') && bk === 'rl') lt.value = 'Run line (away -1.5)';
+  else if (bv && bv.includes('HOME') && bk === 'rl') lt.value = 'Run line (home +1.5)';
+  document.getElementById('log-modal').classList.add('show');
+}
+function closeModal() { document.getElementById('log-modal').classList.remove('show'); pendingLog = null; }
+
+async function saveBet() {
+  if (!pendingLog) return;
+  const g = pendingLog;
+  const type = document.getElementById('log-type').value;
+  const odds = document.getElementById('log-odds').value;
+  const units = parseFloat(document.getElementById('log-units').value) || 1;
+  const notes = document.getElementById('log-notes').value;
+  const betLine = document.getElementById('log-line').value;
+  const maxJuice = document.getElementById('log-max-juice').value;
+  const book = document.getElementById('log-book').value;
+  const isAway = type.toLowerCase().includes('away') || type.toLowerCase().includes('-1.5') || type.toLowerCase().includes('over');
+  const awayProb = (g.ml_away_prob||g.away_win_pct||50)/100;
+  const homeProb = (g.ml_home_prob||g.home_win_pct||50)/100;
+  const prob = type.toLowerCase().includes('over') || type.toLowerCase().includes('under')
+    ? (type.toLowerCase().includes('over') ? awayProb : homeProb)
+    : isAway ? awayProb : homeProb;
+  const n = parseFloat(odds);
+  const ev = !isNaN(n) && prob ? (((prob*(n>0?n/100:100/(-n)))-(1-prob))*100).toFixed(1) : null;
+  const bet = {
+    id: Date.now(), date: g.game_date,
+    matchup: `${g.away_team} @ ${g.home_team}`,
+    awayPitcher: g.away_pitcher, homePitcher: g.home_pitcher,
+    type, odds: odds||'?', units, notes, ev,
+    betLine: betLine||'',
+    maxJuice: maxJuice||'',
+    book: book||'',
+    situations: (g.situations||[]).join(','),
+    confidence: g.confidence||'', result: 'pending'
+  };
+  await saveBetToSupabase(bet);
+  bets.unshift(bet);
+  closeModal();
+  updateNavRecord();
+  document.getElementById('log-odds').value = '';
+  document.getElementById('log-units').value = '';
+  document.getElementById('log-notes').value = '';
+  document.getElementById('log-line').value = '';
+  document.getElementById('log-max-juice').value = '';
+  document.getElementById('log-book').value = '';
+  if (document.getElementById('page-tracker').classList.contains('on')) renderTracker();
+}
+
+async function setResult(id, r) {
+  const b = bets.find(x => x.id === id);
+  if (b) {
+    b.result = r;
+    await updateBetResult(id, r);
+    renderTracker();
+    updateNavRecord();
+  }
+}
+async function deleteBet(id) {
+  const i = bets.findIndex(x => x.id === id);
+  if (i > -1) {
+    bets.splice(i, 1);
+    await deleteBetFromSupabase(id);
+    renderTracker();
+    updateNavRecord();
+  }
+}
+
+function renderTracker() {
+  const el = document.getElementById('tracker-table');
+  let filtered = bets;
+  if (trackerFilter !== 'all') filtered = bets.filter(b => b.result === trackerFilter);
+  const settled = bets.filter(b => b.result==='win'||b.result==='loss');
+  const wins = bets.filter(b => b.result==='win').length;
+  document.getElementById('tracker-subtitle').textContent = settled.length
+    ? `${wins}-${settled.length-wins} record (${Math.round(wins/settled.length*100)}%) · ${bets.filter(b=>b.result==='pending').length} pending`
+    : `${bets.length} bets logged`;
+  if (!filtered.length) { el.innerHTML = `<div class="empty-state"><div class="empty-title">No bets ${trackerFilter!=='all'?'matching filter':'yet'}</div></div>`; return; }
+  el.innerHTML = `<table class="t-table"><thead><tr>
+    <th style="width:70px">Date</th><th>Matchup</th><th>Type</th>
+    <th style="width:52px">Odds</th><th style="width:60px">Spread/Tot</th><th style="width:60px">Max juice</th>
+    <th style="width:80px">Book</th><th style="width:46px">Units</th>
+    <th style="width:58px">EV%</th><th style="width:52px">Conf</th>
+    <th>Situation</th><th style="width:50px">Score</th><th>Result</th><th style="width:28px"></th>
+  </tr></thead><tbody>${filtered.map(b => {
+    const btns = ['win','loss','push','pending'].map(r => `<button onclick="setResult(${b.id},'${r}')" class="${r}-btn ${b.result===r?'on':''}">${r}</button>`).join('');
+    const ev = b.ev!=null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
+    return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px">${b.matchup}</td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td>
+      <td style="font-size:11px;color:var(--muted)">${b.awayScore !== undefined && b.homeScore !== undefined && b.result !== 'pending' ? b.awayScore+'-'+b.homeScore : '—'}</td>
+      <td><div class="rsel">${btns}</div></td><td style="display:flex;gap:4px"><button onclick="openEdit(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:13px" title="Edit">✏️</button><button onclick="deleteBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--dim);font-size:17px">×</button></td></tr>`;
+  }).join('')}</tbody></table>`;
+}
+
+// ── EDIT BET ─────────────────────────────────────────────────────────────────
+let pendingEdit = null;
+
+function openEdit(id) {
+  const b = bets.find(x => x.id === id);
+  if (!b) return;
+  pendingEdit = b;
+  document.getElementById('edit-matchup').value = b.matchup || '';
+  document.getElementById('edit-date').value = b.date || '';
+  document.getElementById('edit-type').value = b.type || 'Game total over';
+  document.getElementById('edit-book').value = b.book || '';
+  document.getElementById('edit-odds').value = b.odds || '';
+  document.getElementById('edit-line').value = b.betLine || '';
+  document.getElementById('edit-units').value = b.units || 1;
+  document.getElementById('edit-max-juice').value = b.maxJuice || '';
+  document.getElementById('edit-result').value = b.result || 'pending';
+  document.getElementById('edit-notes').value = b.notes || '';
+  document.getElementById('edit-modal').classList.add('show');
+}
+
+function closeEditModal() {
+  document.getElementById('edit-modal').classList.remove('show');
+  pendingEdit = null;
+}
+
+async function saveEdit() {
+  if (!pendingEdit) return;
+  const updates = {
+    matchup: document.getElementById('edit-matchup').value,
+    game_date: document.getElementById('edit-date').value,
+    bet_type: document.getElementById('edit-type').value,
+    book: document.getElementById('edit-book').value,
+    odds: document.getElementById('edit-odds').value,
+    bet_line: document.getElementById('edit-line').value,
+    units: parseFloat(document.getElementById('edit-units').value) || 1,
+    max_juice: document.getElementById('edit-max-juice').value,
+    result: document.getElementById('edit-result').value,
+    notes: document.getElementById('edit-notes').value
   };
 
-  if (analysis) {
-    Object.assign(row, {
-      analyzed: true,
-      analyzed_at: new Date().toISOString(),
-      situations: (analysis.situations||[]).filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase().trim())),
-      ml_verdict: analysis.ml,
-      ml_ev: analysis.mlEV,
-      rl_verdict: analysis.rl,
-      rl_ev: analysis.rlEV,
-      total_verdict: analysis.total,
-      total_ev: analysis.totalEV,
-      total_line: analysis.totalLine,
-      proj_total: analysis.projTotal,
-      f5_verdict: analysis.f5,
-      f5_ev: analysis.f5EV,
-      f5_line: analysis.f5Line,
-      f5_proj_total: analysis.f5ProjTotal,
-      best_market: analysis.best,
-      best_play: analysis.bestPlay,
-      ml_breakeven: analysis.mlBreakeven,
-      ml_away_prob: analysis.mlAwayProb,
-      ml_home_prob: analysis.mlHomeProb,
-      rl_breakeven: analysis.rlBreakeven,
-      total_breakeven: analysis.totalBreakeven,
-      total_juice_sensitivity: analysis.totalJuiceSensitivity ? JSON.stringify(analysis.totalJuiceSensitivity) : null,
-      f5_juice_sensitivity: analysis.f5JuiceSensitivity ? JSON.stringify(analysis.f5JuiceSensitivity) : null,
-      f5_breakeven: analysis.f5Breakeven,
-      away_win_pct: analysis.awayWinPct,
-      home_win_pct: analysis.homeWinPct,
-      edge_pct: analysis.edgePct,
-      confidence: analysis.confidence,
-      line_sharp: analysis.lineSharp,
-      sharp_side: analysis.sharpSide,
-      line_note: analysis.lineNote,
-      weather_impact: analysis.weatherImpact,
-      pitcher_edge: analysis.pitcherEdge,
-      situation_text: analysis.situation,
-      factors_text: analysis.factors,
-      risks_text: analysis.risks
-    });
-  }
-
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': SUPABASE_SERVICE_KEY,
-      'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-      'Prefer': 'resolution=merge-duplicates'
-    },
-    body: JSON.stringify(row)
-  });
-
-  if (!res.ok) console.error(`Supabase error:`, await res.text());
-}
-
-// ── AUTO SETTLE PENDING BETS ─────────────────────────────────────────────────
-async function settlePendingBets() {
-  console.log('\nChecking pending bets for settlement...');
   try {
-    // Get all pending bets from Supabase
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?result=eq.pending&order=game_date.desc`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${pendingEdit.id}`, {
+      method: 'PATCH',
       headers: {
-        'apikey': SUPABASE_SERVICE_KEY,
-        'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`
-      }
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify(updates)
     });
-    if (!res.ok) return;
-    const bets = await res.json();
-    if (!bets.length) { console.log('  No pending bets to settle'); return; }
-    console.log(`  Found ${bets.length} pending bets`);
-
-    for (const bet of bets) {
-      try {
-        // Get final score from MLB Stats API
-        const schedRes = await fetch(
-          `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${bet.game_date}&gameType=R&hydrate=linescore`
-        );
-        if (!schedRes.ok) continue;
-        const schedData = await schedRes.json();
-        const games = schedData.dates?.[0]?.games || [];
-
-        // Find matching game
-        const matchup = bet.matchup || '';
-        const awayName = matchup.split(' @ ')[0];
-        const homeName = matchup.split(' @ ')[1];
-
-        const game = games.find(g => {
-          const awayTeam = g.teams?.away?.team?.name || '';
-          const homeTeam = g.teams?.home?.team?.name || '';
-          return (awayTeam.includes(awayName.split(' ').pop()) || awayName.includes(awayTeam.split(' ').pop())) &&
-                 (homeTeam.includes(homeName?.split(' ').pop()) || homeName?.includes(homeTeam.split(' ').pop()));
-        });
-
-        if (!game) continue;
-        if (game.status?.abstractGameState !== 'Final') continue;
-
-        const awayScore = game.teams?.away?.score;
-        const homeScore = game.teams?.home?.score;
-        if (awayScore === undefined || homeScore === undefined) continue;
-
-        const totalScore = awayScore + homeScore;
-        const type = (bet.bet_type || '').toLowerCase();
-        const betLine = parseFloat(bet.bet_line) || 0;
-        const odds = parseFloat(bet.odds) || 0;
-
-        let result = 'pending';
-
-        // Determine result based on bet type
-        if (type.includes('total over') || type.includes('over')) {
-          if (totalScore > betLine) result = 'win';
-          else if (totalScore < betLine) result = 'loss';
-          else result = 'push';
-        } else if (type.includes('total under') || type.includes('under')) {
-          if (totalScore < betLine) result = 'win';
-          else if (totalScore > betLine) result = 'loss';
-          else result = 'push';
-        } else if (type.includes('moneyline (away)') || type.includes('f5 moneyline (away)')) {
-          if (awayScore > homeScore) result = 'win';
-          else if (awayScore < homeScore) result = 'loss';
-          else result = 'push';
-        } else if (type.includes('moneyline (home)') || type.includes('f5 moneyline (home)')) {
-          if (homeScore > awayScore) result = 'win';
-          else if (homeScore < awayScore) result = 'loss';
-          else result = 'push';
-        } else if (type.includes('rl -1.5') || type.includes('run line (away')) {
-          if (awayScore - homeScore > 1.5) result = 'win';
-          else if (awayScore - homeScore < 1.5) result = 'loss';
-          else result = 'push';
-        } else if (type.includes('rl +1.5') || type.includes('run line (home')) {
-          if (homeScore - awayScore > -1.5) result = 'win';
-          else if (homeScore - awayScore < -1.5) result = 'loss';
-          else result = 'push';
-        }
-
-        if (result === 'pending') continue;
-
-        // Update bet in Supabase
-        const updateRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': SUPABASE_SERVICE_KEY,
-            'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-            'Prefer': 'return=minimal'
-          },
-          body: JSON.stringify({
-            result,
-            away_score: awayScore,
-            home_score: homeScore,
-            settled_at: new Date().toISOString()
-          })
-        });
-
-        if (updateRes.ok) {
-          console.log(`  ✓ Settled: ${bet.matchup} — ${result.toUpperCase()} (${awayScore}-${homeScore})`);
-        }
-
-        await new Promise(r => setTimeout(r, 500));
-      } catch(e) {
-        console.error(`  Error settling ${bet.matchup}:`, e.message);
+    if (res.ok) {
+      // Update local bets array
+      const b = bets.find(x => x.id === pendingEdit.id);
+      if (b) {
+        b.matchup = updates.matchup;
+        b.date = updates.game_date;
+        b.type = updates.bet_type;
+        b.book = updates.book;
+        b.odds = updates.odds;
+        b.betLine = updates.bet_line;
+        b.units = updates.units;
+        b.maxJuice = updates.max_juice;
+        b.result = updates.result;
+        b.notes = updates.notes;
       }
+      closeEditModal();
+      renderTracker();
+      updateNavRecord();
     }
-  } catch(e) {
-    console.error('Settlement error:', e.message);
-  }
+  } catch(e) { console.error('Edit error:', e); }
 }
 
-async function main() {
-  console.log(`\n=== MLB Analysis: ${RUN_TYPE} ===`);
-  console.log(`${new Date().toLocaleString('en-US',{timeZone:'America/New_York'})} ET\n`);
+// ── MANUAL SETTLE ────────────────────────────────────────────────────────────
+async function settleBets() {
+  const btn = document.getElementById('settle-btn');
+  const pending = bets.filter(b => b.result === 'pending');
+  if (!pending.length) { alert('No pending bets to settle.'); return; }
 
-  // Use ET timezone for date
-  const etDate = new Date().toLocaleDateString('en-US', {timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'});
-  const [etMonth, etDay, etYear] = etDate.split('/');
-  const today = etYear + '-' + etMonth + '-' + etDay;
-  const [games, f5Map, pitcherMap] = await Promise.all([fetchOddsAPI(), fetchF5Lines(), fetchProbablePitchers(today)]);
-  const now = new Date();
-  const todayGames = games.filter(g => {
-    if (!g.commence_time.startsWith(today)) return false;
-    const gameTime = new Date(g.commence_time);
-    const minutesSinceStart = (now - gameTime) / 60000;
-    // Skip games that started more than 5 minutes ago
-    if (minutesSinceStart > 5) {
-      console.log(`  Skipping ${g.away_team} @ ${g.home_team} — game already started`);
-      return false;
-    }
-    // Skip games with extreme live lines (indicates in-game pricing)
-    const lines = parseOddsData(g);
-    const awayML = parseFloat(lines.awayML);
-    const homeML = parseFloat(lines.homeML);
-    if (!isNaN(awayML) && !isNaN(homeML)) {
-      if (Math.abs(awayML) > 600 || Math.abs(homeML) > 600) {
-        console.log(`  Skipping ${g.away_team} @ ${g.home_team} — extreme live odds detected`);
-        return false;
-      }
-    }
-    return true;
-  });
-  console.log(`Today: ${todayGames.length} games\n`);
+  btn.disabled = true;
+  btn.textContent = 'Settling...';
+  let settled = 0;
 
-  for (const game of todayGames) {
+  for (const bet of pending) {
     try {
-      const lines = parseOddsData(game);
+      // Get final score from MLB Stats API
+      const res = await fetch(
+        `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${bet.date}&gameType=R&hydrate=linescore`
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      const games = data.dates?.[0]?.games || [];
 
-      // Get team IDs for pitcher lookup
-      const [awayTeamId, homeTeamId] = await Promise.all([
-        getTeamId(game.away_team),
-        getTeamId(game.home_team)
-      ]);
+      const awayName = (bet.matchup||'').split(' @ ')[0];
+      const homeName = (bet.matchup||'').split(' @ ')[1];
 
-      const awayPitcherInfo = awayTeamId ? pitcherMap[`away_${awayTeamId}`] : null;
-      const homePitcherInfo = homeTeamId ? pitcherMap[`home_${homeTeamId}`] : null;
+      const game = games.find(g => {
+        const at = g.teams?.away?.team?.name || '';
+        const ht = g.teams?.home?.team?.name || '';
+        return (at.includes(awayName.split(' ').pop()) || awayName.includes(at.split(' ').pop())) &&
+               (ht.includes(homeName?.split(' ').pop()) || homeName?.includes(ht.split(' ').pop()));
+      });
 
-      // Check for MLB debut
-      const [awayDebut, homeDebut] = await Promise.all([
-        awayPitcherInfo ? checkMLBDebut(awayPitcherInfo.id) : Promise.resolve(false),
-        homePitcherInfo ? checkMLBDebut(homePitcherInfo.id) : Promise.resolve(false)
-      ]);
+      if (!game || game.status?.abstractGameState !== 'Final') continue;
 
-      if (awayPitcherInfo) awayPitcherInfo.debut = awayDebut;
-      if (homePitcherInfo) homePitcherInfo.debut = homeDebut;
-      if (awayDebut) console.log(`  🚨 MLB DEBUT: ${awayPitcherInfo.name} (${game.away_team})`);
-      if (homeDebut) console.log(`  🚨 MLB DEBUT: ${homePitcherInfo.name} (${game.home_team})`);
+      const awayScore = game.teams?.away?.score;
+      const homeScore = game.teams?.home?.score;
+      if (awayScore === undefined || homeScore === undefined) continue;
 
-      // Fetch Statcast metrics and lineup matchups in parallel
-      const [awayStatcast, homeStatcast, awayMatchups, homeMatchups] = await Promise.all([
-        awayPitcherInfo?.id ? fetchStatcast(awayPitcherInfo.name, awayPitcherInfo.id) : Promise.resolve(null),
-        homePitcherInfo?.id ? fetchStatcast(homePitcherInfo.name, homePitcherInfo.id) : Promise.resolve(null),
-        homePitcherInfo?.id && awayTeamId ? fetchLineupMatchups(awayTeamId, homePitcherInfo.id, today) : Promise.resolve(null),
-        awayPitcherInfo?.id && homeTeamId ? fetchLineupMatchups(homeTeamId, awayPitcherInfo.id, today) : Promise.resolve(null)
-      ]);
+      const totalScore = awayScore + homeScore;
+      const type = (bet.type || '').toLowerCase();
+      const betLine = parseFloat(bet.betLine) || 0;
+      let result = 'pending';
 
-      if (awayStatcast) console.log(`  Statcast ${awayPitcherInfo.name}: velo ${awayStatcast.avgVelo} (${awayStatcast.veloTrend}), whiff ${awayStatcast.whiffRate}%, barrel ${awayStatcast.barrelRate}%`);
-      if (homeStatcast) console.log(`  Statcast ${homePitcherInfo.name}: velo ${homeStatcast.avgVelo} (${homeStatcast.veloTrend}), whiff ${homeStatcast.whiffRate}%, barrel ${homeStatcast.barrelRate}%`);
-      if (awayMatchups) console.log(`  Away lineup vs ${homePitcherInfo?.name}: OPS ${awayMatchups.avgOPS}, K% ${awayMatchups.kRate}`);
-      if (homeMatchups) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: OPS ${homeMatchups.avgOPS}, K% ${homeMatchups.kRate}`);
+      if (type.includes('total over') || (type.includes('over') && !type.includes('under'))) {
+        if (totalScore > betLine) result = 'win';
+        else if (totalScore < betLine) result = 'loss';
+        else result = 'push';
+      } else if (type.includes('total under') || type.includes('under')) {
+        if (totalScore < betLine) result = 'win';
+        else if (totalScore > betLine) result = 'loss';
+        else result = 'push';
+      } else if (type.includes('moneyline (away)') || type.includes('f5 moneyline (away)')) {
+        if (awayScore > homeScore) result = 'win';
+        else if (awayScore < homeScore) result = 'loss';
+        else result = 'push';
+      } else if (type.includes('moneyline (home)') || type.includes('f5 moneyline (home)')) {
+        if (homeScore > awayScore) result = 'win';
+        else if (homeScore < awayScore) result = 'loss';
+        else result = 'push';
+      } else if (type.includes('rl -1.5')) {
+        if (awayScore - homeScore > 1.5) result = 'win';
+        else result = 'loss';
+      } else if (type.includes('rl +1.5')) {
+        if (homeScore - awayScore > -1.5) result = 'win';
+        else result = 'loss';
+      }
 
-      const [anData, weather, awayStats, homeStats] = await Promise.all([
-        fetchActionNetwork(game.away_team, game.home_team, game.commence_time),
-        fetchWeather(game.home_team, game.commence_time),
-        fetchTeamStats(game.away_team),
-        fetchTeamStats(game.home_team)
-      ]);
+      if (result === 'pending') continue;
 
-      if (anData?.total) lines.total = validateTotal(lines.total, anData.total);
+      // Update Supabase
+      await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({
+          result,
+          away_score: awayScore,
+          home_score: homeScore,
+          settled_at: new Date().toISOString()
+        })
+      });
 
-      const f5Lines = f5Map[game.id] || null;
-      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups);
-      await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups);
-
-      const ap = awayPitcherInfo?.name || 'TBD';
-      const hp = homePitcherInfo?.name || 'TBD';
-      console.log(`  ✓ ${game.away_team} @ ${game.home_team} | ${ap} vs ${hp} | ${lines.total} | ${weather?.summary||'dome/no weather'}`);
-      await new Promise(r => setTimeout(r, 2500));
-    } catch(err) {
-      console.error(`  ✗ ${game.away_team} @ ${game.home_team}:`, err.message);
-    }
+      // Update local
+      bet.result = result;
+      bet.awayScore = awayScore;
+      bet.homeScore = homeScore;
+      settled++;
+    } catch(e) { console.error('Settle error:', e); }
   }
 
-  console.log(`\n✅ Done — ${todayGames.length} games`);
-  await settlePendingBets();
+  btn.disabled = false;
+  btn.textContent = 'Settle pending →';
+  renderTracker();
+  updateNavRecord();
+  if (settled > 0) alert(`✓ Settled ${settled} bet${settled > 1 ? 's' : ''} automatically`);
+  else alert('No completed games found yet. Check back after games finish.');
 }
 
-main();
+function setTrackerFilter(f, btn) {
+  trackerFilter = f;
+  document.querySelectorAll('.tracker-filters .filter-btn').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  renderTracker();
+}
+
+function updateNavRecord() {
+  const s = bets.filter(b => b.result==='win'||b.result==='loss');
+  const w = bets.filter(b => b.result==='win').length;
+  document.getElementById('nav-record').textContent = s.length ? `${w}-${s.length-w}` : '—';
+}
+
+function renderStats() {
+  const el = document.getElementById('stats-content');
+  const settled = bets.filter(b => b.result==='win'||b.result==='loss');
+  if (!settled.length) { el.innerHTML = `<div class="empty-state"><div class="empty-title">No settled bets yet</div><div class="empty-sub">Log and settle bets to see your edge stats.</div></div>`; return; }
+  const wins = bets.filter(b=>b.result==='win').length;
+  const losses = bets.filter(b=>b.result==='loss').length;
+  const pct = Math.round(wins/settled.length*100);
+  let profit=0, risked=0;
+  bets.filter(b=>['win','loss','push'].includes(b.result)).forEach(b=>{
+    const u=parseFloat(b.units)||1; risked+=u;
+    const n=parseFloat(b.odds);
+    if(b.result==='win') profit+=isNaN(n)?u:(n>0?u*n/100:u*100/(-n));
+    else if(b.result==='loss') profit-=u;
+  });
+  const roi=risked?((profit/risked)*100).toFixed(1):'0';
+  const pCol=pct>=57?'var(--green)':pct>=52?'var(--amber)':'var(--red)';
+  const byType={}, bySit={}, byConf={};
+  settled.forEach(b=>{
+    const t=b.type.split(' ').slice(0,2).join(' ');
+    if(!byType[t])byType[t]={w:0,l:0};
+    if(b.result==='win')byType[t].w++;else byType[t].l++;
+    (b.situations||'').split(',').filter(Boolean).forEach(s=>{
+      if(!bySit[s])bySit[s]={w:0,l:0};
+      if(b.result==='win')bySit[s].w++;else bySit[s].l++;
+    });
+    const c=b.confidence||'UNKNOWN';
+    if(!byConf[c])byConf[c]={w:0,l:0};
+    if(b.result==='win')byConf[c].w++;else byConf[c].l++;
+  });
+  function barRows(obj) {
+    return Object.entries(obj).sort((a,b)=>(b[1].w+b[1].l)-(a[1].w+a[1].l)).map(([k,d])=>{
+      const p2=Math.round(d.w/(d.w+d.l)*100);
+      const c=p2>=57?'var(--green)':p2>=52?'var(--amber)':'var(--red)';
+      return `<div class="bar-row"><div class="bar-lbl">${k}</div><div class="bar-track"><div class="bar-fill" style="width:${p2}%;background:${c}"></div></div><div class="bar-val" style="color:${c}">${p2}%</div></div>`;
+    }).join('');
+  }
+  el.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-label">Win rate</div><div class="stat-val" style="color:${pCol}">${pct}%</div><div class="stat-sub">breakeven = 52.4%</div></div>
+      <div class="stat-card"><div class="stat-label">Record</div><div class="stat-val">${wins}–${losses}</div><div class="stat-sub">${bets.filter(b=>b.result==='pending').length} pending</div></div>
+      <div class="stat-card"><div class="stat-label">Profit (units)</div><div class="stat-val" style="color:${profit>=0?'var(--green)':'var(--red)'}">${profit>=0?'+':''}${profit.toFixed(2)}</div><div class="stat-sub">${risked.toFixed(1)} risked</div></div>
+      <div class="stat-card"><div class="stat-label">ROI</div><div class="stat-val" style="color:${parseFloat(roi)>=0?'var(--green)':'var(--red)'}">${parseFloat(roi)>=0?'+':''}${roi}%</div><div class="stat-sub">return on investment</div></div>
+    </div>
+    ${Object.keys(byType).length?`<div class="section-head">Win rate by bet type</div>${barRows(byType)}`:''}
+    ${Object.keys(bySit).length?`<div class="section-head">Win rate by situation</div>${barRows(bySit)}`:''}
+    ${Object.keys(byConf).length?`<div class="section-head">Win rate by confidence</div>${barRows(byConf)}`:''}
+    <div class="disc">Data stored locally. Export CSV to back up.</div>`;
+}
+
+function exportCSV() {
+  if (!bets.length) { alert('No bets to export.'); return; }
+  const headers = ['date','matchup','awayPitcher','homePitcher','type','odds','units','ev','confidence','situations','result','notes'];
+  const rows = bets.map(b => headers.map(h => `"${(b[h]||'').toString().replace(/"/g,'""')}"`).join(','));
+  const csv = [headers.join(','), ...rows].join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  a.download = 'mlb_bets_' + isoDate(new Date()) + '.csv';
+  a.click();
+}
+
+// Init
+document.getElementById('date-display').textContent = fmtDate(currentDate);
+loadBetsFromSupabase().then(() => {
+  updateNavRecord();
+});
+loadGames();
+</script>
+
+<div class="container" style="padding-top:0">
+  <div class="disc">For entertainment and educational purposes only. Not financial advice. Always verify lines at your sportsbook. Gamble responsibly.</div>
+</div>
+</body>
+</html>
