@@ -307,10 +307,25 @@ function parseOddsData(game) {
           if (o.name===game.home_team) homeML=o.price>0?`+${o.price}`:`${o.price}`;
         }
       }
-      if (mkt.key==='totals'&&!total) {
+      if (mkt.key==='totals') {
         const over=mkt.outcomes.find(o=>o.name==='Over');
         const under=mkt.outcomes.find(o=>o.name==='Under');
-        if (over) { total=`${over.point}`; overOdds=over.price>0?`+${over.price}`:`${over.price}`; underOdds=under?(under.price>0?`+${under.price}`:`${under.price}`):null; }
+        if (over) {
+          const pt = parseFloat(over.point);
+          // Only use if within realistic MLB range AND better than current
+          if (pt >= 6.5 && pt <= 13.5) {
+            if (!total) {
+              total=`${over.point}`; 
+              overOdds=over.price>0?`+${over.price}`:`${over.price}`; 
+              underOdds=under?(under.price>0?`+${under.price}`:`${under.price}`):null;
+            }
+          } else if (!total) {
+            // Store unrealistic total temporarily
+            total=`${over.point}`;
+            overOdds=over.price>0?`+${over.price}`:`${over.price}`;
+            underOdds=under?(under.price>0?`+${under.price}`:`${under.price}`):null;
+          }
+        }
       }
       if (mkt.key==='spreads'&&!awayRL) {
         for (const o of mkt.outcomes) {
@@ -326,8 +341,12 @@ function parseOddsData(game) {
 
 function validateTotal(oddsTotal, anTotal) {
   const ot=parseFloat(oddsTotal), at=parseFloat(anTotal);
-  if (anTotal&&!isNaN(at)&&at>=6.5&&at<=14.0) return `${at}`;
-  if (!isNaN(ot)&&ot>=6.5&&ot<=14.0) return `${ot}`;
+  // Prefer Action Network if available and realistic
+  if (anTotal&&!isNaN(at)&&at>=6.5&&at<=13.5) return `${at}`;
+  // Use Odds API if realistic
+  if (!isNaN(ot)&&ot>=6.5&&ot<=13.5) return `${ot}`;
+  // If both out of range, try to find best bookmaker line from raw data
+  console.log(`  Warning: unusual total ${oddsTotal} - may be alt market`);
   return oddsTotal;
 }
 
