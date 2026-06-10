@@ -24,7 +24,7 @@ const PARK_COORDS = {
   'Los Angeles Angels': { lat: 33.8003, lon: -117.8827, dome: false },
   'Los Angeles Dodgers': { lat: 34.0739, lon: -118.2400, dome: false },
   'Miami Marlins': { lat: 25.7781, lon: -80.2197, dome: true },
-  'Milwaukee Brewers': { lat: 43.0280, lon: -87.9712, dome: false },
+  'Milwaukee Brewers': { lat: 43.0280, lon: -87.9712, dome: true },
   'Minnesota Twins': { lat: 44.9817, lon: -93.2777, dome: false },
   'New York Mets': { lat: 40.7571, lon: -73.8458, dome: false },
   'New York Yankees': { lat: 40.8296, lon: -73.9262, dome: false },
