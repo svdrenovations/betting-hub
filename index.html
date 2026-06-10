@@ -121,6 +121,10 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .t-table tr:hover td{background:var(--s2)}
 .rsel button{padding:3px 7px;font-size:11px;border-radius:4px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--muted);margin-right:3px;font-family:DM Mono,monospace}
 .rsel button.on{background:var(--s2);color:var(--text);border-color:var(--border2)}
+.rsel button.win-btn.on{background:var(--green-bg);color:var(--green);border-color:var(--green-dim)}
+.rsel button.loss-btn.on{background:var(--red-bg);color:var(--red);border-color:var(--red-dim)}
+.rsel button.push-btn.on{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-dim)}
+.rsel button.pending-btn.on{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-dim)}
 .ep{color:var(--green);font-weight:500}.en{color:var(--red);font-weight:500}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:1.5rem}
 .stat-card{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:1rem;text-align:center}
@@ -1170,7 +1174,7 @@ function renderTracker() {
     <th style="width:58px">EV%</th><th style="width:52px">Conf</th>
     <th>Situation</th><th style="width:50px">Score</th><th>Result</th><th style="width:28px"></th>
   </tr></thead><tbody>${filtered.map(b => {
-    const btns = ['win','loss','push','pending'].map(r => `<button onclick="setResult(${b.id},'${r}')" class="${b.result===r?'on':''}">${r}</button>`).join('');
+    const btns = ['win','loss','push','pending'].map(r => `<button onclick="setResult(${b.id},'${r}')" class="${r}-btn ${b.result===r?'on':''}">${r}</button>`).join('');
     const ev = b.ev!=null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
     return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px">${b.matchup}</td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td>
       <td style="font-size:11px;color:var(--muted)">${b.awayScore !== undefined && b.homeScore !== undefined && b.result !== 'pending' ? b.awayScore+'-'+b.homeScore : '—'}</td>
