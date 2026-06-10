@@ -251,15 +251,36 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
           <option>F5 total over</option><option>F5 total under</option>
         </select>
       </div>
+      <div class="form-field"><label>Book</label>
+        <select id="log-book">
+          <option value="">Select book</option>
+          <option>DraftKings</option>
+          <option>FanDuel</option>
+          <option>Caesars</option>
+          <option>BetMGM</option>
+          <option>Bet365</option>
+          <option>ESPNBet</option>
+          <option>Fanatics</option>
+          <option>PointsBet</option>
+          <option>BetRivers</option>
+          <option>Hard Rock</option>
+          <option>Kalshi</option>
+          <option>Coinbase</option>
+          <option>Polymarket</option>
+          <option>Other</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
       <div class="form-field"><label>Odds</label><input id="log-odds" placeholder="-115"></div>
+      <div class="form-field"><label>Total / Line</label><input id="log-line" placeholder="e.g. 7.5"></div>
     </div>
     <div class="form-row">
       <div class="form-field"><label>Units risked</label><input id="log-units" type="number" min="0.5" max="10" step="0.5" placeholder="1.0"></div>
-      <div class="form-field"><label>Total / Line</label><input id="log-line" placeholder="e.g. 7.5, -1.5"></div>
+      <div class="form-field"><label>Max juice</label><input id="log-max-juice" placeholder="e.g. -112"></div>
     </div>
     <div class="form-row">
       <div class="form-field"><label>Notes</label><input id="log-notes" placeholder="optional"></div>
-      <div class="form-field"><label>Max juice used</label><input id="log-max-juice" placeholder="e.g. -112"></div>
     </div>
     <div class="modal-actions">
       <button class="btn-save" onclick="saveBet()">Save bet</button>
@@ -273,7 +294,7 @@ const SUPABASE_URL = 'https://crfgkpqkmqfvyyifmprj.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNyZmdrcHFrbXFmdnl5aWZtcHJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwMzg5OTYsImV4cCI6MjA5NjYxNDk5Nn0.FH9ViDkYdnu_iR2s6kDAglBMb6waJljcaMTeqb8J8jY';
 
 let games = [];
-let bets = JSON.parse(localStorage.getItem('mlb_bets_v2') || '[]');
+let bets = [];
 // Use local date to avoid UTC offset issues
 function getLocalDate() {
   const now = new Date();
@@ -284,6 +305,108 @@ let currentFilter = 'all';
 let trackerFilter = 'all';
 let pendingLog = null;
 let expanded = {};
+
+// ── SUPABASE BETS ─────────────────────────────────────────────────────────────
+async function loadBetsFromSupabase() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?order=id.desc&limit=500`, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    bets = data.map(b => ({
+      id: b.id,
+      date: b.game_date,
+      matchup: b.matchup,
+      awayPitcher: b.away_pitcher,
+      homePitcher: b.home_pitcher,
+      type: b.bet_type,
+      odds: b.odds,
+      betLine: b.bet_line,
+      maxJuice: b.max_juice,
+      book: b.book,
+      units: b.units,
+      notes: b.notes,
+      ev: b.ev,
+      situations: b.situations,
+      confidence: b.confidence,
+      result: b.result,
+      awayScore: b.away_score,
+      homeScore: b.home_score
+    }));
+    updateNavRecord();
+    // Migrate any existing localStorage bets to Supabase
+    const local = JSON.parse(localStorage.getItem('mlb_bets_v2') || '[]');
+    if (local.length > 0) {
+      console.log(`Migrating ${local.length} local bets to Supabase...`);
+      for (const b of local) await saveBetToSupabase(b);
+      localStorage.removeItem('mlb_bets_v2');
+    }
+  } catch(e) { console.error('loadBets error:', e); }
+}
+
+async function saveBetToSupabase(bet) {
+  try {
+    const row = {
+      id: bet.id,
+      game_date: bet.date,
+      matchup: bet.matchup,
+      away_pitcher: bet.awayPitcher,
+      home_pitcher: bet.homePitcher,
+      bet_type: bet.type,
+      odds: bet.odds,
+      bet_line: bet.betLine || null,
+      max_juice: bet.maxJuice || null,
+      book: bet.book || null,
+      units: bet.units,
+      notes: bet.notes,
+      ev: bet.ev,
+      situations: bet.situations,
+      confidence: bet.confidence,
+      result: bet.result || 'pending'
+    };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify(row)
+    });
+    return res.ok;
+  } catch(e) { return false; }
+}
+
+async function updateBetResult(id, result) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({ result })
+    });
+    return res.ok;
+  } catch(e) { return false; }
+}
+
+async function deleteBetFromSupabase(id) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${id}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`
+      }
+    });
+    return res.ok;
+  } catch(e) { return false; }
+}
 
 function fmtDate(d) { return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}); }
 function fmtDateShort(d) { return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
@@ -723,6 +846,7 @@ function saveBet() {
   const notes = document.getElementById('log-notes').value;
   const betLine = document.getElementById('log-line').value;
   const maxJuice = document.getElementById('log-max-juice').value;
+  const book = document.getElementById('log-book').value;
   const isAway = type.toLowerCase().includes('away');
   const prob = isAway ? (g.away_win_pct||50)/100 : type.toLowerCase().includes('home') ? (g.home_win_pct||50)/100 : null;
   const n = parseFloat(odds);
@@ -734,11 +858,12 @@ function saveBet() {
     type, odds: odds||'?', units, notes, ev,
     betLine: betLine||'',
     maxJuice: maxJuice||'',
+    book: book||'',
     situations: (g.situations||[]).join(','),
     confidence: g.confidence||'', result: 'pending'
   };
-  bets.push(bet);
-  localStorage.setItem('mlb_bets_v2', JSON.stringify(bets));
+  await saveBetToSupabase(bet);
+  bets.unshift(bet);
   closeModal();
   updateNavRecord();
   document.getElementById('log-odds').value = '';
@@ -746,15 +871,27 @@ function saveBet() {
   document.getElementById('log-notes').value = '';
   document.getElementById('log-line').value = '';
   document.getElementById('log-max-juice').value = '';
+  document.getElementById('log-book').value = '';
+  if (document.getElementById('page-tracker').classList.contains('on')) renderTracker();
 }
 
-function setResult(id, r) {
+async function setResult(id, r) {
   const b = bets.find(x => x.id === id);
-  if (b) { b.result = r; localStorage.setItem('mlb_bets_v2', JSON.stringify(bets)); renderTracker(); updateNavRecord(); }
+  if (b) {
+    b.result = r;
+    await updateBetResult(id, r);
+    renderTracker();
+    updateNavRecord();
+  }
 }
-function deleteBet(id) {
+async function deleteBet(id) {
   const i = bets.findIndex(x => x.id === id);
-  if (i > -1) { bets.splice(i,1); localStorage.setItem('mlb_bets_v2', JSON.stringify(bets)); renderTracker(); updateNavRecord(); }
+  if (i > -1) {
+    bets.splice(i, 1);
+    await deleteBetFromSupabase(id);
+    renderTracker();
+    updateNavRecord();
+  }
 }
 
 function renderTracker() {
@@ -769,13 +906,16 @@ function renderTracker() {
   if (!filtered.length) { el.innerHTML = `<div class="empty-state"><div class="empty-title">No bets ${trackerFilter!=='all'?'matching filter':'yet'}</div></div>`; return; }
   el.innerHTML = `<table class="t-table"><thead><tr>
     <th style="width:70px">Date</th><th>Matchup</th><th>Type</th>
-    <th style="width:52px">Odds</th><th style="width:46px">Line</th><th style="width:46px">Units</th>
+    <th style="width:52px">Odds</th><th style="width:46px">Line</th><th style="width:60px">Max juice</th>
+    <th style="width:80px">Book</th><th style="width:46px">Units</th>
     <th style="width:58px">EV%</th><th style="width:52px">Conf</th>
-    <th>Situation</th><th>Result</th><th style="width:28px"></th>
+    <th>Situation</th><th style="width:50px">Score</th><th>Result</th><th style="width:28px"></th>
   </tr></thead><tbody>${filtered.map(b => {
     const btns = ['win','loss','push','pending'].map(r => `<button onclick="setResult(${b.id},'${r}')" class="${b.result===r?'on':''}">${r}</button>`).join('');
     const ev = b.ev!=null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
-    return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px">${b.matchup}</td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td><td><div class="rsel">${btns}</div></td><td><button onclick="deleteBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--dim);font-size:17px">×</button></td></tr>`;
+    return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px">${b.matchup}</td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td>
+      <td style="font-size:11px;color:var(--muted)">${b.awayScore !== undefined && b.homeScore !== undefined && b.result !== 'pending' ? b.awayScore+'-'+b.homeScore : '—'}</td>
+      <td><div class="rsel">${btns}</div></td><td><button onclick="deleteBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--dim);font-size:17px">×</button></td></tr>`;
   }).join('')}</tbody></table>`;
 }
 
@@ -854,7 +994,9 @@ function exportCSV() {
 
 // Init
 document.getElementById('date-display').textContent = fmtDate(currentDate);
-updateNavRecord();
+loadBetsFromSupabase().then(() => {
+  updateNavRecord();
+});
 loadGames();
 </script>
 
