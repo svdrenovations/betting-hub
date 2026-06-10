@@ -7,6 +7,13 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
 const RUN_TYPE = process.env.RUN_TYPE || '11am';
 
+// Standard deviation of MLB game total runs, used to convert a projected total
+// into a win probability. ~4.5 reflects real game variance + projection error.
+// TUNE THIS from your own settled-bet results during calibration — lower = more
+// confident (bigger edges/EV), higher = more conservative. Keep it identical to
+// the TOTAL_SD in index.html or the card and modal will disagree.
+const TOTAL_SD = 4.5;
+
 // MLB park coordinates and orientation
 // homeplateFacing = compass direction home plate faces (degrees)
 // Wind blowing FROM opposite direction = blowing OUT to CF
@@ -75,7 +82,7 @@ function breakevenOdds(p) {
 // P(total goes OVER `line`) given a projected total. Same logistic the modal uses.
 function totalsProbOver(line, proj) {
   if (!(proj > 0)) return null;
-  const z = (parseFloat(line) - proj) / 2.5;
+  const z = (parseFloat(line) - proj) / TOTAL_SD;
   return 1 / (1 + Math.exp(1.7 * z));
 }
 
