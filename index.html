@@ -433,7 +433,12 @@ function gameCardHTML(g) {
     <div class="card-header">
       <div>
         <div class="card-matchup">${g.away_team} @ ${g.home_team}</div>
-        <div class="card-meta">${g.away_pitcher||'TBD'} vs ${g.home_pitcher||'TBD'} · Total ${g.total||'?'}</div>
+        <div class="card-meta">
+          ${g.away_pitcher||'TBD'}${g.away_pitcher_debut ? ' <span style="color:var(--amber);font-weight:500">★ MLB DEBUT</span>' : ''}
+          vs
+          ${g.home_pitcher||'TBD'}${g.home_pitcher_debut ? ' <span style="color:var(--amber);font-weight:500">★ MLB DEBUT</span>' : ''}
+          · Total ${g.total||'?'}
+        </div>
       </div>
       <div class="card-time">${time}<br>${edgeBadge(g)}</div>
     </div>
