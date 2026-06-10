@@ -357,6 +357,68 @@ function edgeBadge(g) {
   return '<span class="edge-badge eb-skip">SKIP</span>';
 }
 
+function statcastHTML(g) {
+  if (!g.analyzed) return '';
+  const rows = [];
+
+  // Away pitcher Statcast
+  if (g.away_velo) {
+    const trendColor = g.away_velo_trend === 'DOWN' ? 'var(--red)' : g.away_velo_trend === 'UP' ? 'var(--green)' : 'var(--muted)';
+    const trendIcon = g.away_velo_trend === 'DOWN' ? '↓' : g.away_velo_trend === 'UP' ? '↑' : '→';
+    rows.push(`<tr>
+      <td class="ol">${g.away_pitcher?.split(' ').pop()||'Away'}</td>
+      <td class="ov"><span style="color:${trendColor}">${trendIcon}</span> ${g.away_velo}mph</td>
+      <td class="ov">whiff ${g.away_whiff_rate||'?'}%</td>
+      <td class="ov">barrel ${g.away_barrel_rate||'?'}%</td>
+    </tr>`);
+  }
+
+  // Home pitcher Statcast
+  if (g.home_velo) {
+    const trendColor = g.home_velo_trend === 'DOWN' ? 'var(--red)' : g.home_velo_trend === 'UP' ? 'var(--green)' : 'var(--muted)';
+    const trendIcon = g.home_velo_trend === 'DOWN' ? '↓' : g.home_velo_trend === 'UP' ? '↑' : '→';
+    rows.push(`<tr>
+      <td class="ol">${g.home_pitcher?.split(' ').pop()||'Home'}</td>
+      <td class="ov"><span style="color:${trendColor}">${trendIcon}</span> ${g.home_velo}mph</td>
+      <td class="ov">whiff ${g.home_whiff_rate||'?'}%</td>
+      <td class="ov">barrel ${g.home_barrel_rate||'?'}%</td>
+    </tr>`);
+  }
+
+  // Lineup matchup OPS
+  if (g.away_lineup_ops || g.home_lineup_ops) {
+    if (g.away_lineup_ops) {
+      const opsVal = parseFloat(g.away_lineup_ops);
+      const opsColor = opsVal > .800 ? 'var(--red)' : opsVal < .600 ? 'var(--green)' : 'var(--muted)';
+      rows.push(`<tr>
+        <td class="ol">Away lineup</td>
+        <td class="ov" colspan="2">OPS vs starter: <span style="color:${opsColor};font-weight:500">${g.away_lineup_ops}</span></td>
+        <td class="ov">K% ${g.away_lineup_k_rate||'?'}%</td>
+      </tr>`);
+    }
+    if (g.home_lineup_ops) {
+      const opsVal = parseFloat(g.home_lineup_ops);
+      const opsColor = opsVal > .800 ? 'var(--red)' : opsVal < .600 ? 'var(--green)' : 'var(--muted)';
+      rows.push(`<tr>
+        <td class="ol">Home lineup</td>
+        <td class="ov" colspan="2">OPS vs starter: <span style="color:${opsColor};font-weight:500">${g.home_lineup_ops}</span></td>
+        <td class="ov">K% ${g.home_lineup_k_rate||'?'}%</td>
+      </tr>`);
+    }
+  }
+
+  if (!rows.length) return '';
+  return `<table style="width:100%;border-collapse:collapse;margin-bottom:8px;font-size:11px;font-family:'DM Mono',monospace">
+    <thead><tr>
+      <th class="ol" style="color:var(--muted);padding:3px 6px;border-bottom:1px solid var(--border);text-align:left">Statcast</th>
+      <th style="color:var(--muted);padding:3px 6px;border-bottom:1px solid var(--border);text-align:left">Velo</th>
+      <th style="color:var(--muted);padding:3px 6px;border-bottom:1px solid var(--border);text-align:left">Whiff</th>
+      <th style="color:var(--muted);padding:3px 6px;border-bottom:1px solid var(--border);text-align:left">Barrel</th>
+    </tr></thead>
+    <tbody>${rows.join('')}</tbody>
+  </table>`;
+}
+
 function pitcherEdgeHTML(g) {
   if (!g.pitcher_edge || g.pitcher_edge === 'EVEN' || !g.analyzed) return '';
   const color = g.pitcher_edge === g.away_team ? 'var(--blue)' : 'var(--purple)';
@@ -447,6 +509,7 @@ function gameCardHTML(g) {
       ${weatherHTML(g)}
       ${oddsTableHTML(g)}
       ${marketsHTML}
+      ${statcastHTML(g)}
       ${pitcherEdgeHTML(g)}
       ${lineMoveHTML}
       ${notAnalyzed}
