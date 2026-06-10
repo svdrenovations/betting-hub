@@ -24,8 +24,8 @@ const PARK_COORDS = {
   'Los Angeles Angels': { lat: 33.8003, lon: -117.8827, dome: false },
   'Los Angeles Dodgers': { lat: 34.0739, lon: -118.2400, dome: false },
   'Miami Marlins': { lat: 25.7781, lon: -80.2197, dome: true },
-  'Milwaukee Brewers': { lat: 43.0280, lon: -87.9712, dome: true },
-  'Minnesota Twins': { lat: 44.9817, lon: -93.2777, dome: true },
+  'Milwaukee Brewers': { lat: 43.0280, lon: -87.9712, dome: false },
+  'Minnesota Twins': { lat: 44.9817, lon: -93.2777, dome: false },
   'New York Mets': { lat: 40.7571, lon: -73.8458, dome: false },
   'New York Yankees': { lat: 40.8296, lon: -73.9262, dome: false },
   'Oakland Athletics': { lat: 37.7516, lon: -122.2005, dome: false },
@@ -44,8 +44,13 @@ const PARK_COORDS = {
 // Fetch weather for home park
 async function fetchWeather(homeTeam, gameTime) {
   try {
-    const park = PARK_COORDS[homeTeam];
-    if (!park) return null;
+    let park = PARK_COORDS[homeTeam];
+    if (!park) {
+      // fuzzy match
+      const key = Object.keys(PARK_COORDS).find(k => k.includes(homeTeam.split(' ').pop()) || homeTeam.includes(k.split(' ').pop()));
+      if (key) park = PARK_COORDS[key];
+    }
+    if (!park) { console.log(`  No park found for ${homeTeam}`); return null; }
     if (park.dome) return { dome: true, description: 'Indoor dome — weather not a factor' };
 
     const res = await fetch(
@@ -98,6 +103,7 @@ async function fetchWeather(homeTeam, gameTime) {
       summary: `${temp}°F, ${desc}, wind ${windSpeed}mph ${windDir}${flags.length ? ' — ' + flags.join(', ') : ''}`
     };
   } catch(e) {
+    console.log(`  Weather error for ${homeTeam}:`, e.message);
     return null;
   }
 }
@@ -263,6 +269,7 @@ async function fetchF5Lines() {
 
 async function fetchActionNetwork(awayTeam, homeTeam, gameDate) {
   try {
+    console.log(`  Fetching Action Network for ${awayTeam} @ ${homeTeam}...`);
     const dateStr = gameDate.split('T')[0];
     const url = `https://api.actionnetwork.com/web/v1/games?sport=baseball&date=${dateStr}&league=mlb`;
     const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } });
@@ -275,7 +282,7 @@ async function fetchActionNetwork(awayTeam, homeTeam, gameDate) {
       return (at.includes(awayTeam.toLowerCase().split(' ').pop()) || awayTeam.toLowerCase().includes(at.split(' ').pop())) &&
              (ht.includes(homeTeam.toLowerCase().split(' ').pop()) || homeTeam.toLowerCase().includes(ht.split(' ').pop()));
     });
-    if (!match) return null;
+    if (!match) { console.log(`  No AN match found for ${awayTeam} @ ${homeTeam}`); return null; }
     return {
       total: match.total || null,
       awayML: match.away_ml || null,
