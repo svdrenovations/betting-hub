@@ -705,6 +705,8 @@ PUBLIC BETTING:
 ${publicInfo}
 
 ANALYSIS INSTRUCTIONS — CRITICAL:
+- The "situations" array must ONLY contain these exact lowercase values: revenge, travel, sharp, weather, rest, series, fade, mustwin, debut. DO NOT add any other values. DO NOT use situations to flag data availability issues. If data is missing just work with what you have.
+- ANALYSIS INSTRUCTIONS — CRITICAL:
 - USE ONLY 2026 SEASON STATS for all total projections. IGNORE all prior year data entirely.
 - TOTAL PROJECTION METHOD: (away team 2026 runs/game + home team 2026 runs/game) × pitcher adjustment × park factor × weather adjustment = projected total. Compare to line for edge.
 - STATCAST IS CRITICAL: A pitcher with velocity DOWN trend is significantly worse than ERA suggests — fade. A pitcher with low barrel rate and high whiff rate is elite regardless of ERA — back. Hard hit rate above 42% means the pitcher is getting hit hard even if runs haven't scored yet.
@@ -719,7 +721,7 @@ ANALYSIS INSTRUCTIONS — CRITICAL:
 
 Return ONLY this JSON (no markdown):
 {
-  "situations": [],
+  "situations": ["revenge","travel","sharp","weather","rest","series","fade","mustwin","debut"],
   "ml": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
   "mlEV": NUMBER,
   "mlAwayProb": NUMBER,
@@ -834,7 +836,7 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
     Object.assign(row, {
       analyzed: true,
       analyzed_at: new Date().toISOString(),
-      situations: analysis.situations||[],
+      situations: (analysis.situations||[]).filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase().trim())),
       ml_verdict: analysis.ml,
       ml_ev: analysis.mlEV,
       rl_verdict: analysis.rl,
@@ -902,6 +904,16 @@ async function main() {
     if (minutesSinceStart > 5) {
       console.log(`  Skipping ${g.away_team} @ ${g.home_team} — game already started`);
       return false;
+    }
+    // Skip games with extreme live lines (indicates in-game pricing)
+    const lines = parseOddsData(g);
+    const awayML = parseFloat(lines.awayML);
+    const homeML = parseFloat(lines.homeML);
+    if (!isNaN(awayML) && !isNaN(homeML)) {
+      if (Math.abs(awayML) > 600 || Math.abs(homeML) > 600) {
+        console.log(`  Skipping ${g.away_team} @ ${g.home_team} — extreme live odds detected`);
+        return false;
+      }
     }
     return true;
   });
