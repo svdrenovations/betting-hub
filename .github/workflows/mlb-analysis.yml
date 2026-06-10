@@ -45,5 +45,6 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
           RUN_TYPE: ${{ steps.run-type.outputs.type }}
         run: node scripts/analyze.js
