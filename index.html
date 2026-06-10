@@ -64,7 +64,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .sf-rest{background:var(--amber-bg);color:var(--amber)}
 .sf-series{background:#0d1820;color:var(--over)}
 .sf-fade{background:var(--red-bg);color:var(--red)}
-.sf-none{background:var(--s2);color:var(--dim);font-size:10px}
+.sf-none{background:var(--s2);color:var(--muted);font-size:10px}
 .markets{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
 .market-cell{background:var(--s2);border-radius:6px;padding:7px 8px;text-align:center;border:1px solid transparent}
 .market-cell.best{border-color:var(--green)}
@@ -347,8 +347,23 @@ function getTopEdge(g) {
 
 function sitFlagHTML(sits) {
   if (!sits || sits.length === 0) return '<span class="sit-flag sf-none">no situation flags</span>';
-  const map = {revenge:['sf-revenge','revenge spot'],travel:['sf-travel','travel fatigue'],sharp:['sf-sharp','sharp action'],weather:['sf-weather','weather factor'],rest:['sf-rest','rest edge'],series:['sf-series','series opener'],fade:['sf-fade','fade spot'],mustwin:['sf-revenge','must-win']};
-  return sits.map(f => { const info = map[f] || ['sf-none',f]; return `<span class="sit-flag ${info[0]}">${info[1]}</span>`; }).join('');
+  const map = {
+    revenge:['sf-revenge','revenge spot'],travel:['sf-travel','travel fatigue'],
+    sharp:['sf-sharp','sharp action'],weather:['sf-weather','weather factor'],
+    rest:['sf-rest','rest edge'],series:['sf-series','series opener'],
+    fade:['sf-fade','fade spot'],mustwin:['sf-revenge','must-win'],debut:['sf-rest','pitcher debut'],
+    weather_concern:['sf-weather','weather'],pitcher_uncertainty:['sf-rest','pitcher TBD'],
+    limited_data:['sf-none','limited data'],high_total:['sf-fade','high total'],
+    tbd_pitchers:['sf-rest','pitchers TBD'],extreme_line:['sf-sharp','extreme line'],
+    line_movement:['sf-sharp','line move'],hot_team:['sf-series','hot team'],cold_team:['sf-fade','cold team']
+  };
+  const validFlags = (sits||[]).filter(f => f && typeof f === 'string' && f.length < 40);
+  if (!validFlags.length) return '<span class="sit-flag sf-none">no situation flags</span>';
+  return validFlags.map(f => {
+    const key = f.toLowerCase().replace(/[^a-z_]/g,'');
+    const info = map[key] || ['sf-none', f.toLowerCase().replace(/_/g,' ').substring(0,20)];
+    return `<span class="sit-flag ${info[0]}">${info[1]}</span>`;
+  }).join('');
 }
 
 function marketCell(label, verdict, ev, isBest, line, projTotal, breakeven) {
@@ -518,10 +533,10 @@ function gameCardHTML(g) {
 
   const analysisHTML = g.analyzed && isExpanded ? `
     <div class="analysis-full">
-      <div class="analysis-label">Situation read</div><p>${g.situation_text||''}</p>
-      <div class="analysis-label">Key factors</div><p>${g.factors_text||''}</p>
-      <div class="analysis-label">Best play</div><p>${g.best_play||''}</p>
-      <div class="analysis-label">Risks</div><p>${g.risks_text||''}</p>
+      <div class="analysis-label">Situation read</div><p>${(g.situation_text||'').replace(/<[^>]*>/g,'')}</p>
+      <div class="analysis-label">Key factors</div><p>${(g.factors_text||'').replace(/<[^>]*>/g,'')}</p>
+      <div class="analysis-label">Best play</div><p>${(g.best_play||'').replace(/<[^>]*>/g,'')}</p>
+      <div class="analysis-label">Risks</div><p>${(g.risks_text||'').replace(/<[^>]*>/g,'')}</p>
     </div>` : '';
 
   const notAnalyzed = !g.analyzed ? `<p style="font-size:12px;color:var(--muted);margin-bottom:8px">Analysis runs at 11am and 4pm ET</p>` : '';
