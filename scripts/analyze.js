@@ -43,6 +43,133 @@ const PARK_COORDS = {
   'Washington Nationals': { lat: 38.8730, lon: -77.0074, dome: false , homeplateFacing: 80}
 };
 
+/* =============================================================================
+   EV / BREAKEVEN / JUICE — SINGLE SOURCE OF TRUTH = PROBABILITY
+   All EV / breakeven / juice numbers are recomputed from the probabilities +
+   projections the model returns, using the real book odds. Card and modal agree
+   because both derive from the same probability. Juice table is built
+   structurally so the direction is always correct.
+   ============================================================================= */
+
+function payoutMult(odds) {
+  const n = parseFloat(odds);
+  if (isNaN(n)) return null;
+  return n > 0 ? n / 100 : 100 / Math.abs(n);
+}
+
+// EV% of a 1-unit bet at American `odds` given win probability `p` (0..1)
+function evPct(p, odds) {
+  const b = payoutMult(odds);
+  if (b == null || !(p > 0)) return null;
+  return +((p * b - (1 - p)) * 100).toFixed(1);
+}
+
+// Breakeven American odds for probability p — the WORST price still +EV.
+function breakevenOdds(p) {
+  if (!(p > 0) || !(p < 1)) return null;
+  const o = p > 0.5 ? -(p / (1 - p)) * 100 : ((1 - p) / p) * 100;
+  const r = Math.round(o);
+  return r > 0 ? `+${r}` : `${r}`;
+}
+
+// P(total goes OVER `line`) given a projected total. Same logistic the modal uses.
+function totalsProbOver(line, proj) {
+  if (!(proj > 0)) return null;
+  const z = (parseFloat(line) - proj) / 2.5;
+  return 1 / (1 + Math.exp(1.7 * z));
+}
+
+// Line-shopping table around the projection. Direction fixed to the verdict.
+function buildJuiceTable(proj, direction, steps) {
+  steps = steps || 5;
+  const half = Math.floor(steps / 2);
+  const lines = [];
+  for (let i = -half; i <= half; i++) {
+    const line = +(Math.round((proj + i * 0.5) * 2) / 2).toFixed(1);
+    const pOver = totalsProbOver(line, proj);
+    const p = direction === 'Over' ? pOver : 1 - pOver;
+    const be = breakevenOdds(p);
+    lines.push({
+      line,
+      direction,
+      maxJuice: be != null ? parseInt(be, 10) : null,
+      ev: evPct(p, -110)
+    });
+  }
+  return { description: 'max juice at each line where the bet stays +EV (derived from projection)', lines };
+}
+
+// Overwrite every EV / breakeven / juice field from probabilities + real odds.
+function deriveNumbers(a, lines, f5Lines) {
+  if (!a) return a;
+
+  // ── Moneyline ──
+  const pAway = (a.mlAwayProb != null ? a.mlAwayProb : (a.awayWinPct != null ? a.awayWinPct : 50)) / 100;
+  const pHome = (a.mlHomeProb != null ? a.mlHomeProb : (a.homeWinPct != null ? a.homeWinPct : 50)) / 100;
+  if (a.ml && a.ml.includes('AWAY')) {
+    a.mlEV = evPct(pAway, lines.awayML);
+    a.mlBreakeven = breakevenOdds(pAway);
+  } else if (a.ml && a.ml.includes('HOME')) {
+    a.mlEV = evPct(pHome, lines.homeML);
+    a.mlBreakeven = breakevenOdds(pHome);
+  }
+
+  // ── Run line: derive cover prob from ML, same ±8 pts the modal uses ──
+  const pAwayRL = Math.max(0.02, pAway - 0.08);
+  const pHomeRL = Math.min(0.98, pHome + 0.08);
+  if (a.rl && a.rl.includes('AWAY')) {
+    a.rlEV = evPct(pAwayRL, lines.awayRLOdds);
+    a.rlBreakeven = breakevenOdds(pAwayRL);
+  } else if (a.rl && a.rl.includes('HOME')) {
+    a.rlEV = evPct(pHomeRL, lines.homeRLOdds);
+    a.rlBreakeven = breakevenOdds(pHomeRL);
+  }
+
+  // ── Full-game total ──
+  const proj = parseFloat(a.projTotal);
+  const postedTotal = parseFloat(a.totalLine != null ? a.totalLine : lines.total);
+  if (a.total && a.total.includes('OVER') && proj > 0) {
+    const p = totalsProbOver(postedTotal, proj);
+    a.totalEV = evPct(p, lines.overOdds);
+    const be = breakevenOdds(p);
+    a.totalBreakeven = be ? `Over ${postedTotal} @ ${be}` : null;
+    a.totalJuiceSensitivity = buildJuiceTable(proj, 'Over');
+  } else if (a.total && a.total.includes('UNDER') && proj > 0) {
+    const p = 1 - totalsProbOver(postedTotal, proj);
+    a.totalEV = evPct(p, lines.underOdds);
+    const be = breakevenOdds(p);
+    a.totalBreakeven = be ? `Under ${postedTotal} @ ${be}` : null;
+    a.totalJuiceSensitivity = buildJuiceTable(proj, 'Under');
+  }
+
+  // ── F5 total ──
+  const f5proj = parseFloat(a.f5ProjTotal);
+  const f5line = parseFloat(a.f5Line != null ? a.f5Line : (f5Lines && f5Lines.f5Total));
+  if (a.f5 && a.f5.includes('OVER') && f5proj > 0) {
+    const p = totalsProbOver(f5line, f5proj);
+    a.f5EV = evPct(p, f5Lines && f5Lines.f5OverOdds);
+    const be = breakevenOdds(p);
+    a.f5Breakeven = be ? `Over ${f5line} @ ${be}` : null;
+    a.f5JuiceSensitivity = buildJuiceTable(f5proj, 'Over', 3);
+  } else if (a.f5 && a.f5.includes('UNDER') && f5proj > 0) {
+    const p = 1 - totalsProbOver(f5line, f5proj);
+    a.f5EV = evPct(p, f5Lines && f5Lines.f5UnderOdds);
+    const be = breakevenOdds(p);
+    a.f5Breakeven = be ? `Under ${f5line} @ ${be}` : null;
+    a.f5JuiceSensitivity = buildJuiceTable(f5proj, 'Under', 3);
+  } else if (a.f5 && a.f5.includes('AWAY')) {
+    a.f5EV = evPct(pAway, f5Lines && f5Lines.f5AwayML);
+  } else if (a.f5 && a.f5.includes('HOME')) {
+    a.f5EV = evPct(pHome, f5Lines && f5Lines.f5HomeML);
+  }
+
+  // ── Keep edge_pct consistent with the best market's recomputed EV ──
+  const evByMarket = { ml: a.mlEV, rl: a.rlEV, total: a.totalEV, f5: a.f5EV };
+  if (a.best && evByMarket[a.best] != null) a.edgePct = evByMarket[a.best];
+
+  return a;
+}
+
 // Fetch weather for home park
 async function fetchWeather(homeTeam, gameTime) {
   try {
@@ -77,18 +204,18 @@ async function fetchWeather(homeTeam, gameTime) {
 
     // Calculate wind direction relative to stadium
     const homeplateFacing = park.homeplateFacing || 0;
-    
+
     // Wind blowing FROM a direction means it travels TO the opposite
     // If wind is FROM the west (270°) and home plate faces west, wind blows IN from CF
     // If wind is FROM the east (90°) and home plate faces west, wind blows OUT to CF
-    
+
     // Angle between wind source and home plate facing
     const windFrom = windDeg; // meteorological: direction wind comes FROM
     const windTo = (windDeg + 180) % 360; // direction wind is going TO
-    
+
     // Relative angle: how wind aligns with home plate to CF axis
     let relAngle = ((windTo - homeplateFacing) + 360) % 360;
-    
+
     // Determine field direction
     let fieldWindDir, windImpact, windArrow;
     if (relAngle <= 45 || relAngle >= 315) {
@@ -333,7 +460,7 @@ async function fetchStatcast(pitcherName, pitcherId) {
     if (!pitcherId) return null;
     const endDate = new Date().toISOString().split('T')[0];
     const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    
+
     const url = 'https://baseballsavant.mlb.com/statcast_search/csv?player_type=pitcher&pitchers_lookup[]=' + pitcherId + '&game_date_gt=' + startDate + '&game_date_lt=' + endDate + '&type=details&hfSea=2026%7C&group_by=name&sort_col=pitches&sort_order=desc&min_abs=0';
 
     const res = await fetch(url, {
@@ -588,8 +715,8 @@ function parseOddsData(game) {
           // Only use if within realistic MLB range AND better than current
           if (pt >= 6.5 && pt <= 13.5) {
             if (!total) {
-              total=`${over.point}`; 
-              overOdds=over.price>0?`+${over.price}`:`${over.price}`; 
+              total=`${over.point}`;
+              overOdds=over.price>0?`+${over.price}`:`${over.price}`;
               underOdds=under?(under.price>0?`+${under.price}`:`${under.price}`):null;
             }
           } else if (!total) {
@@ -705,8 +832,8 @@ PUBLIC BETTING:
 ${publicInfo}
 
 ANALYSIS INSTRUCTIONS — CRITICAL:
+- Your job is PROBABILITIES and PROJECTIONS, nothing else. Give honest mlAwayProb / mlHomeProb and projTotal / f5ProjTotal. The EV, breakeven, and juice-sensitivity numbers are computed DOWNSTREAM from your probabilities — do not freehand them or try to make them consistent yourself. A 52% ML at -110 is NEGATIVE EV; report 52% if that is your read and let the math decide skip.
 - The "situations" array must ONLY contain these exact lowercase values: revenge, travel, sharp, weather, rest, series, fade, mustwin, debut. DO NOT add any other values. DO NOT use situations to flag data availability issues. If data is missing just work with what you have.
-- ANALYSIS INSTRUCTIONS — CRITICAL:
 - USE ONLY 2026 SEASON STATS for all total projections. IGNORE all prior year data entirely.
 - TOTAL PROJECTION METHOD: (away team 2026 runs/game + home team 2026 runs/game) × pitcher adjustment × park factor × weather adjustment = projected total. Compare to line for edge.
 - STATCAST IS CRITICAL: A pitcher with velocity DOWN trend is significantly worse than ERA suggests — fade. A pitcher with low barrel rate and high whiff rate is elite regardless of ERA — back. Hard hit rate above 42% means the pitcher is getting hit hard even if runs haven't scored yet.
@@ -719,7 +846,7 @@ ANALYSIS INSTRUCTIONS — CRITICAL:
 - Current season form only — a team 2-8 in last 10 is a fade regardless of brand
 - For EACH market with positive EV include the EXACT LINE in projTotal and f5ProjTotal
 
-Return ONLY this JSON (no markdown):
+Return ONLY this JSON (no markdown). For mlEV/mlBreakeven/total*/f5* numeric fields, provide your best guess — they will be recomputed downstream, so accuracy of the PROBABILITY and PROJECTION fields is what matters:
 {
   "situations": ["revenge","travel","sharp","weather","rest","series","fade","mustwin","debut"],
   "ml": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
@@ -773,15 +900,7 @@ Return ONLY this JSON (no markdown):
   "risks": "1 sentence on biggest risk to the top play"
 }
 
-For juice sensitivity: for each half-point line near the projected total (projTotal ± 1.5), calculate:
-- The maximum American odds (juice) where the bet still has positive EV at that line
-- CRITICAL: As the total line goes HIGHER on an OVER, the win probability DECREASES, so the max juice must get BETTER (less negative, closer to even money). Example: Over 7.0 might allow -257 max juice, but Over 8.0 only allows -108 max juice because probability is lower.
-- As the total line goes LOWER on an OVER, win probability INCREASES, so you can accept worse juice. Over 6.5 might allow -500 max juice because you win 85% of the time.
-- Formula: maxJuice = -(winProbability / (1 - winProbability)) * 100. If result > 0 format as +X, if < -1000 cap at -1000.
-- maxJuice is the breakeven juice — anything worse (more negative) than this is negative EV
-- ev is the estimated EV% at standard -110 juice for that line
-
-For breakeven lines: calculate the maximum juice/line where the bet still has positive EV based on your probability estimate. Example: if you estimate Away wins 54% of the time, the breakeven ML is -117 (anything worse than -117 is negative EV). For totals: if you project 9.8 runs and the line is 9.5, the breakeven is Under 10.5 — any total above 10.5 flips to negative EV.`;
+The projTotal and f5ProjTotal are the most important numbers you produce — the downstream math converts them into win probabilities, EV, breakeven lines, and the full juice-sensitivity table. Project carefully using 2026 data, Statcast, and lineup matchups.`;
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -1106,6 +1225,10 @@ async function main() {
 
       const f5Lines = f5Map[game.id] || null;
       const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups);
+
+      // Recompute all EV / breakeven / juice from probabilities + real odds (single source of truth)
+      deriveNumbers(analysis, lines, f5Lines);
+
       await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups);
 
       const ap = awayPitcherInfo?.name || 'TBD';
