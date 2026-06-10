@@ -7,38 +7,40 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
 const RUN_TYPE = process.env.RUN_TYPE || '11am';
 
-// MLB park coordinates for weather
+// MLB park coordinates and orientation
+// homeplateFacing = compass direction home plate faces (degrees)
+// Wind blowing FROM opposite direction = blowing OUT to CF
 const PARK_COORDS = {
   'Arizona Diamondbacks': { lat: 33.4453, lon: -112.0667, dome: true },
-  'Atlanta Braves': { lat: 33.8908, lon: -84.4681, dome: false },
-  'Baltimore Orioles': { lat: 39.2838, lon: -76.6218, dome: false },
-  'Boston Red Sox': { lat: 42.3467, lon: -71.0972, dome: false },
-  'Chicago Cubs': { lat: 41.9484, lon: -87.6553, dome: false },
-  'Chicago White Sox': { lat: 41.8300, lon: -87.6339, dome: false },
-  'Cincinnati Reds': { lat: 39.0979, lon: -84.5082, dome: false },
-  'Cleveland Guardians': { lat: 41.4962, lon: -81.6852, dome: false },
-  'Colorado Rockies': { lat: 39.7559, lon: -104.9942, dome: false },
-  'Detroit Tigers': { lat: 42.3390, lon: -83.0485, dome: false },
+  'Atlanta Braves': { lat: 33.8908, lon: -84.4681, dome: false , homeplateFacing: 15},
+  'Baltimore Orioles': { lat: 39.2838, lon: -76.6218, dome: false , homeplateFacing: 95},
+  'Boston Red Sox': { lat: 42.3467, lon: -71.0972, dome: false , homeplateFacing: 95},
+  'Chicago Cubs': { lat: 41.9484, lon: -87.6553, dome: false , homeplateFacing: 140},
+  'Chicago White Sox': { lat: 41.8300, lon: -87.6339, dome: false , homeplateFacing: 135},
+  'Cincinnati Reds': { lat: 39.0979, lon: -84.5082, dome: false , homeplateFacing: 0},
+  'Cleveland Guardians': { lat: 41.4962, lon: -81.6852, dome: false , homeplateFacing: 150},
+  'Colorado Rockies': { lat: 39.7559, lon: -104.9942, dome: false , homeplateFacing: 20},
+  'Detroit Tigers': { lat: 42.3390, lon: -83.0485, dome: false , homeplateFacing: 170},
   'Houston Astros': { lat: 29.7573, lon: -95.3555, dome: true },
-  'Kansas City Royals': { lat: 39.0517, lon: -94.4803, dome: false },
-  'Los Angeles Angels': { lat: 33.8003, lon: -117.8827, dome: false },
-  'Los Angeles Dodgers': { lat: 34.0739, lon: -118.2400, dome: false },
+  'Kansas City Royals': { lat: 39.0517, lon: -94.4803, dome: false , homeplateFacing: 5},
+  'Los Angeles Angels': { lat: 33.8003, lon: -117.8827, dome: false , homeplateFacing: 180},
+  'Los Angeles Dodgers': { lat: 34.0739, lon: -118.2400, dome: false , homeplateFacing: 335},
   'Miami Marlins': { lat: 25.7781, lon: -80.2197, dome: true },
   'Milwaukee Brewers': { lat: 43.0280, lon: -87.9712, dome: true },
-  'Minnesota Twins': { lat: 44.9817, lon: -93.2777, dome: false },
-  'New York Mets': { lat: 40.7571, lon: -73.8458, dome: false },
-  'New York Yankees': { lat: 40.8296, lon: -73.9262, dome: false },
-  'Oakland Athletics': { lat: 37.7516, lon: -122.2005, dome: false },
-  'Philadelphia Phillies': { lat: 39.9061, lon: -75.1665, dome: false },
-  'Pittsburgh Pirates': { lat: 40.4469, lon: -80.0057, dome: false },
-  'San Diego Padres': { lat: 32.7076, lon: -117.1570, dome: false },
-  'San Francisco Giants': { lat: 37.7786, lon: -122.3893, dome: false },
+  'Minnesota Twins': { lat: 44.9817, lon: -93.2777, dome: false , homeplateFacing: 100},
+  'New York Mets': { lat: 40.7571, lon: -73.8458, dome: false , homeplateFacing: 335},
+  'New York Yankees': { lat: 40.8296, lon: -73.9262, dome: false , homeplateFacing: 325},
+  'Oakland Athletics': { lat: 37.7516, lon: -122.2005, dome: false , homeplateFacing: 60},
+  'Philadelphia Phillies': { lat: 39.9061, lon: -75.1665, dome: false , homeplateFacing: 340},
+  'Pittsburgh Pirates': { lat: 40.4469, lon: -80.0057, dome: false , homeplateFacing: 30},
+  'San Diego Padres': { lat: 32.7076, lon: -117.1570, dome: false , homeplateFacing: 300},
+  'San Francisco Giants': { lat: 37.7786, lon: -122.3893, dome: false , homeplateFacing: 30},
   'Seattle Mariners': { lat: 47.5914, lon: -122.3325, dome: true },
-  'St. Louis Cardinals': { lat: 38.6226, lon: -90.1928, dome: false },
+  'St. Louis Cardinals': { lat: 38.6226, lon: -90.1928, dome: false , homeplateFacing: 108},
   'Tampa Bay Rays': { lat: 27.7683, lon: -82.6534, dome: true },
   'Texas Rangers': { lat: 32.7473, lon: -97.0845, dome: true },
   'Toronto Blue Jays': { lat: 43.6414, lon: -79.3894, dome: true },
-  'Washington Nationals': { lat: 38.8730, lon: -77.0074, dome: false }
+  'Washington Nationals': { lat: 38.8730, lon: -77.0074, dome: false , homeplateFacing: 80}
 };
 
 // Fetch weather for home park
@@ -73,10 +75,49 @@ async function fetchWeather(homeTeam, gameTime) {
     const windSpeed = Math.round(wind.speed);
     const windDeg = wind.deg;
 
-    // Determine wind direction relative to field
-    const windDir = windDeg < 45 || windDeg >= 315 ? 'N' :
-                    windDeg < 135 ? 'E' :
-                    windDeg < 225 ? 'S' : 'W';
+    // Calculate wind direction relative to stadium
+    const homeplateFacing = park.homeplateFacing || 0;
+    
+    // Wind blowing FROM a direction means it travels TO the opposite
+    // If wind is FROM the west (270°) and home plate faces west, wind blows IN from CF
+    // If wind is FROM the east (90°) and home plate faces west, wind blows OUT to CF
+    
+    // Angle between wind source and home plate facing
+    const windFrom = windDeg; // meteorological: direction wind comes FROM
+    const windTo = (windDeg + 180) % 360; // direction wind is going TO
+    
+    // Relative angle: how wind aligns with home plate to CF axis
+    let relAngle = ((windTo - homeplateFacing) + 360) % 360;
+    
+    // Determine field direction
+    let fieldWindDir, windImpact, windArrow;
+    if (relAngle <= 45 || relAngle >= 315) {
+      fieldWindDir = 'OUT to CF';
+      windArrow = '↑';
+      windImpact = windSpeed >= 10 ? 'over' : 'neutral';
+    } else if (relAngle >= 135 && relAngle <= 225) {
+      fieldWindDir = 'IN from CF';
+      windArrow = '↓';
+      windImpact = windSpeed >= 10 ? 'under' : 'neutral';
+    } else if (relAngle > 45 && relAngle < 135) {
+      fieldWindDir = 'L to R';
+      windArrow = '→';
+      windImpact = 'neutral';
+    } else {
+      fieldWindDir = 'R to L';
+      windArrow = '←';
+      windImpact = 'neutral';
+    }
+
+    // Cardinal direction wind is coming from
+    const windCard = windDeg < 22.5 || windDeg >= 337.5 ? 'N' :
+                     windDeg < 67.5 ? 'NE' : windDeg < 112.5 ? 'E' :
+                     windDeg < 157.5 ? 'SE' : windDeg < 202.5 ? 'S' :
+                     windDeg < 247.5 ? 'SW' : windDeg < 292.5 ? 'W' : 'NW';
+
+    // Upgrade wind impact for strong winds
+    if (windSpeed >= 18 && windImpact === 'over') windImpact = 'significant over';
+    if (windSpeed >= 18 && windImpact === 'under') windImpact = 'significant under';
 
     // Flag significant weather
     const flags = [];
@@ -84,12 +125,8 @@ async function fetchWeather(homeTeam, gameTime) {
     if (temp <= 45) flags.push('COLD WEATHER');
     if (temp >= 90) flags.push('HOT WEATHER');
     if (desc.includes('rain') || desc.includes('storm')) flags.push('RAIN RISK');
-
-    // Wind impact on totals
-    let windImpact = 'neutral';
-    if (windSpeed >= 12) {
-      // Simplified: out = over, in = under (depends on park orientation)
-      windImpact = windSpeed >= 20 ? 'significant wind factor' : 'moderate wind factor';
+    if (windSpeed >= 10 && (fieldWindDir === 'OUT to CF' || fieldWindDir === 'IN from CF')) {
+      flags.push(windImpact.toUpperCase());
     }
 
     return {
@@ -97,10 +134,12 @@ async function fetchWeather(homeTeam, gameTime) {
       temp,
       desc,
       windSpeed,
-      windDir,
+      windCard,
+      fieldWindDir,
+      windArrow,
       windImpact,
       flags,
-      summary: `${temp}°F, ${desc}, wind ${windSpeed}mph ${windDir}${flags.length ? ' — ' + flags.join(', ') : ''}`
+      summary: `${temp}°F, ${desc}, wind ${windSpeed}mph ${windCard} (${windArrow} ${fieldWindDir})${flags.length ? ' — ' + flags.join(', ') : ''}`
     };
   } catch(e) {
     console.log(`  Weather error for ${homeTeam}:`, e.message);
@@ -739,7 +778,7 @@ For breakeven lines: calculate the maximum juice/line where the bet still has po
 async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData) {
   const row = {
     id: game.id,
-    game_date: new Date(game.commence_time).toISOString().split('T')[0],
+    game_date: new Date(game.commence_time).toLocaleDateString('en-CA', {timeZone: 'America/New_York'}),
     away_team: game.away_team,
     home_team: game.home_team,
     commence_time: game.commence_time,
@@ -768,7 +807,9 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
     weather_summary: weather?.summary||null,
     weather_temp: weather?.temp||null,
     weather_wind_speed: weather?.windSpeed||null,
-    weather_wind_dir: weather?.windDir||null,
+    weather_wind_dir: weather?.windCard||null,
+    weather_field_wind_dir: weather?.fieldWindDir||null,
+    weather_wind_arrow: weather?.windArrow||null,
     weather_flags: weather?.flags||[],
     weather_dome: weather?.dome||false,
     run_type: RUN_TYPE,
@@ -847,7 +888,10 @@ async function main() {
   console.log(`\n=== MLB Analysis: ${RUN_TYPE} ===`);
   console.log(`${new Date().toLocaleString('en-US',{timeZone:'America/New_York'})} ET\n`);
 
-  const today = new Date().toISOString().split('T')[0];
+  // Use ET timezone for date
+  const etDate = new Date().toLocaleDateString('en-US', {timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'});
+  const [etMonth, etDay, etYear] = etDate.split('/');
+  const today = etYear + '-' + etMonth + '-' + etDay;
   const [games, f5Map, pitcherMap] = await Promise.all([fetchOddsAPI(), fetchF5Lines(), fetchProbablePitchers(today)]);
   const now = new Date();
   const todayGames = games.filter(g => {
