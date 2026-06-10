@@ -421,10 +421,11 @@ function renderBestPlays() {
   if (!top.length) { document.getElementById('best-plays').classList.remove('show'); return; }
   document.getElementById('bp-grid').innerHTML = top.map(g => {
     const bk = g.best_market; const bv = bk ? g[bk+'_verdict'] : '';
+    const bev = bk ? g[bk+'_ev'] : null;
     return `<div class="bp-item" onclick="scrollToGame('${g.id}')">
       <div class="bp-matchup">${g.away_team} @ ${g.home_team}</div>
       <div class="bp-play">${bv||'BET'} (${(bk||'ml').toUpperCase()})</div>
-      <div class="bp-conf">${g.confidence||''} · ${g.edge_pct ? '+'+parseFloat(g.edge_pct).toFixed(1)+'% edge' : ''}</div>
+      <div class="bp-conf">${g.confidence||''} · ${bev != null ? '+'+parseFloat(bev).toFixed(1)+'% EV' : ''}</div>
     </div>`;
   }).join('');
   document.getElementById('best-plays').classList.add('show');
