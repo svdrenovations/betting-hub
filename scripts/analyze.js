@@ -775,8 +775,10 @@ Return ONLY this JSON (no markdown):
 
 For juice sensitivity: for each half-point line near the projected total (projTotal ± 1.5), calculate:
 - The maximum American odds (juice) where the bet still has positive EV at that line
-- Example: if projTotal is 8.4 and current line is 7.5 -112, also show what max juice would be at 8.0, 8.5, 9.0 etc
-- maxJuice is the worst American odds still +EV — e.g. -118 means anything worse than -118 is a skip
+- CRITICAL: As the total line goes HIGHER on an OVER, the win probability DECREASES, so the max juice must get BETTER (less negative, closer to even money). Example: Over 7.0 might allow -257 max juice, but Over 8.0 only allows -108 max juice because probability is lower.
+- As the total line goes LOWER on an OVER, win probability INCREASES, so you can accept worse juice. Over 6.5 might allow -500 max juice because you win 85% of the time.
+- Formula: maxJuice = -(winProbability / (1 - winProbability)) * 100. If result > 0 format as +X, if < -1000 cap at -1000.
+- maxJuice is the breakeven juice — anything worse (more negative) than this is negative EV
 - ev is the estimated EV% at standard -110 juice for that line
 
 For breakeven lines: calculate the maximum juice/line where the bet still has positive EV based on your probability estimate. Example: if you estimate Away wins 54% of the time, the breakeven ML is -117 (anything worse than -117 is negative EV). For totals: if you project 9.8 runs and the line is 9.5, the breakeven is Under 10.5 — any total above 10.5 flips to negative EV.`;
