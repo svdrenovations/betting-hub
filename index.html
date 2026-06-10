@@ -5,74 +5,56 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MLB Betting Hub</title>
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600&display=swap');
 :root {
-  --bg:#0a0c0f; --s1:#111318; --s2:#181c23; --s3:#1f242d;
-  --border:#252b35; --border2:#2f3847;
-  --text:#e2e6f0; --muted:#6b7489; --dim:#363d4e;
-  --green:#34d399; --green-bg:#0a1f16; --green-dim:#1a3d2a;
-  --red:#f87171; --red-bg:#200d0d; --red-dim:#3d1a1a;
-  --amber:#fbbf24; --amber-bg:#1f1508; --amber-dim:#3d2c0a;
-  --blue:#60a5fa; --blue-bg:#0a1525; --blue-dim:#0f2540;
-  --purple:#a78bfa; --purple-bg:#130f24;
-  --over:#38bdf8; --over-bg:#061825;
-  --under:#fb923c; --under-bg:#1a0d04;
-  --sharp:#f472b6;
+  --bg:#0a0c0f;--s1:#111318;--s2:#181c23;--s3:#1f242d;
+  --border:#252b35;--border2:#2f3847;
+  --text:#e2e6f0;--muted:#6b7489;--dim:#363d4e;
+  --green:#34d399;--green-bg:#0a1f16;--green-dim:#1a3d2a;
+  --red:#f87171;--red-bg:#200d0d;--red-dim:#3d1a1a;
+  --amber:#fbbf24;--amber-bg:#1f1508;--amber-dim:#3d2c0a;
+  --blue:#60a5fa;--blue-bg:#0a1525;--blue-dim:#0f2540;
+  --purple:#a78bfa;--purple-bg:#130f24;
+  --over:#38bdf8;--under:#fb923c;--sharp:#f472b6;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);font-size:14px;min-height:100vh}
 .mono{font-family:'DM Mono',monospace}
-
-/* NAV */
 nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;display:flex;align-items:center;justify-content:space-between;height:56px;position:sticky;top:0;z-index:100}
 .nav-logo{font-weight:600;font-size:16px;letter-spacing:-.3px}
 .nav-logo span{color:var(--green)}
-.nav-tabs{display:flex;gap:0}
-.nav-tab{padding:0 16px;height:56px;display:flex;align-items:center;font-size:13px;font-weight:500;color:var(--muted);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;transition:color .15s}
+.nav-tabs{display:flex}
+.nav-tab{padding:0 16px;height:56px;display:flex;align-items:center;font-size:13px;font-weight:500;color:var(--muted);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent}
 .nav-tab.on{color:var(--text);border-bottom-color:var(--green)}
 .nav-record{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted)}
-
-/* LAYOUT */
 .container{max-width:1100px;margin:0 auto;padding:1.5rem}
 .page{display:none}.page.on{display:block}
-
-/* TOP BAR */
-.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:gap}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem}
 .topbar-left h2{font-size:18px;font-weight:600;letter-spacing:-.3px}
 .topbar-left p{font-size:13px;color:var(--muted);margin-top:2px}
 .pulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:5px;animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}
-.btn-load{padding:9px 18px;font-size:13px;font-weight:500;background:var(--s2);border:1px solid var(--border2);border-radius:8px;color:var(--text);cursor:pointer;font-family:'DM Sans',sans-serif;transition:background .15s,border-color .15s}
-.btn-load:hover{background:var(--s3);border-color:#404d60}
-.btn-load:disabled{opacity:.4;cursor:not-allowed}
-
-/* DATE NAV */
-.date-nav{display:flex;align-items:center;gap:10px;margin-bottom:1.25rem}
+.btn{padding:9px 18px;font-size:13px;font-weight:500;background:var(--s2);border:1px solid var(--border2);border-radius:8px;color:var(--text);cursor:pointer;font-family:'DM Sans',sans-serif}
+.btn:hover{background:var(--s3)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.date-nav{display:flex;align-items:center;gap:10px;margin-bottom:1.25rem;flex-wrap:wrap}
 .date-btn{padding:6px 12px;font-size:12px;font-family:'DM Mono',monospace;background:var(--s2);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer}
 .date-btn:hover{background:var(--s3);color:var(--text)}
+.date-btn.on{border-color:var(--green);color:var(--green)}
 .date-display{font-family:'DM Mono',monospace;font-size:13px;font-weight:500;color:var(--text)}
-
-/* FILTERS */
 .filters{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap}
-.filter-btn{padding:5px 12px;font-size:12px;border-radius:20px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:'DM Mono',monospace;transition:all .15s}
+.filter-btn{padding:5px 12px;font-size:12px;border-radius:20px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:'DM Mono',monospace}
 .filter-btn.on{background:var(--s2);color:var(--text);border-color:var(--border2)}
-
-/* GAMES GRID */
 .games-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
-
-/* GAME CARD */
 .game-card{background:var(--s1);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:border-color .15s}
 .game-card:hover{border-color:var(--border2)}
 .game-card.edge-high{border-color:var(--green);box-shadow:0 0 0 1px var(--green-bg)}
 .game-card.edge-med{border-color:var(--amber)}
-.game-card-header{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start}
-.game-matchup{font-size:15px;font-weight:600;letter-spacing:-.2px}
-.game-meta{font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px}
-.game-time{font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);text-align:right}
-.game-card-body{padding:12px 14px}
-
-/* SITUATION FLAGS */
+.card-header{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start}
+.card-matchup{font-size:15px;font-weight:600;letter-spacing:-.2px}
+.card-meta{font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:3px}
+.card-time{font-size:12px;font-family:'DM Mono',monospace;color:var(--muted);text-align:right}
+.card-body{padding:12px 14px}
 .sit-flags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px;min-height:22px}
 .sit-flag{font-size:10px;font-weight:500;padding:2px 7px;border-radius:4px;font-family:'DM Mono',monospace}
 .sf-revenge{background:#1a1030;color:var(--purple)}
@@ -83,96 +65,63 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .sf-series{background:#0d1820;color:var(--over)}
 .sf-fade{background:var(--red-bg);color:var(--red)}
 .sf-none{background:var(--s2);color:var(--dim);font-size:10px}
-
-/* MARKET SCORES */
 .markets{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
 .market-cell{background:var(--s2);border-radius:6px;padding:7px 8px;text-align:center;border:1px solid transparent}
 .market-cell.best{border-color:var(--green)}
 .market-label{font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:3px}
-.market-val{font-size:13px;font-weight:600}
-.mv-bet{color:var(--green)}
-.mv-lean{color:var(--amber)}
-.mv-skip{color:var(--dim)}
-.mv-over{color:var(--over)}
-.mv-under{color:var(--under)}
-
-/* ANALYSIS AREA */
-.analysis-collapsed{font-size:12px;color:var(--muted);line-height:1.6;cursor:pointer}
-.analysis-full{font-size:12px;line-height:1.7;color:#9aa3b8}
-.analysis-section{margin-bottom:8px}
-.analysis-label{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
-
-/* EDGE BADGE */
-.edge-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 8px;border-radius:4px;font-family:'DM Mono',monospace}
+.market-val{font-size:12px;font-weight:600}
+.mv-bet{color:var(--green)}.mv-lean{color:var(--amber)}.mv-skip{color:var(--dim)}
+.mv-over{color:var(--over)}.mv-under{color:var(--under)}
+.ev-val{font-size:10px;font-family:'DM Mono',monospace;margin-top:2px}
+.ev-pos{color:var(--green)}.ev-neg{color:var(--muted)}
+.line-move{display:flex;align-items:center;gap:8px;font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:8px}
+.lm-sharp{color:var(--sharp);font-weight:500}
+.analysis-full{font-size:12px;line-height:1.7;color:#9aa3b8;margin-bottom:8px}
+.analysis-label{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;margin-top:8px}
+.edge-badge{display:inline-flex;align-items:center;font-size:11px;font-weight:500;padding:3px 8px;border-radius:4px;font-family:'DM Mono',monospace}
 .eb-high{background:var(--green-bg);color:var(--green);border:1px solid var(--green-dim)}
 .eb-med{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-dim)}
-.eb-low{background:var(--s2);color:var(--muted);border:1px solid var(--border)}
 .eb-skip{background:var(--red-bg);color:var(--red);border:1px solid var(--red-dim)}
-
-/* CARD ACTIONS */
-.card-actions{display:flex;gap:7px;margin-top:10px;align-items:center;flex-wrap:wrap}
-.btn-analyze{padding:6px 12px;font-size:12px;font-weight:500;border-radius:6px;border:1px solid var(--border2);background:var(--s2);color:var(--text);cursor:pointer;font-family:'DM Sans',sans-serif;transition:background .15s}
-.btn-analyze:hover{background:var(--s3)}
-.btn-analyze:disabled{opacity:.4;cursor:not-allowed}
-.btn-log{padding:6px 12px;font-size:12px;font-weight:500;border-radius:6px;border:1px solid var(--green-dim);background:var(--green-bg);color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif}
+.card-actions{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
 .btn-expand{padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:'DM Mono',monospace}
-
-/* LINE MOVEMENT */
-.line-move{display:flex;align-items:center;gap:8px;font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);margin-top:6px}
-.lm-sharp{color:var(--sharp);font-weight:500}
-.lm-pub{color:var(--muted)}
-.lm-arrow-up{color:var(--green)}
-.lm-arrow-down{color:var(--red)}
-
-/* LOADING STATE */
-.card-loading{padding:14px;text-align:center}
-.loading-dots span{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--muted);margin:0 2px;animation:dot 1.2s infinite}
-.loading-dots span:nth-child(2){animation-delay:.2s}
-.loading-dots span:nth-child(3){animation-delay:.4s}
-@keyframes dot{0%,80%,100%{transform:scale(1);opacity:.4}40%{transform:scale(1.4);opacity:1}}
-
-/* EMPTY STATE */
-.empty-state{text-align:center;padding:4rem 2rem}
-.empty-icon{font-size:40px;margin-bottom:1rem;opacity:.3}
-.empty-title{font-size:16px;font-weight:500;margin-bottom:.5rem}
-.empty-sub{font-size:13px;color:var(--muted);line-height:1.6}
-
-/* BEST PLAYS BANNER */
+.btn-log{padding:6px 12px;font-size:12px;font-weight:500;border-radius:6px;border:1px solid var(--green-dim);background:var(--green-bg);color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif}
 .best-plays{background:var(--s1);border:1px solid var(--green-dim);border-radius:12px;padding:1rem 1.25rem;margin-bottom:1.5rem;display:none}
 .best-plays.show{display:block}
 .bp-title{font-size:12px;font-family:'DM Mono',monospace;color:var(--green);text-transform:uppercase;letter-spacing:.07em;margin-bottom:.75rem}
 .bp-grid{display:flex;gap:10px;flex-wrap:wrap}
-.bp-item{background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;padding:8px 12px;font-size:12px}
+.bp-item{background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;padding:8px 12px;font-size:12px;cursor:pointer}
+.bp-item:hover{background:#0d2a1e}
 .bp-matchup{font-weight:600;margin-bottom:2px}
 .bp-play{font-family:'DM Mono',monospace;color:var(--green);font-size:11px}
 .bp-conf{font-size:10px;color:var(--muted);margin-top:2px}
-
-/* LOG MODAL */
+.empty-state{text-align:center;padding:4rem 2rem}
+.empty-icon{font-size:40px;margin-bottom:1rem;opacity:.3}
+.empty-title{font-size:16px;font-weight:500;margin-bottom:.5rem}
+.empty-sub{font-size:13px;color:var(--muted);line-height:1.6}
+.loading-wrap{text-align:center;padding:4rem}
+.loading-dots span{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--muted);margin:0 3px;animation:dot 1.2s infinite}
+.loading-dots span:nth-child(2){animation-delay:.2s}
+.loading-dots span:nth-child(3){animation-delay:.4s}
+@keyframes dot{0%,80%,100%{transform:scale(1);opacity:.4}40%{transform:scale(1.4);opacity:1}}
+.last-updated{font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);margin-bottom:1rem}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
 .modal-overlay.show{display:flex}
 .modal{background:var(--s1);border:1px solid var(--border2);border-radius:14px;padding:1.5rem;width:100%;max-width:440px}
 .modal-title{font-size:16px;font-weight:600;margin-bottom:1.25rem}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
-.form-field label{font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
+.form-field label{font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);display:block;margin-bottom:4px;text-transform:uppercase}
 .form-field input,.form-field select{width:100%;padding:8px 10px;font-size:13px;background:var(--s2);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-family:'DM Sans',sans-serif;outline:none}
-.form-field input:focus,.form-field select:focus{border-color:#404d60}
 .modal-actions{display:flex;gap:8px;margin-top:1rem}
 .btn-save{flex:1;padding:10px;font-size:13px;font-weight:500;background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif}
 .btn-cancel{padding:10px 16px;font-size:13px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);cursor:pointer;font-family:'DM Sans',sans-serif}
-
-/* TRACKER */
-.tracker-filters{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap}
 .t-table-wrap{overflow-x:auto}
 .t-table{width:100%;border-collapse:collapse;min-width:700px}
-.t-table th{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+.t-table th{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);text-transform:uppercase;white-space:nowrap}
 .t-table td{font-size:12px;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
-.t-table tr:last-child td{border-bottom:none}
 .t-table tr:hover td{background:var(--s2)}
 .rsel button{padding:3px 7px;font-size:11px;border-radius:4px;border:1px solid var(--border);background:none;cursor:pointer;color:var(--muted);margin-right:3px;font-family:'DM Mono',monospace}
 .rsel button.on{background:var(--s2);color:var(--text);border-color:var(--border2)}
 .ep{color:var(--green);font-weight:500}.en{color:var(--red);font-weight:500}
-
-/* STATS PAGE */
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:1.5rem}
 .stat-card{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:1rem;text-align:center}
 .stat-label{font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
@@ -181,14 +130,11 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .bar-row{display:flex;align-items:center;gap:10px;margin-bottom:7px}
 .bar-lbl{font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);width:140px;flex-shrink:0;text-align:right}
 .bar-track{flex:1;background:var(--s2);border-radius:3px;height:14px;overflow:hidden}
-.bar-fill{height:100%;border-radius:3px;transition:width .6s ease}
+.bar-fill{height:100%;border-radius:3px}
 .bar-val{font-size:11px;font-family:'DM Mono',monospace;font-weight:500;width:40px;text-align:right}
 .section-head{font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin:1.5rem 0 .75rem;padding-bottom:.5rem;border-bottom:1px solid var(--border)}
-
-/* DISC */
+.tracker-filters{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap}
 .disc{font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;line-height:1.6;padding:1.5rem 0;border-top:1px solid var(--border);margin-top:2rem}
-
-/* RESPONSIVE */
 @media(max-width:600px){
   .markets{grid-template-columns:repeat(2,1fr)}
   .games-grid{grid-template-columns:1fr}
@@ -210,17 +156,16 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
   <div class="nav-record mono" id="nav-record">—</div>
 </nav>
 
-<!-- GAMES PAGE -->
 <div class="page on" id="page-games">
 <div class="container">
   <div class="topbar">
     <div class="topbar-left">
       <h2><span class="pulse"></span>Today's MLB games</h2>
-      <p id="games-subtitle">Enter a date and load today's schedule to begin analysis</p>
+      <p id="games-subtitle">Loading today's analysis...</p>
     </div>
     <div style="display:flex;gap:8px">
-      <button class="btn-load" id="analyze-all-btn" onclick="analyzeAllGames()" style="display:none">Analyze all →</button>
-      <button class="btn-load" id="load-btn" onclick="loadGames()">Load today's games →</button>
+      <button class="btn" onclick="exportCSV()">Export CSV</button>
+      <button class="btn" onclick="loadGames(true)" id="refresh-btn">Refresh →</button>
     </div>
   </div>
 
@@ -229,15 +174,15 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     <span class="date-display" id="date-display"></span>
     <button class="date-btn" onclick="shiftDate(1)">next →</button>
     <button class="date-btn" onclick="setToday()">today</button>
-    <button class="date-btn" onclick="showDatePicker()" id="history-btn" style="display:none">history</button>
+    <span id="last-updated" class="last-updated"></span>
   </div>
-  <div id="date-picker" style="display:none;flex-wrap:wrap;gap:6px;margin-bottom:1rem"></div>
 
   <div class="filters" id="filters" style="display:none">
     <button class="filter-btn on" onclick="setFilter('all',this)">All games</button>
     <button class="filter-btn" onclick="setFilter('edge',this)">Edge plays only</button>
     <button class="filter-btn" onclick="setFilter('sit',this)">Has situation flag</button>
     <button class="filter-btn" onclick="setFilter('sharp',this)">Sharp action</button>
+    <button class="filter-btn" onclick="setFilter('skip',this)">Skip games</button>
   </div>
 
   <div class="best-plays" id="best-plays">
@@ -246,24 +191,22 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
   </div>
 
   <div id="games-container">
-    <div class="empty-state">
-      <div class="empty-icon">⚾</div>
-      <div class="empty-title">No games loaded</div>
-      <div class="empty-sub">Hit "Load today's games" to pull the schedule and start analysis.<br>Each game gets situational scoring, live research, and market recommendations.</div>
+    <div class="loading-wrap">
+      <div class="loading-dots"><span></span><span></span><span></span></div>
+      <p style="color:var(--muted);font-size:13px;margin-top:1rem">Loading today's games...</p>
     </div>
   </div>
 </div>
 </div>
 
-<!-- TRACKER PAGE -->
 <div class="page" id="page-tracker">
 <div class="container">
   <div class="topbar">
     <div class="topbar-left">
       <h2>Bet tracker</h2>
-      <p id="tracker-subtitle">Log bets from the games page</p>
+      <p id="tracker-subtitle">Your logged bets</p>
     </div>
-    <button class="btn-load" onclick="exportCSV()">Export CSV</button>
+    <button class="btn" onclick="exportCSV()">Export CSV</button>
   </div>
   <div class="tracker-filters">
     <button class="filter-btn on" onclick="setTrackerFilter('all',this)">All</button>
@@ -271,26 +214,23 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     <button class="filter-btn" onclick="setTrackerFilter('win',this)">Wins</button>
     <button class="filter-btn" onclick="setTrackerFilter('loss',this)">Losses</button>
   </div>
-  <div class="t-table-wrap">
-    <div id="tracker-table"><div class="empty-state" style="padding:3rem"><div class="empty-title">No bets logged yet</div><div class="empty-sub">Analyze games and log your bets to start tracking.</div></div></div>
+  <div class="t-table-wrap" id="tracker-table">
+    <div class="empty-state"><div class="empty-title">No bets logged yet</div></div>
   </div>
 </div>
 </div>
 
-<!-- STATS PAGE -->
 <div class="page" id="page-stats">
 <div class="container">
   <div class="topbar">
-    <div class="topbar-left">
-      <h2>My edge stats</h2>
-      <p>Where your real edge lives</p>
-    </div>
+    <div class="topbar-left"><h2>My edge stats</h2><p>Where your real edge lives</p></div>
   </div>
-  <div id="stats-content"><div class="empty-state" style="padding:3rem"><div class="empty-title">No data yet</div><div class="empty-sub">Settle at least 5 bets to unlock stats.</div></div></div>
+  <div id="stats-content">
+    <div class="empty-state"><div class="empty-title">No data yet</div><div class="empty-sub">Log and settle bets to see your stats.</div></div>
+  </div>
 </div>
 </div>
 
-<!-- LOG MODAL -->
 <div class="modal-overlay" id="log-modal">
   <div class="modal">
     <div class="modal-title">Log bet</div>
@@ -306,17 +246,14 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
           <option>Game total over</option><option>Game total under</option>
           <option>F5 moneyline (away)</option><option>F5 moneyline (home)</option>
           <option>F5 total over</option><option>F5 total under</option>
-          <option>Team total over (away)</option><option>Team total under (away)</option>
-          <option>Team total over (home)</option><option>Team total under (home)</option>
         </select>
       </div>
       <div class="form-field"><label>Odds</label><input id="log-odds" placeholder="-115"></div>
     </div>
     <div class="form-row">
       <div class="form-field"><label>Units risked</label><input id="log-units" type="number" min="0.5" max="10" step="0.5" placeholder="1.0"></div>
-      <div class="form-field"><label>Situation flag</label><input id="log-sit" readonly></div>
+      <div class="form-field"><label>Notes</label><input id="log-notes" placeholder="optional"></div>
     </div>
-    <div class="form-field" style="margin-bottom:10px"><label>Notes</label><input id="log-notes" placeholder="optional notes"></div>
     <div class="modal-actions">
       <button class="btn-save" onclick="saveBet()">Save bet</button>
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
@@ -325,48 +262,21 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 </div>
 
 <script>
-// ── STATE ──────────────────────────────────────────────────────────────────
-const bets = JSON.parse(localStorage.getItem('mlb_bets') || '[]');
+const SUPABASE_URL = 'https://crfgkpqkmqfvyyifmprj.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNyZmdrcHFrbXFmdnl5aWZtcHJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwMzg5OTYsImV4cCI6MjA5NjYxNDk5Nn0.FH9ViDkYdnu_iR2s6kDAglBMb6waJljcaMTeqb8J8jY';
+
 let games = [];
+let bets = JSON.parse(localStorage.getItem('mlb_bets_v2') || '[]');
 let currentDate = new Date();
 let currentFilter = 'all';
 let trackerFilter = 'all';
 let pendingLog = null;
+let expanded = {};
 
-// ── DATE UTILS ──────────────────────────────────────────────────────────────
-function fmtDate(d) {
-  return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});
-}
-function fmtDateShort(d) {
-  return d.toLocaleDateString('en-US',{month:'short',day:'numeric'});
-}
-function isoDate(d) {
-  return d.toISOString().split('T')[0];
-}
-function initDate() {
-  document.getElementById('date-display').textContent = fmtDate(currentDate);
-}
-function shiftDate(n) {
-  currentDate.setDate(currentDate.getDate() + n);
-  document.getElementById('date-display').textContent = fmtDate(currentDate);
-  games = [];
-  document.getElementById('best-plays').classList.remove('show');
-  document.getElementById('filters').style.display = 'none';
-  document.getElementById('analyze-all-btn').style.display = 'none';
-  // Try to load cache for new date
-  if (!loadGamesCache()) {
-    document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">${fmtDateShort(currentDate)}</div><div class="empty-sub">No saved data for this date.<br>Hit "Load today\'s games" to pull the schedule.</div></div>`;
-  }
-}
-function setToday() {
-  currentDate = new Date();
-  document.getElementById('date-display').textContent = fmtDate(currentDate);
-  games = [];
-  document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">Ready</div><div class="empty-sub">Hit "Load today's games" to pull today's schedule.</div></div>`;
-  document.getElementById('best-plays').classList.remove('show');
-}
+function fmtDate(d) { return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}); }
+function fmtDateShort(d) { return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+function isoDate(d) { return d.toISOString().split('T')[0]; }
 
-// ── PAGE NAV ────────────────────────────────────────────────────────────────
 function goPage(name, btn) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('on'));
@@ -376,370 +286,160 @@ function goPage(name, btn) {
   if (name === 'stats') renderStats();
 }
 
-// ── CLAUDE API ──────────────────────────────────────────────────────────────
-async function callClaude(prompt, useSearch, timeoutMs = 60000) {
-  const body = {
-    model: 'claude-sonnet-4-5',
-    max_tokens: 1200,
-    messages: [{ role: 'user', content: prompt }]
-  };
-  if (useSearch) body.tools = [{ type: 'web_search_20250305', name: 'web_search' }];
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch('https://betting-proxy.svdrenovations.workers.dev', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
-    clearTimeout(timer);
-    const data = await res.json();
-    if (!data || !data.content) {
-      const errMsg = data?.error?.message || JSON.stringify(data);
-      throw new Error(errMsg);
-    }
-    return data.content
-      .filter(c => c.type === 'text')
-      .map(c => c.text)
-      .join('')
-      .trim();
-  } catch(e) {
-    clearTimeout(timer);
-    if (e.name === 'AbortError') throw new Error('Request timed out — try again');
-    throw e;
-  }
-}
-
-// ── LOAD GAMES ──────────────────────────────────────────────────────────────
-async function loadGames() {
-  const btn = document.getElementById('load-btn');
-  btn.disabled = true; btn.textContent = 'Loading...';
-  document.getElementById('filters').style.display = 'none';
-  document.getElementById('best-plays').classList.remove('show');
-  document.getElementById('games-container').innerHTML = `<div class="card-loading" style="padding:3rem;text-align:center"><div class="loading-dots"><span></span><span></span><span></span></div><p style="color:var(--muted);font-size:13px;margin-top:1rem">Pulling MLB schedule for ${fmtDateShort(currentDate)}...</p></div>`;
-
+async function loadGames(forceRefresh = false) {
   const dateStr = isoDate(currentDate);
-  const displayDate = fmtDate(currentDate);
+  document.getElementById('date-display').textContent = fmtDate(currentDate);
+  document.getElementById('games-subtitle').textContent = 'Loading...';
+  document.getElementById('games-container').innerHTML = `<div class="loading-wrap"><div class="loading-dots"><span></span><span></span><span></span></div><p style="color:var(--muted);font-size:13px;margin-top:1rem">Fetching analysis for ${fmtDateShort(currentDate)}...</p></div>`;
 
   try {
-    const searchData = await callClaude(
-      `Search for MLB games on ${displayDate}. Find teams, times, pitchers, and betting lines.`,
-      true,
-      90000
-    );
-    // Extract JSON from search data or build it
-    const raw = await callClaude(
-      `IMPORTANT: Respond with ONLY a JSON array. No words before it. No words after it. Just the array.
-      
-Based on this schedule data, create the JSON array:
-${searchData.substring(0, 3000)}
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${dateStr}&order=commence_time.asc`, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) throw new Error(`Supabase error: ${res.status}`);
+    const data = await res.json();
+    games = data;
 
-Each game must use this exact format:
-{"away":"SEA","home":"BAL","time":"6:35 PM ET","awayPitcher":"Hancock","homePitcher":"Gibson","awayML":"-125","homeML":"+105","total":"9.5"}
-
-Your entire response must be valid JSON starting with [ and ending with ]`,
-      false,
-      30000
-    );
-
-    let parsed;
-    try {
-      const clean = raw.replace(/```json|```/g, '').trim();
-      const s = clean.indexOf('['), e = clean.lastIndexOf(']');
-      if (s === -1 || e === -1) throw new Error('no array found');
-      parsed = JSON.parse(clean.substring(s, e + 1));
-    } catch(e) {
-      // If formatting call failed, try to extract JSON directly from searchData
-      try {
-        const s2 = searchData.indexOf('['), e2 = searchData.lastIndexOf(']');
-        if (s2 !== -1 && e2 !== -1) {
-          parsed = JSON.parse(searchData.substring(s2, e2 + 1));
-        }
-      } catch(e2) { /* ignore */ }
-      if (!parsed || !parsed.length) throw new Error('Parse failed: ' + raw.substring(0, 200));
+    if (!games.length) {
+      document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-icon">⚾</div><div class="empty-title">No games found for ${fmtDateShort(currentDate)}</div><div class="empty-sub">Analysis runs automatically at 11am and 4pm ET.<br>Check back then or use the date navigation to view another day.</div></div>`;
+      document.getElementById('games-subtitle').textContent = `No games for ${fmtDateShort(currentDate)}`;
+      document.getElementById('filters').style.display = 'none';
+      document.getElementById('best-plays').classList.remove('show');
+      return;
     }
 
-    if (!parsed || !parsed.length) throw new Error('No games found for ' + displayDate);
-
-    games = parsed.map((g, i) => ({
-      id: 'game_' + i,
-      away: g.away || 'Away',
-      home: g.home || 'Home',
-      time: g.time || 'TBD',
-      awayPitcher: g.awayPitcher || 'TBD',
-      homePitcher: g.homePitcher || 'TBD',
-      awayML: g.awayML || '?',
-      homeML: g.homeML || '?',
-      total: g.total || '?',
-      date: dateStr,
-      situations: [],
-      markets: null,
-      analysis: null,
-      lineMove: null,
-      analyzed: false,
-      analyzing: false,
-      expanded: false
-    }));
-
-    document.getElementById('games-subtitle').textContent = `${games.length} games on ${fmtDateShort(currentDate)} · click "Analyze" on any game`;
+    const analyzed = games.filter(g => g.analyzed).length;
+    const lastRun = games.reduce((a, b) => (!a || new Date(b.updated_at) > new Date(a)) ? b.updated_at : a, null);
+    document.getElementById('games-subtitle').textContent = `${games.length} games · ${analyzed} analyzed`;
+    if (lastRun) {
+      const ago = Math.round((Date.now() - new Date(lastRun)) / 60000);
+      document.getElementById('last-updated').textContent = `Updated ${ago < 60 ? ago + 'm ago' : Math.round(ago/60) + 'h ago'}`;
+    }
     document.getElementById('filters').style.display = 'flex';
-    document.getElementById('analyze-all-btn').style.display = 'block';
-    saveGamesCache();
     renderGames();
-
+    renderBestPlays();
   } catch(err) {
-    document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">Could not load schedule</div><div class="empty-sub">${err.message}<br><br>Try again or check your connection.</div></div>`;
+    document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">Could not load games</div><div class="empty-sub">${err.message}</div></div>`;
+    document.getElementById('games-subtitle').textContent = 'Error loading games';
   }
-  btn.disabled = false; btn.textContent = 'Reload games →';
-}
-
-// ── ANALYZE ALL ──────────────────────────────────────────────────────────────
-async function analyzeAllGames() {
-  const btn = document.getElementById('analyze-all-btn');
-  btn.disabled = true;
-  const unanalyzed = games.filter(g => !g.analyzed && !g.analyzing);
-  const batchSize = 3;
-  let done = 0;
-
-  for (let i = 0; i < unanalyzed.length; i += batchSize) {
-    const batch = unanalyzed.slice(i, i + batchSize);
-    btn.textContent = `Analyzing ${Math.min(i + batchSize, unanalyzed.length)}/${unanalyzed.length}...`;
-
-    await Promise.all(batch.map(g =>
-      Promise.race([
-        analyzeGame(g.id),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 55000))
-      ]).catch(e => {
-        const game = games.find(x => x.id === g.id);
-        if (game) { game.analyzing = false; game.analyzeError = 'Timed out — click retry'; }
-        renderGames();
-      })
-    ));
-    done += batch.length;
-  }
-
-  btn.disabled = false;
-  btn.textContent = 'Analyze all →';
-}
-
-
-function renderGames() {
-  let filtered = games;
-  if (currentFilter === 'edge') filtered = games.filter(g => g.markets && getTopEdge(g) === 'high');
-  if (currentFilter === 'sit') filtered = games.filter(g => g.situations && g.situations.length > 0);
-  if (currentFilter === 'sharp') filtered = games.filter(g => g.situations && g.situations.includes('sharp'));
-
-  if (!filtered.length) {
-    document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">No games match this filter</div></div>`;
-    return;
-  }
-
-  document.getElementById('games-container').innerHTML = `<div class="games-grid">${filtered.map(g => gameCardHTML(g)).join('')}</div>`;
-  updateBestPlays();
 }
 
 function getTopEdge(g) {
-  if (!g.markets) return 'none';
-  const vals = Object.values(g.markets);
-  if (vals.some(v => v && v.startsWith('BET'))) return 'high';
-  if (vals.some(v => v && v.startsWith('LEAN'))) return 'med';
-  return 'none';
+  if (!g.analyzed) return 'none';
+  const verdicts = [g.ml_verdict, g.rl_verdict, g.total_verdict, g.f5_verdict];
+  if (verdicts.some(v => v && v.startsWith('BET'))) return 'high';
+  if (verdicts.some(v => v && v.startsWith('LEAN'))) return 'med';
+  return 'skip';
 }
 
-function sitFlagHTML(flags) {
-  if (!flags || flags.length === 0) return '<span class="sit-flag sf-none">no situation flags</span>';
-  const map = {
-    revenge: ['sf-revenge','revenge spot'],
-    travel: ['sf-travel','travel fatigue'],
-    sharp: ['sf-sharp','sharp action'],
-    weather: ['sf-weather','weather factor'],
-    rest: ['sf-rest','rest edge'],
-    series: ['sf-series','series opener'],
-    fade: ['sf-fade','fade spot'],
-    mustwin: ['sf-revenge','must-win']
-  };
-  return flags.map(f => {
-    const info = map[f] || ['sf-none', f];
-    return `<span class="sit-flag ${info[0]}">${info[1]}</span>`;
-  }).join('');
+function sitFlagHTML(sits) {
+  if (!sits || sits.length === 0) return '<span class="sit-flag sf-none">no situation flags</span>';
+  const map = {revenge:['sf-revenge','revenge spot'],travel:['sf-travel','travel fatigue'],sharp:['sf-sharp','sharp action'],weather:['sf-weather','weather factor'],rest:['sf-rest','rest edge'],series:['sf-series','series opener'],fade:['sf-fade','fade spot'],mustwin:['sf-revenge','must-win']};
+  return sits.map(f => { const info = map[f] || ['sf-none',f]; return `<span class="sit-flag ${info[0]}">${info[1]}</span>`; }).join('');
 }
 
-function marketHTML(g) {
-  if (!g.markets) return `<div class="markets" style="opacity:.3">${['ML','RL','TOT','F5'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
-  const mdef = [
-    {key:'ml',evKey:'mlEV',label:'ML'},
-    {key:'rl',evKey:'rlEV',label:'RL'},
-    {key:'total',evKey:'totalEV',label:'TOTAL'},
-    {key:'f5',evKey:'f5EV',label:'F5'}
-  ];
-  return `<div class="markets">${mdef.map(m => {
-    const v = g.markets[m.key] || 'SKIP';
-    const ev = g.markets[m.evKey];
-    const isBest = g.markets.best === m.key;
-    const cls = v.startsWith('BET') ? 'mv-bet' : v.includes('LEAN') ? 'mv-lean' : v.includes('OVER') ? 'mv-over' : v.includes('UNDER') ? 'mv-under' : 'mv-skip';
-    const evStr = ev != null && ev > 0 ? `<div style="font-size:10px;color:var(--green);font-family:'DM Mono',monospace;margin-top:2px">+${parseFloat(ev).toFixed(1)}% EV</div>` : ev != null && ev < 0 ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px">${parseFloat(ev).toFixed(1)}%</div>` : '';
-    return `<div class="market-cell${isBest?' best':''}"><div class="market-label">${m.label}</div><div class="market-val ${cls}" style="font-size:11px">${v}</div>${evStr}</div>`;
-  }).join('')}</div>`;
+function marketCell(label, verdict, ev, isBest) {
+  const v = verdict || 'SKIP';
+  const cls = v.startsWith('BET') ? 'mv-bet' : v.includes('LEAN') ? 'mv-lean' : v.includes('OVER') ? 'mv-over' : v.includes('UNDER') ? 'mv-under' : 'mv-skip';
+  const evHtml = ev != null ? `<div class="ev-val ${ev >= 0 ? 'ev-pos' : 'ev-neg'}">${ev >= 0 ? '+' : ''}${parseFloat(ev).toFixed(1)}% EV</div>` : '';
+  return `<div class="market-cell${isBest ? ' best' : ''}"><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}</div>`;
 }
 
-function edgeBadgeHTML(g) {
+function edgeBadge(g) {
   if (!g.analyzed) return '';
   const e = getTopEdge(g);
-  if (e === 'high') return `<span class="edge-badge eb-high">HIGH EDGE</span>`;
-  if (e === 'med') return `<span class="edge-badge eb-med">LEAN</span>`;
-  return `<span class="edge-badge eb-skip">SKIP</span>`;
+  if (e === 'high') return '<span class="edge-badge eb-high">HIGH EDGE</span>';
+  if (e === 'med') return '<span class="edge-badge eb-med">LEAN</span>';
+  return '<span class="edge-badge eb-skip">SKIP</span>';
 }
 
 function gameCardHTML(g) {
-  const edgeCls = g.analyzed ? (getTopEdge(g) === 'high' ? 'edge-high' : getTopEdge(g) === 'med' ? 'edge-med' : '') : '';
-  const analysisHTML = g.analyzing
-    ? `<div class="card-loading"><div class="loading-dots"><span></span><span></span><span></span></div><p style="color:var(--muted);font-size:11px;margin-top:8px">Researching injuries, pitchers, line movement...</p></div>`
-    : g.analyzed
-      ? `<div class="analysis-full" id="analysis-${g.id}" style="${g.expanded?'':'display:none'}">
-          ${g.analysis ? `
-            <div class="analysis-section"><div class="analysis-label">Situation read</div><p>${g.analysis.situation||''}</p></div>
-            <div class="analysis-section"><div class="analysis-label">Key factors</div><p>${g.analysis.factors||''}</p></div>
-            <div class="analysis-section"><div class="analysis-label">Best play</div><p>${g.analysis.bestPlay||''}</p></div>
-            <div class="analysis-section"><div class="analysis-label">Risks</div><p>${g.analysis.risks||''}</p></div>
-          ` : ''}
-        </div>`
-      : g.analyzeError ? `<div style="font-size:11px;color:var(--red);padding:6px 0">${g.analyzeError} — <button onclick="analyzeGame('${g.id}')" style="background:none;border:none;color:var(--amber);cursor:pointer;font-size:11px;text-decoration:underline">retry</button></div>` : '';
+  const edge = getTopEdge(g);
+  const edgeCls = edge === 'high' ? 'edge-high' : edge === 'med' ? 'edge-med' : '';
+  const time = g.commence_time ? new Date(g.commence_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/New_York'}) + ' ET' : 'TBD';
+  const isExpanded = expanded[g.id];
 
-  const lineMoveHTML = g.lineMove ? `<div class="line-move">Line: <span>${g.awayML}/${g.homeML}</span> ${g.lineMove.sharp ? `<span class="lm-sharp">⚡ sharp → ${g.lineMove.sharpSide}</span>` : ''} ${g.lineMove.note ? `<span class="lm-pub">${g.lineMove.note}</span>` : ''}</div>` : '';
+  const marketsHTML = g.analyzed
+    ? `<div class="markets">
+        ${marketCell('ML', g.ml_verdict, g.ml_ev, g.best_market === 'ml')}
+        ${marketCell('RL', g.rl_verdict, g.rl_ev, g.best_market === 'rl')}
+        ${marketCell('TOTAL', g.total_verdict, g.total_ev, g.best_market === 'total')}
+        ${marketCell('F5', g.f5_verdict, g.f5_ev, g.best_market === 'f5')}
+      </div>`
+    : `<div class="markets" style="opacity:.3">${['ML','RL','TOTAL','F5'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
 
-  return `<div class="game-card ${edgeCls}" id="${g.id}">
-    <div class="game-card-header">
+  const lineMoveHTML = g.line_sharp ? `<div class="line-move">Line: <span>${g.away_ml||'?'}/${g.home_ml||'?'}</span> <span class="lm-sharp">⚡ sharp → ${g.sharp_side}</span> ${g.line_note ? `<span style="color:var(--muted)">${g.line_note}</span>` : ''}</div>` : '';
+
+  const analysisHTML = g.analyzed && isExpanded ? `
+    <div class="analysis-full">
+      <div class="analysis-label">Situation read</div><p>${g.situation_text||''}</p>
+      <div class="analysis-label">Key factors</div><p>${g.factors_text||''}</p>
+      <div class="analysis-label">Best play</div><p>${g.best_play||''}</p>
+      <div class="analysis-label">Risks</div><p>${g.risks_text||''}</p>
+    </div>` : '';
+
+  const notAnalyzed = !g.analyzed ? `<p style="font-size:12px;color:var(--muted);margin-bottom:8px">Analysis runs at 11am and 4pm ET</p>` : '';
+
+  return `<div class="game-card ${edgeCls}" id="card-${g.id}">
+    <div class="card-header">
       <div>
-        <div class="game-matchup">${g.away} @ ${g.home}</div>
-        <div class="game-meta">${g.awayPitcher} vs ${g.homePitcher} · Total ${g.total}</div>
+        <div class="card-matchup">${g.away_team} @ ${g.home_team}</div>
+        <div class="card-meta">${g.away_pitcher||'TBD'} vs ${g.home_pitcher||'TBD'} · Total ${g.total||'?'}</div>
       </div>
-      <div class="game-time">${g.time}<br>${edgeBadgeHTML(g)}</div>
+      <div class="card-time">${time}<br>${edgeBadge(g)}</div>
     </div>
-    <div class="game-card-body">
+    <div class="card-body">
       <div class="sit-flags">${sitFlagHTML(g.situations)}</div>
-      ${marketHTML(g)}
+      ${marketsHTML}
       ${lineMoveHTML}
+      ${notAnalyzed}
       ${analysisHTML}
       <div class="card-actions">
-        ${!g.analyzed && !g.analyzing ? `<button class="btn-analyze" onclick="analyzeGame('${g.id}')">Analyze →</button>` : ''}
-        ${g.analyzed && !g.expanded ? `<button class="btn-expand" onclick="toggleExpand('${g.id}')">+ details</button>` : ''}
-        ${g.analyzed && g.expanded ? `<button class="btn-expand" onclick="toggleExpand('${g.id}')">- collapse</button>` : ''}
-        ${g.analyzed && getTopEdge(g) !== 'none' ? `<button class="btn-log" onclick="openLog('${g.id}')">Log bet +</button>` : ''}
+        ${g.analyzed ? `<button class="btn-expand" onclick="toggleExpand('${g.id}')">${isExpanded ? '− collapse' : '+ details'}</button>` : ''}
+        ${g.analyzed && edge !== 'skip' && edge !== 'none' ? `<button class="btn-log" onclick="openLog('${g.id}')">Log bet +</button>` : ''}
       </div>
     </div>
   </div>`;
 }
 
-function toggleExpand(id) {
-  const g = games.find(x => x.id === id);
-  if (!g) return;
-  g.expanded = !g.expanded;
-  renderGames();
-}
-
-// ── ANALYZE GAME ─────────────────────────────────────────────────────────────
-async function analyzeGame(id) {
-  const g = games.find(x => x.id === id);
-  if (!g || g.analyzing) return;
-  g.analyzing = true;
-  renderGames();
-
-  try {
-    const raw = await callClaude(
-      `You are an expert MLB betting analyst. Today is ${g.date}. Use web search to find CURRENT 2026 season data for this game — do not rely on training data. Search for injuries, pitcher stats, team form, and line movement right now.
-
-GAME: ${g.away} (${g.awayML}) @ ${g.home} (${g.homeML}) | Total: ${g.total}
-Pitchers: ${g.awayPitcher} (away) vs ${g.homePitcher} (home)
-
-Search for: "${g.away} vs ${g.home} MLB 2026 injuries lineup" and "${g.awayPitcher} ${g.homePitcher} MLB 2026 stats". Use what you find to score all four betting markets.
-
-Return ONLY this JSON:
-{
-  "situations": ["revenge","travel","sharp","weather","rest","series","fade","mustwin"],
-  "ml": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
-  "mlEV": NUMBER,
-  "rl": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
-  "rlEV": NUMBER,
-  "total": "BET OVER|BET UNDER|LEAN OVER|LEAN UNDER|SKIP",
-  "totalEV": NUMBER,
-  "f5": "BET AWAY|BET HOME|BET OVER|BET UNDER|LEAN AWAY|LEAN HOME|LEAN OVER|LEAN UNDER|SKIP",
-  "f5EV": NUMBER,
-  "best": "ml|rl|total|f5",
-  "bestPlay": "one sentence — the single strongest play and why",
-  "awayWinPct": NUMBER,
-  "homeWinPct": NUMBER,
-  "projTotal": NUMBER,
-  "edgePct": NUMBER,
-  "confidence": "LOW|MEDIUM|HIGH",
-  "lineSharp": true|false,
-  "sharpSide": "${g.away}|${g.home}|NONE",
-  "lineNote": "brief note on line movement or public action",
-  "situation": "2 sentences on the most important situational factor for this game",
-  "factors": "2 sentences on pitching matchup, bullpen, and recent form",
-  "risks": "1 sentence on the biggest risk to the top play"
-}
-
-Only include relevant situations in the array. If no situation flags apply, return empty array.`,
-      true
-    );
-
-    let p;
-    try {
-      const clean = raw.replace(/```json|```/g, '').trim();
-      const s = clean.indexOf('{'), e = clean.lastIndexOf('}');
-      p = JSON.parse(clean.substring(s, e + 1));
-    } catch(err) { throw new Error('parse'); }
-
-    g.situations = p.situations || [];
-    g.markets = {
-      ml: p.ml, mlEV: p.mlEV,
-      rl: p.rl, rlEV: p.rlEV,
-      total: p.total, totalEV: p.totalEV,
-      f5: p.f5, f5EV: p.f5EV,
-      best: p.best,
-      awayWinPct: p.awayWinPct, homeWinPct: p.homeWinPct,
-      projTotal: p.projTotal, edgePct: p.edgePct, confidence: p.confidence
-    };
-    g.lineMove = { sharp: p.lineSharp, sharpSide: p.sharpSide, note: p.lineNote };
-    g.analysis = {
-      situation: p.situation, factors: p.factors,
-      bestPlay: p.bestPlay, risks: p.risks
-    };
-    g.analyzed = true;
-    g.analyzing = false;
-    g.expanded = false;
-
-  } catch(err) {
-    g.analyzing = false;
-    g.analyzed = false;
-    g.analyzeError = err.message || 'Analysis failed';
+function renderGames() {
+  let filtered = games;
+  if (currentFilter === 'edge') filtered = games.filter(g => getTopEdge(g) === 'high');
+  if (currentFilter === 'sit') filtered = games.filter(g => g.situations && g.situations.length > 0);
+  if (currentFilter === 'sharp') filtered = games.filter(g => g.line_sharp);
+  if (currentFilter === 'skip') filtered = games.filter(g => g.analyzed && getTopEdge(g) === 'skip');
+  if (!filtered.length) {
+    document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">No games match this filter</div></div>`;
+    return;
   }
-  saveGamesCache();
-  renderGames();
-  updateBestPlays();
+  document.getElementById('games-container').innerHTML = `<div class="games-grid">${filtered.map(gameCardHTML).join('')}</div>`;
 }
 
-function updateBestPlays() {
+function renderBestPlays() {
   const top = games.filter(g => g.analyzed && getTopEdge(g) === 'high')
-    .sort((a,b) => (b.markets?.edgePct||0) - (a.markets?.edgePct||0))
-    .slice(0, 4);
+    .sort((a,b) => (b.edge_pct||0) - (a.edge_pct||0)).slice(0, 5);
   if (!top.length) { document.getElementById('best-plays').classList.remove('show'); return; }
   document.getElementById('bp-grid').innerHTML = top.map(g => {
-    const bk = g.markets?.best;
-    const bv = bk ? g.markets[bk] : 'BET';
-    return `<div class="bp-item">
-      <div class="bp-matchup">${g.away} @ ${g.home}</div>
-      <div class="bp-play">${bv} (${bk?.toUpperCase()})</div>
-      <div class="bp-conf">${g.markets?.confidence||''} · ${g.time}</div>
+    const bk = g.best_market; const bv = bk ? g[bk+'_verdict'] : '';
+    return `<div class="bp-item" onclick="scrollToGame('${g.id}')">
+      <div class="bp-matchup">${g.away_team} @ ${g.home_team}</div>
+      <div class="bp-play">${bv||'BET'} (${(bk||'ml').toUpperCase()})</div>
+      <div class="bp-conf">${g.confidence||''} · ${g.edge_pct ? '+'+parseFloat(g.edge_pct).toFixed(1)+'% edge' : ''}</div>
     </div>`;
   }).join('');
   document.getElementById('best-plays').classList.add('show');
 }
 
-// ── FILTERS ──────────────────────────────────────────────────────────────────
+function scrollToGame(id) {
+  const el = document.getElementById('card-' + id);
+  if (el) el.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+function toggleExpand(id) {
+  expanded[id] = !expanded[id];
+  renderGames();
+}
+
 function setFilter(f, btn) {
   currentFilter = f;
   document.querySelectorAll('#filters .filter-btn').forEach(b => b.classList.remove('on'));
@@ -747,32 +447,30 @@ function setFilter(f, btn) {
   renderGames();
 }
 
-// ── LOG BET ──────────────────────────────────────────────────────────────────
+function shiftDate(n) {
+  currentDate.setDate(currentDate.getDate() + n);
+  expanded = {};
+  loadGames();
+}
+function setToday() { currentDate = new Date(); expanded = {}; loadGames(); }
+
 function openLog(id) {
   const g = games.find(x => x.id === id);
   if (!g) return;
   pendingLog = g;
-  document.getElementById('log-matchup').value = `${g.away} @ ${g.home}`;
-  document.getElementById('log-date').value = g.date;
-  document.getElementById('log-sit').value = (g.situations||[]).join(', ') || 'none';
-  const bk = g.markets?.best;
-  const bv = bk ? g.markets[bk] : '';
+  document.getElementById('log-matchup').value = `${g.away_team} @ ${g.home_team}`;
+  document.getElementById('log-date').value = g.game_date;
+  const bk = g.best_market; const bv = bk ? g[bk+'_verdict'] : '';
   const lt = document.getElementById('log-type');
-  if (bv.includes('AWAY') && bk === 'ml') lt.value = 'Moneyline (away)';
-  else if (bv.includes('HOME') && bk === 'ml') lt.value = 'Moneyline (home)';
-  else if (bv.includes('OVER') && bk === 'total') lt.value = 'Game total over';
-  else if (bv.includes('UNDER') && bk === 'total') lt.value = 'Game total under';
-  else if (bv.includes('AWAY') && bk === 'rl') lt.value = 'Run line (away -1.5)';
-  else if (bv.includes('HOME') && bk === 'rl') lt.value = 'Run line (home +1.5)';
-  else if (bv.includes('AWAY') && bk === 'f5') lt.value = 'F5 moneyline (away)';
-  else if (bv.includes('HOME') && bk === 'f5') lt.value = 'F5 moneyline (home)';
+  if (bv && bv.includes('AWAY') && bk === 'ml') lt.value = 'Moneyline (away)';
+  else if (bv && bv.includes('HOME') && bk === 'ml') lt.value = 'Moneyline (home)';
+  else if (bv && bv.includes('OVER') && bk === 'total') lt.value = 'Game total over';
+  else if (bv && bv.includes('UNDER') && bk === 'total') lt.value = 'Game total under';
+  else if (bv && bv.includes('AWAY') && bk === 'rl') lt.value = 'Run line (away -1.5)';
+  else if (bv && bv.includes('HOME') && bk === 'rl') lt.value = 'Run line (home +1.5)';
   document.getElementById('log-modal').classList.add('show');
 }
-
-function closeModal() {
-  document.getElementById('log-modal').classList.remove('show');
-  pendingLog = null;
-}
+function closeModal() { document.getElementById('log-modal').classList.remove('show'); pendingLog = null; }
 
 function saveBet() {
   if (!pendingLog) return;
@@ -781,24 +479,20 @@ function saveBet() {
   const odds = document.getElementById('log-odds').value;
   const units = parseFloat(document.getElementById('log-units').value) || 1;
   const notes = document.getElementById('log-notes').value;
-  const mlp = n => { const x = parseFloat(n); if (isNaN(x)) return null; return x < 0 ? (-x)/(-x+100) : 100/(x+100); };
-  const isAway = type.includes('(away)') || type.includes('away');
-  const prob = isAway ? (g.markets?.awayWinPct||50)/100 : (g.markets?.homeWinPct||50)/100;
+  const isAway = type.toLowerCase().includes('away');
+  const prob = isAway ? (g.away_win_pct||50)/100 : type.toLowerCase().includes('home') ? (g.home_win_pct||50)/100 : null;
   const n = parseFloat(odds);
-  const ev = !isNaN(n) && prob ? (((prob * (n>0?n/100:100/(-n))) - (1-prob))*100).toFixed(1) : null;
+  const ev = !isNaN(n) && prob ? (((prob*(n>0?n/100:100/(-n)))-(1-prob))*100).toFixed(1) : null;
   const bet = {
-    id: Date.now(),
-    date: g.date,
-    matchup: `${g.away} @ ${g.home}`,
-    awayPitcher: g.awayPitcher,
-    homePitcher: g.homePitcher,
-    type, odds: odds||'?', units, notes,
-    ev, situations: (g.situations||[]).join(','),
-    confidence: g.markets?.confidence||'',
-    result: 'pending'
+    id: Date.now(), date: g.game_date,
+    matchup: `${g.away_team} @ ${g.home_team}`,
+    awayPitcher: g.away_pitcher, homePitcher: g.home_pitcher,
+    type, odds: odds||'?', units, notes, ev,
+    situations: (g.situations||[]).join(','),
+    confidence: g.confidence||'', result: 'pending'
   };
   bets.push(bet);
-  localStorage.setItem('mlb_bets', JSON.stringify(bets));
+  localStorage.setItem('mlb_bets_v2', JSON.stringify(bets));
   closeModal();
   updateNavRecord();
   document.getElementById('log-odds').value = '';
@@ -806,7 +500,37 @@ function saveBet() {
   document.getElementById('log-notes').value = '';
 }
 
-// ── TRACKER ──────────────────────────────────────────────────────────────────
+function setResult(id, r) {
+  const b = bets.find(x => x.id === id);
+  if (b) { b.result = r; localStorage.setItem('mlb_bets_v2', JSON.stringify(bets)); renderTracker(); updateNavRecord(); }
+}
+function deleteBet(id) {
+  const i = bets.findIndex(x => x.id === id);
+  if (i > -1) { bets.splice(i,1); localStorage.setItem('mlb_bets_v2', JSON.stringify(bets)); renderTracker(); updateNavRecord(); }
+}
+
+function renderTracker() {
+  const el = document.getElementById('tracker-table');
+  let filtered = bets;
+  if (trackerFilter !== 'all') filtered = bets.filter(b => b.result === trackerFilter);
+  const settled = bets.filter(b => b.result==='win'||b.result==='loss');
+  const wins = bets.filter(b => b.result==='win').length;
+  document.getElementById('tracker-subtitle').textContent = settled.length
+    ? `${wins}-${settled.length-wins} record (${Math.round(wins/settled.length*100)}%) · ${bets.filter(b=>b.result==='pending').length} pending`
+    : `${bets.length} bets logged`;
+  if (!filtered.length) { el.innerHTML = `<div class="empty-state"><div class="empty-title">No bets ${trackerFilter!=='all'?'matching filter':'yet'}</div></div>`; return; }
+  el.innerHTML = `<table class="t-table"><thead><tr>
+    <th style="width:70px">Date</th><th>Matchup</th><th>Type</th>
+    <th style="width:52px">Odds</th><th style="width:46px">Units</th>
+    <th style="width:58px">EV%</th><th style="width:52px">Conf</th>
+    <th>Situation</th><th>Result</th><th style="width:28px"></th>
+  </tr></thead><tbody>${filtered.map(b => {
+    const btns = ['win','loss','push','pending'].map(r => `<button onclick="setResult(${b.id},'${r}')" class="${b.result===r?'on':''}">${r}</button>`).join('');
+    const ev = b.ev!=null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
+    return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px">${b.matchup}</td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td><td><div class="rsel">${btns}</div></td><td><button onclick="deleteBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--dim);font-size:17px">×</button></td></tr>`;
+  }).join('')}</tbody></table>`;
+}
+
 function setTrackerFilter(f, btn) {
   trackerFilter = f;
   document.querySelectorAll('.tracker-filters .filter-btn').forEach(b => b.classList.remove('on'));
@@ -814,52 +538,6 @@ function setTrackerFilter(f, btn) {
   renderTracker();
 }
 
-function setResult(id, r) {
-  const b = bets.find(x => x.id === id);
-  if (b) { b.result = r; localStorage.setItem('mlb_bets', JSON.stringify(bets)); renderTracker(); updateNavRecord(); }
-}
-
-function deleteBet(id) {
-  const i = bets.findIndex(x => x.id === id);
-  if (i > -1) { bets.splice(i, 1); localStorage.setItem('mlb_bets', JSON.stringify(bets)); renderTracker(); updateNavRecord(); }
-}
-
-function renderTracker() {
-  const el = document.getElementById('tracker-table');
-  let filtered = bets;
-  if (trackerFilter !== 'all') filtered = bets.filter(b => b.result === trackerFilter);
-  const settled = bets.filter(b => b.result === 'win' || b.result === 'loss');
-  const wins = bets.filter(b => b.result === 'win').length;
-  document.getElementById('tracker-subtitle').textContent = settled.length
-    ? `${wins}-${settled.length-wins} record (${Math.round(wins/settled.length*100)}%) · ${bets.filter(b=>b.result==='pending').length} pending`
-    : `${bets.length} bets logged · none settled yet`;
-  if (!filtered.length) { el.innerHTML = `<div class="empty-state" style="padding:3rem"><div class="empty-title">No bets ${trackerFilter !== 'all' ? 'matching this filter' : 'yet'}</div></div>`; return; }
-  el.innerHTML = `<div class="t-table-wrap"><table class="t-table"><thead><tr>
-    <th style="width:70px">Date</th><th>Matchup</th><th>Type</th>
-    <th style="width:52px">Odds</th><th style="width:46px">Units</th>
-    <th style="width:58px">EV%</th><th style="width:52px">Conf</th>
-    <th>Situation</th><th>Result</th><th style="width:28px"></th>
-  </tr></thead><tbody>${filtered.map(b => {
-    const btns = ['win','loss','push','pending'].map(r =>
-      `<button onclick="setResult(${b.id},'${r}')" class="${b.result===r?'on':''}">${r}</button>`
-    ).join('');
-    const ev = b.ev !== null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
-    return `<tr>
-      <td class="mono" style="font-size:11px">${b.date}</td>
-      <td style="font-size:12px">${b.matchup}</td>
-      <td style="font-size:11px">${b.type}</td>
-      <td class="mono">${b.odds}</td>
-      <td class="mono">${b.units}</td>
-      <td>${ev}</td>
-      <td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td>
-      <td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td>
-      <td><div class="rsel">${btns}</div></td>
-      <td><button onclick="deleteBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--dim);font-size:17px">×</button></td>
-    </tr>`;
-  }).join('')}</tbody></table></div>`;
-}
-
-// ── STATS ────────────────────────────────────────────────────────────────────
 function updateNavRecord() {
   const s = bets.filter(b => b.result==='win'||b.result==='loss');
   const w = bets.filter(b => b.result==='win').length;
@@ -869,11 +547,11 @@ function updateNavRecord() {
 function renderStats() {
   const el = document.getElementById('stats-content');
   const settled = bets.filter(b => b.result==='win'||b.result==='loss');
-  if (settled.length < 1) { el.innerHTML = `<div class="empty-state" style="padding:3rem"><div class="empty-title">Not enough data</div><div class="empty-sub">Log and settle at least 5 bets to see your edge stats.</div></div>`; return; }
+  if (!settled.length) { el.innerHTML = `<div class="empty-state"><div class="empty-title">No settled bets yet</div><div class="empty-sub">Log and settle bets to see your edge stats.</div></div>`; return; }
   const wins = bets.filter(b=>b.result==='win').length;
   const losses = bets.filter(b=>b.result==='loss').length;
   const pct = Math.round(wins/settled.length*100);
-  let profit = 0, risked = 0;
+  let profit=0, risked=0;
   bets.filter(b=>['win','loss','push'].includes(b.result)).forEach(b=>{
     const u=parseFloat(b.units)||1; risked+=u;
     const n=parseFloat(b.odds);
@@ -882,19 +560,19 @@ function renderStats() {
   });
   const roi=risked?((profit/risked)*100).toFixed(1):'0';
   const pCol=pct>=57?'var(--green)':pct>=52?'var(--amber)':'var(--red)';
-
-  // by type
-  const byType={};
-  settled.forEach(b=>{const t=b.type.split(' ')[0]+' '+b.type.split(' ')[1];if(!byType[t])byType[t]={w:0,l:0};if(b.result==='win')byType[t].w++;else byType[t].l++;});
-
-  // by situation
-  const bySit={};
-  settled.forEach(b=>{(b.situations||'').split(',').filter(Boolean).forEach(s=>{if(!bySit[s])bySit[s]={w:0,l:0};if(b.result==='win')bySit[s].w++;else bySit[s].l++;});});
-
-  // by confidence
-  const byConf={};
-  settled.forEach(b=>{const c=b.confidence||'UNKNOWN';if(!byConf[c])byConf[c]={w:0,l:0};if(b.result==='win')byConf[c].w++;else byConf[c].l++;});
-
+  const byType={}, bySit={}, byConf={};
+  settled.forEach(b=>{
+    const t=b.type.split(' ').slice(0,2).join(' ');
+    if(!byType[t])byType[t]={w:0,l:0};
+    if(b.result==='win')byType[t].w++;else byType[t].l++;
+    (b.situations||'').split(',').filter(Boolean).forEach(s=>{
+      if(!bySit[s])bySit[s]={w:0,l:0};
+      if(b.result==='win')bySit[s].w++;else bySit[s].l++;
+    });
+    const c=b.confidence||'UNKNOWN';
+    if(!byConf[c])byConf[c]={w:0,l:0};
+    if(b.result==='win')byConf[c].w++;else byConf[c].l++;
+  });
   function barRows(obj) {
     return Object.entries(obj).sort((a,b)=>(b[1].w+b[1].l)-(a[1].w+a[1].l)).map(([k,d])=>{
       const p2=Math.round(d.w/(d.w+d.l)*100);
@@ -902,25 +580,19 @@ function renderStats() {
       return `<div class="bar-row"><div class="bar-lbl">${k}</div><div class="bar-track"><div class="bar-fill" style="width:${p2}%;background:${c}"></div></div><div class="bar-val" style="color:${c}">${p2}%</div></div>`;
     }).join('');
   }
-
-  const avgEV = bets.filter(b=>b.ev!==null);
-  const meanEV = avgEV.length?(avgEV.reduce((a,b)=>a+parseFloat(b.ev),0)/avgEV.length).toFixed(1):null;
-
   el.innerHTML = `
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-label">Win rate</div><div class="stat-val" style="color:${pCol}">${pct}%</div><div class="stat-sub">breakeven = 52.4%</div></div>
       <div class="stat-card"><div class="stat-label">Record</div><div class="stat-val">${wins}–${losses}</div><div class="stat-sub">${bets.filter(b=>b.result==='pending').length} pending</div></div>
-      <div class="stat-card"><div class="stat-label">Profit (units)</div><div class="stat-val" style="color:${profit>=0?'var(--green)':'var(--red)'}">${profit>=0?'+':''}${profit.toFixed(2)}</div><div class="stat-sub">${risked.toFixed(1)} units risked</div></div>
+      <div class="stat-card"><div class="stat-label">Profit (units)</div><div class="stat-val" style="color:${profit>=0?'var(--green)':'var(--red)'}">${profit>=0?'+':''}${profit.toFixed(2)}</div><div class="stat-sub">${risked.toFixed(1)} risked</div></div>
       <div class="stat-card"><div class="stat-label">ROI</div><div class="stat-val" style="color:${parseFloat(roi)>=0?'var(--green)':'var(--red)'}">${parseFloat(roi)>=0?'+':''}${roi}%</div><div class="stat-sub">return on investment</div></div>
-      ${meanEV!==null?`<div class="stat-card"><div class="stat-label">Avg model EV</div><div class="stat-val" style="color:${parseFloat(meanEV)>=0?'var(--green)':'var(--red)'}">${parseFloat(meanEV)>=0?'+':''}${meanEV}%</div><div class="stat-sub">expected value / bet</div></div>`:''}
     </div>
     ${Object.keys(byType).length?`<div class="section-head">Win rate by bet type</div>${barRows(byType)}`:''}
     ${Object.keys(bySit).length?`<div class="section-head">Win rate by situation</div>${barRows(bySit)}`:''}
-    ${Object.keys(byConf).length?`<div class="section-head">Win rate by model confidence</div>${barRows(byConf)}`:''}
-    <div class="disc">All bets stored locally in your browser. Data persists between sessions on this device. Export CSV to back up or move to another device.</div>`;
+    ${Object.keys(byConf).length?`<div class="section-head">Win rate by confidence</div>${barRows(byConf)}`:''}
+    <div class="disc">Data stored locally. Export CSV to back up.</div>`;
 }
 
-// ── CSV EXPORT ───────────────────────────────────────────────────────────────
 function exportCSV() {
   if (!bets.length) { alert('No bets to export.'); return; }
   const headers = ['date','matchup','awayPitcher','homePitcher','type','odds','units','ev','confidence','situations','result','notes'];
@@ -932,81 +604,10 @@ function exportCSV() {
   a.click();
 }
 
-// ── HISTORY ──────────────────────────────────────────────────────────────────
-function showDatePicker() {
-  const el = document.getElementById('date-picker');
-  const dates = getAvailableDates();
-  if (!dates.length) { el.style.display = 'none'; return; }
-  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
-  el.style.display = 'flex';
-  el.innerHTML = dates.map(d => {
-    const label = new Date(d + 'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
-    const isActive = d === isoDate(currentDate);
-    return `<button class="date-btn" style="${isActive?'border-color:var(--green);color:var(--green)':''}" onclick="jumpToDate('${d}')">${label}</button>`;
-  }).join('');
-}
-
-function jumpToDate(dateStr) {
-  currentDate = new Date(dateStr + 'T12:00:00');
-  document.getElementById('date-display').textContent = fmtDate(currentDate);
-  document.getElementById('date-picker').style.display = 'none';
-  games = [];
-  document.getElementById('best-plays').classList.remove('show');
-  if (!loadGamesCache()) {
-    document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">${fmtDateShort(currentDate)}</div><div class="empty-sub">No saved data for this date.</div></div>`;
-    document.getElementById('filters').style.display = 'none';
-    document.getElementById('analyze-all-btn').style.display = 'none';
-  }
-}
-
-// ── CACHE ────────────────────────────────────────────────────────────────────
-function saveGamesCache() {
-  const key = 'mlb_games_' + isoDate(currentDate);
-  localStorage.setItem(key, JSON.stringify(games));
-  if (document.getElementById('history-btn')) {
-    const dates = JSON.parse(localStorage.getItem('mlb_dates') || '[]');
-    if (dates.length > 1) document.getElementById('history-btn').style.display = 'block';
-  }
-  // Track which dates have data
-  const dates = JSON.parse(localStorage.getItem('mlb_dates') || '[]');
-  if (!dates.includes(isoDate(currentDate))) {
-    dates.unshift(isoDate(currentDate));
-    // Keep last 30 days only
-    const trimmed = dates.slice(0, 30);
-    localStorage.setItem('mlb_dates', JSON.stringify(trimmed));
-    // Clean up old keys
-    dates.slice(30).forEach(d => localStorage.removeItem('mlb_games_' + d));
-  }
-}
-
-function loadGamesCache() {
-  try {
-    const key = 'mlb_games_' + isoDate(currentDate);
-    const raw = localStorage.getItem(key);
-    if (!raw) return false;
-    games = JSON.parse(raw);
-    if (!games || !games.length) return false;
-    const analyzed = games.filter(g => g.analyzed).length;
-    document.getElementById('games-subtitle').textContent = `${games.length} games on ${fmtDateShort(currentDate)} · ${analyzed} analyzed · cached`;
-    document.getElementById('filters').style.display = 'flex';
-    document.getElementById('analyze-all-btn').style.display = 'block';
-    renderGames();
-    updateBestPlays();
-    return true;
-  } catch(e) { return false; }
-}
-
-function getAvailableDates() {
-  return JSON.parse(localStorage.getItem('mlb_dates') || '[]');
-}
-
-// ── INIT ─────────────────────────────────────────────────────────────────────
-initDate();
+// Init
+document.getElementById('date-display').textContent = fmtDate(currentDate);
 updateNavRecord();
-loadGamesCache();
-if (getAvailableDates().length > 1) {
-  document.getElementById('history-btn').style.display = 'block';
-}
+loadGames();
 </script>
 
 <div class="container" style="padding-top:0">
