@@ -911,6 +911,118 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
   if (!res.ok) console.error(`Supabase error:`, await res.text());
 }
 
+// ── AUTO SETTLE PENDING BETS ─────────────────────────────────────────────────
+async function settlePendingBets() {
+  console.log('\nChecking pending bets for settlement...');
+  try {
+    // Get all pending bets from Supabase
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?result=eq.pending&order=game_date.desc`, {
+      headers: {
+        'apikey': SUPABASE_SERVICE_KEY,
+        'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`
+      }
+    });
+    if (!res.ok) return;
+    const bets = await res.json();
+    if (!bets.length) { console.log('  No pending bets to settle'); return; }
+    console.log(`  Found ${bets.length} pending bets`);
+
+    for (const bet of bets) {
+      try {
+        // Get final score from MLB Stats API
+        const schedRes = await fetch(
+          `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${bet.game_date}&gameType=R&hydrate=linescore`
+        );
+        if (!schedRes.ok) continue;
+        const schedData = await schedRes.json();
+        const games = schedData.dates?.[0]?.games || [];
+
+        // Find matching game
+        const matchup = bet.matchup || '';
+        const awayName = matchup.split(' @ ')[0];
+        const homeName = matchup.split(' @ ')[1];
+
+        const game = games.find(g => {
+          const awayTeam = g.teams?.away?.team?.name || '';
+          const homeTeam = g.teams?.home?.team?.name || '';
+          return (awayTeam.includes(awayName.split(' ').pop()) || awayName.includes(awayTeam.split(' ').pop())) &&
+                 (homeTeam.includes(homeName?.split(' ').pop()) || homeName?.includes(homeTeam.split(' ').pop()));
+        });
+
+        if (!game) continue;
+        if (game.status?.abstractGameState !== 'Final') continue;
+
+        const awayScore = game.teams?.away?.score;
+        const homeScore = game.teams?.home?.score;
+        if (awayScore === undefined || homeScore === undefined) continue;
+
+        const totalScore = awayScore + homeScore;
+        const type = (bet.bet_type || '').toLowerCase();
+        const betLine = parseFloat(bet.bet_line) || 0;
+        const odds = parseFloat(bet.odds) || 0;
+
+        let result = 'pending';
+
+        // Determine result based on bet type
+        if (type.includes('total over') || type.includes('over')) {
+          if (totalScore > betLine) result = 'win';
+          else if (totalScore < betLine) result = 'loss';
+          else result = 'push';
+        } else if (type.includes('total under') || type.includes('under')) {
+          if (totalScore < betLine) result = 'win';
+          else if (totalScore > betLine) result = 'loss';
+          else result = 'push';
+        } else if (type.includes('moneyline (away)') || type.includes('f5 moneyline (away)')) {
+          if (awayScore > homeScore) result = 'win';
+          else if (awayScore < homeScore) result = 'loss';
+          else result = 'push';
+        } else if (type.includes('moneyline (home)') || type.includes('f5 moneyline (home)')) {
+          if (homeScore > awayScore) result = 'win';
+          else if (homeScore < awayScore) result = 'loss';
+          else result = 'push';
+        } else if (type.includes('rl -1.5') || type.includes('run line (away')) {
+          if (awayScore - homeScore > 1.5) result = 'win';
+          else if (awayScore - homeScore < 1.5) result = 'loss';
+          else result = 'push';
+        } else if (type.includes('rl +1.5') || type.includes('run line (home')) {
+          if (homeScore - awayScore > -1.5) result = 'win';
+          else if (homeScore - awayScore < -1.5) result = 'loss';
+          else result = 'push';
+        }
+
+        if (result === 'pending') continue;
+
+        // Update bet in Supabase
+        const updateRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_SERVICE_KEY,
+            'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({
+            result,
+            away_score: awayScore,
+            home_score: homeScore,
+            settled_at: new Date().toISOString()
+          })
+        });
+
+        if (updateRes.ok) {
+          console.log(`  ✓ Settled: ${bet.matchup} — ${result.toUpperCase()} (${awayScore}-${homeScore})`);
+        }
+
+        await new Promise(r => setTimeout(r, 500));
+      } catch(e) {
+        console.error(`  Error settling ${bet.matchup}:`, e.message);
+      }
+    }
+  } catch(e) {
+    console.error('Settlement error:', e.message);
+  }
+}
+
 async function main() {
   console.log(`\n=== MLB Analysis: ${RUN_TYPE} ===`);
   console.log(`${new Date().toLocaleString('en-US',{timeZone:'America/New_York'})} ET\n`);
@@ -1004,6 +1116,7 @@ async function main() {
   }
 
   console.log(`\n✅ Done — ${todayGames.length} games`);
+  await settlePendingBets();
 }
 
 main();
