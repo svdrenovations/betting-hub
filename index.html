@@ -134,6 +134,9 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .bar-val{font-size:11px;font-family:'DM Mono',monospace;font-weight:500;width:40px;text-align:right}
 .section-head{font-size:11px;font-family:'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin:1.5rem 0 .75rem;padding-bottom:.5rem;border-bottom:1px solid var(--border)}
 .tracker-filters{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap}
+.ol{color:var(--muted);padding:4px 6px;text-align:left;white-space:nowrap}
+.ov{color:var(--text);padding:4px 6px}
+.ov strong{color:var(--green)}
 .disc{font-size:11px;color:var(--dim);font-family:'DM Mono',monospace;line-height:1.6;padding:1.5rem 0;border-top:1px solid var(--border);margin-top:2rem}
 @media(max-width:600px){
   .markets{grid-template-columns:repeat(2,1fr)}
@@ -338,11 +341,12 @@ function sitFlagHTML(sits) {
   return sits.map(f => { const info = map[f] || ['sf-none',f]; return `<span class="sit-flag ${info[0]}">${info[1]}</span>`; }).join('');
 }
 
-function marketCell(label, verdict, ev, isBest) {
+function marketCell(label, verdict, ev, isBest, line, projTotal) {
   const v = verdict || 'SKIP';
   const cls = v.startsWith('BET') ? 'mv-bet' : v.includes('LEAN') ? 'mv-lean' : v.includes('OVER') ? 'mv-over' : v.includes('UNDER') ? 'mv-under' : 'mv-skip';
-  const evHtml = ev != null ? `<div class="ev-val ${ev >= 0 ? 'ev-pos' : 'ev-neg'}">${ev >= 0 ? '+' : ''}${parseFloat(ev).toFixed(1)}% EV</div>` : '';
-  return `<div class="market-cell${isBest ? ' best' : ''}"><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}</div>`;
+  const evHtml = ev != null && ev !== 0 ? `<div class="ev-val ${ev >= 0 ? 'ev-pos' : 'ev-neg'}">${ev >= 0 ? '+' : ''}${parseFloat(ev).toFixed(1)}% EV</div>` : '';
+  const lineHtml = line != null && projTotal != null && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>` : '';
+  return `<div class="market-cell${isBest ? ' best' : ''}"><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}</div>`;
 }
 
 function edgeBadge(g) {
@@ -351,6 +355,51 @@ function edgeBadge(g) {
   if (e === 'high') return '<span class="edge-badge eb-high">HIGH EDGE</span>';
   if (e === 'med') return '<span class="edge-badge eb-med">LEAN</span>';
   return '<span class="edge-badge eb-skip">SKIP</span>';
+}
+
+function pitcherEdgeHTML(g) {
+  if (!g.pitcher_edge || g.pitcher_edge === 'EVEN' || !g.analyzed) return '';
+  const color = g.pitcher_edge === g.away_team ? 'var(--blue)' : 'var(--purple)';
+  const side = g.pitcher_edge === g.away_team ? g.away_team.split(' ').pop() : g.home_team.split(' ').pop();
+  return `<div style="font-size:11px;font-family:'DM Mono',monospace;color:${color};margin-bottom:6px">⚾ pitcher edge → ${side}</div>`;
+}
+
+function weatherHTML(g) {
+  if (!g.weather_summary) return '';
+  const isDome = g.weather_dome;
+  if (isDome) return '';
+  const hasFlag = g.weather_flags && g.weather_flags.length > 0;
+  const impact = g.weather_impact;
+  const impactColor = impact === 'over' ? 'var(--over)' : impact === 'under' ? 'var(--under)' : impact === 'significant' ? 'var(--amber)' : 'var(--muted)';
+  return `<div style="font-size:11px;font-family:'DM Mono',monospace;color:${hasFlag?'var(--amber)':'var(--muted)'};margin-bottom:8px;display:flex;align-items:center;gap:6px">
+    <span>${hasFlag ? '⚠' : '🌤'}</span>
+    <span>${g.weather_summary}</span>
+    ${impact && impact !== 'none' ? `<span style="color:${impactColor};font-weight:500">→ ${impact.toUpperCase()}</span>` : ''}
+  </div>`;
+}
+
+function oddsTableHTML(g) {
+  const rows = [];
+  if (g.away_ml || g.home_ml) {
+    rows.push(`<tr><td class="ol">ML</td><td class="ov">${g.away_team?.split(' ').pop()||'Away'} <strong>${g.away_ml||'?'}</strong></td><td class="ov">${g.home_team?.split(' ').pop()||'Home'} <strong>${g.home_ml||'?'}</strong></td><td class="ov">${g.away_ml_pct ? g.away_ml_pct+'% / '+g.home_ml_pct+'%' : '—'}</td></tr>`);
+  }
+  if (g.away_rl || g.home_rl) {
+    rows.push(`<tr><td class="ol">RL</td><td class="ov">${g.away_rl||'?'} <strong>${g.away_rl_odds||'?'}</strong></td><td class="ov">${g.home_rl||'?'} <strong>${g.home_rl_odds||'?'}</strong></td><td class="ov">—</td></tr>`);
+  }
+  if (g.total) {
+    rows.push(`<tr><td class="ol">Total</td><td class="ov">O${g.total} <strong>${g.over_odds||'?'}</strong></td><td class="ov">U${g.total} <strong>${g.under_odds||'?'}</strong></td><td class="ov">${g.over_pct ? g.over_pct+'% / '+g.under_pct+'%' : '—'}</td></tr>`);
+  }
+  if (g.f5_away_ml || g.f5_home_ml) {
+    rows.push(`<tr><td class="ol">F5 ML</td><td class="ov">Away <strong>${g.f5_away_ml||'?'}</strong></td><td class="ov">Home <strong>${g.f5_home_ml||'?'}</strong></td><td class="ov">—</td></tr>`);
+  }
+  if (g.f5_total) {
+    rows.push(`<tr><td class="ol">F5 Tot</td><td class="ov">O${g.f5_total} <strong>${g.f5_over_odds||'?'}</strong></td><td class="ov">U${g.f5_total} <strong>${g.f5_under_odds||'?'}</strong></td><td class="ov">—</td></tr>`);
+  }
+  if (!rows.length) return '';
+  return `<table style="width:100%;border-collapse:collapse;margin-bottom:10px;font-size:11px;font-family:'DM Mono',monospace">
+    <thead><tr><th class="ol" style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)"></th><th style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">Away</th><th style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">Home</th><th style="color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--border)">Public %</th></tr></thead>
+    <tbody>${rows.join('')}</tbody>
+  </table>`;
 }
 
 function gameCardHTML(g) {
@@ -363,8 +412,8 @@ function gameCardHTML(g) {
     ? `<div class="markets">
         ${marketCell('ML', g.ml_verdict, g.ml_ev, g.best_market === 'ml')}
         ${marketCell('RL', g.rl_verdict, g.rl_ev, g.best_market === 'rl')}
-        ${marketCell('TOTAL', g.total_verdict, g.total_ev, g.best_market === 'total')}
-        ${marketCell('F5', g.f5_verdict, g.f5_ev, g.best_market === 'f5')}
+        ${marketCell('TOTAL', g.total_verdict, g.total_ev, g.best_market === 'total', g.total_line, g.proj_total)}
+        ${marketCell('F5', g.f5_verdict, g.f5_ev, g.best_market === 'f5', g.f5_line, g.f5_proj_total)}
       </div>`
     : `<div class="markets" style="opacity:.3">${['ML','RL','TOTAL','F5'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
 
@@ -390,7 +439,10 @@ function gameCardHTML(g) {
     </div>
     <div class="card-body">
       <div class="sit-flags">${sitFlagHTML(g.situations)}</div>
+      ${weatherHTML(g)}
+      ${oddsTableHTML(g)}
       ${marketsHTML}
+      ${pitcherEdgeHTML(g)}
       ${lineMoveHTML}
       ${notAnalyzed}
       ${analysisHTML}
