@@ -167,7 +167,10 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
       <p id="games-subtitle">Loading today's analysis...</p>
     </div>
     <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px">
+      <button class="btn" id="settle-btn" onclick="settleBets()">Settle pending →</button>
       <button class="btn" onclick="exportCSV()">Export CSV</button>
+    </div>
       <button class="btn" onclick="loadGames(true)" id="refresh-btn">Refresh →</button>
     </div>
   </div>
@@ -209,7 +212,10 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
       <h2>Bet tracker</h2>
       <p id="tracker-subtitle">Your logged bets</p>
     </div>
-    <button class="btn" onclick="exportCSV()">Export CSV</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn" id="settle-btn" onclick="settleBets()">Settle pending →</button>
+      <button class="btn" onclick="exportCSV()">Export CSV</button>
+    </div>
   </div>
   <div class="tracker-filters">
     <button class="filter-btn on" onclick="setTrackerFilter('all',this)">All</button>
@@ -1243,6 +1249,106 @@ async function saveEdit() {
       updateNavRecord();
     }
   } catch(e) { console.error('Edit error:', e); }
+}
+
+// ── MANUAL SETTLE ────────────────────────────────────────────────────────────
+async function settleBets() {
+  const btn = document.getElementById('settle-btn');
+  const pending = bets.filter(b => b.result === 'pending');
+  if (!pending.length) { alert('No pending bets to settle.'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Settling...';
+  let settled = 0;
+
+  for (const bet of pending) {
+    try {
+      // Get final score from MLB Stats API
+      const res = await fetch(
+        `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${bet.date}&gameType=R&hydrate=linescore`
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      const games = data.dates?.[0]?.games || [];
+
+      const awayName = (bet.matchup||'').split(' @ ')[0];
+      const homeName = (bet.matchup||'').split(' @ ')[1];
+
+      const game = games.find(g => {
+        const at = g.teams?.away?.team?.name || '';
+        const ht = g.teams?.home?.team?.name || '';
+        return (at.includes(awayName.split(' ').pop()) || awayName.includes(at.split(' ').pop())) &&
+               (ht.includes(homeName?.split(' ').pop()) || homeName?.includes(ht.split(' ').pop()));
+      });
+
+      if (!game || game.status?.abstractGameState !== 'Final') continue;
+
+      const awayScore = game.teams?.away?.score;
+      const homeScore = game.teams?.home?.score;
+      if (awayScore === undefined || homeScore === undefined) continue;
+
+      const totalScore = awayScore + homeScore;
+      const type = (bet.type || '').toLowerCase();
+      const betLine = parseFloat(bet.betLine) || 0;
+      let result = 'pending';
+
+      if (type.includes('total over') || (type.includes('over') && !type.includes('under'))) {
+        if (totalScore > betLine) result = 'win';
+        else if (totalScore < betLine) result = 'loss';
+        else result = 'push';
+      } else if (type.includes('total under') || type.includes('under')) {
+        if (totalScore < betLine) result = 'win';
+        else if (totalScore > betLine) result = 'loss';
+        else result = 'push';
+      } else if (type.includes('moneyline (away)') || type.includes('f5 moneyline (away)')) {
+        if (awayScore > homeScore) result = 'win';
+        else if (awayScore < homeScore) result = 'loss';
+        else result = 'push';
+      } else if (type.includes('moneyline (home)') || type.includes('f5 moneyline (home)')) {
+        if (homeScore > awayScore) result = 'win';
+        else if (homeScore < awayScore) result = 'loss';
+        else result = 'push';
+      } else if (type.includes('rl -1.5')) {
+        if (awayScore - homeScore > 1.5) result = 'win';
+        else result = 'loss';
+      } else if (type.includes('rl +1.5')) {
+        if (homeScore - awayScore > -1.5) result = 'win';
+        else result = 'loss';
+      }
+
+      if (result === 'pending') continue;
+
+      // Update Supabase
+      await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({
+          result,
+          away_score: awayScore,
+          home_score: homeScore,
+          settled_at: new Date().toISOString()
+        })
+      });
+
+      // Update local
+      bet.result = result;
+      bet.awayScore = awayScore;
+      bet.homeScore = homeScore;
+      settled++;
+    } catch(e) { console.error('Settle error:', e); }
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Settle pending →';
+  renderTracker();
+  updateNavRecord();
+  if (settled > 0) alert(`✓ Settled ${settled} bet${settled > 1 ? 's' : ''} automatically`);
+  else alert('No completed games found yet. Check back after games finish.');
 }
 
 function setTrackerFilter(f, btn) {
