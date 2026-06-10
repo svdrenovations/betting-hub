@@ -1038,7 +1038,7 @@ function openLog(id) {
 }
 function closeModal() { document.getElementById('log-modal').classList.remove('show'); pendingLog = null; }
 
-function saveBet() {
+async function saveBet() {
   if (!pendingLog) return;
   const g = pendingLog;
   const type = document.getElementById('log-type').value;
