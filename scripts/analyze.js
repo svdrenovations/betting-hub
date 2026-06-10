@@ -560,7 +560,18 @@ async function main() {
 
   const [games, f5Map] = await Promise.all([fetchOddsAPI(), fetchF5Lines()]);
   const today = new Date().toISOString().split('T')[0];
-  const todayGames = games.filter(g => g.commence_time.startsWith(today));
+  const now = new Date();
+  const todayGames = games.filter(g => {
+    if (!g.commence_time.startsWith(today)) return false;
+    const gameTime = new Date(g.commence_time);
+    const minutesSinceStart = (now - gameTime) / 60000;
+    // Skip games that started more than 5 minutes ago
+    if (minutesSinceStart > 5) {
+      console.log(`  Skipping ${g.away_team} @ ${g.home_team} — game already started`);
+      return false;
+    }
+    return true;
+  });
   console.log(`Today: ${todayGames.length} games\n`);
 
   for (const game of todayGames) {
