@@ -735,11 +735,28 @@ Return ONLY this JSON (no markdown):
   "totalLine": NUMBER,
   "projTotal": NUMBER,
   "totalBreakeven": "worst total line still +EV e.g. Over 9.0 or Under 8.5",
+  "totalJuiceSensitivity": {
+    "description": "max juice at each nearby line where bet still has +EV",
+    "lines": [
+      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
+      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
+      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
+      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
+      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER}
+    ]
+  },
   "f5": "BET AWAY|BET HOME|BET OVER|BET UNDER|LEAN AWAY|LEAN HOME|LEAN OVER|LEAN UNDER|SKIP",
   "f5EV": NUMBER,
   "f5Line": NUMBER,
   "f5ProjTotal": NUMBER,
   "f5Breakeven": "worst f5 line still +EV",
+  "f5JuiceSensitivity": {
+    "lines": [
+      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
+      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
+      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER}
+    ]
+  },
   "best": "ml|rl|total|f5",
   "bestPlay": "one sentence on the strongest play",
   "awayWinPct": NUMBER,
@@ -755,6 +772,12 @@ Return ONLY this JSON (no markdown):
   "factors": "2 sentences on stats, hot/cold streaks, and matchup",
   "risks": "1 sentence on biggest risk to the top play"
 }
+
+For juice sensitivity: for each half-point line near the projected total (projTotal ± 1.5), calculate:
+- The maximum American odds (juice) where the bet still has positive EV at that line
+- Example: if projTotal is 8.4 and current line is 7.5 -112, also show what max juice would be at 8.0, 8.5, 9.0 etc
+- maxJuice is the worst American odds still +EV — e.g. -118 means anything worse than -118 is a skip
+- ev is the estimated EV% at standard -110 juice for that line
 
 For breakeven lines: calculate the maximum juice/line where the bet still has positive EV based on your probability estimate. Example: if you estimate Away wins 54% of the time, the breakeven ML is -117 (anything worse than -117 is negative EV). For totals: if you project 9.8 runs and the line is 9.5, the breakeven is Under 10.5 — any total above 10.5 flips to negative EV.`;
 
@@ -856,6 +879,8 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       ml_home_prob: analysis.mlHomeProb,
       rl_breakeven: analysis.rlBreakeven,
       total_breakeven: analysis.totalBreakeven,
+      total_juice_sensitivity: analysis.totalJuiceSensitivity ? JSON.stringify(analysis.totalJuiceSensitivity) : null,
+      f5_juice_sensitivity: analysis.f5JuiceSensitivity ? JSON.stringify(analysis.f5JuiceSensitivity) : null,
       f5_breakeven: analysis.f5Breakeven,
       away_win_pct: analysis.awayWinPct,
       home_win_pct: analysis.homeWinPct,
