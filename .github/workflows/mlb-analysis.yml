@@ -1,0 +1,49 @@
+name: MLB Daily Analysis
+
+on:
+  schedule:
+    # 11am ET = 15:00 UTC
+    - cron: '0 15 * * *'
+    # 4pm ET = 20:00 UTC
+    - cron: '0 20 * * *'
+  # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      run_type:
+        description: 'Run type (11am or 4pm)'
+        required: false
+        default: 'manual'
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Determine run type
+        id: run-type
+        run: |
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" = "15" ]; then
+            echo "type=11am" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "20" ]; then
+            echo "type=4pm" >> $GITHUB_OUTPUT
+          else
+            echo "type=${{ github.event.inputs.run_type || 'manual' }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run MLB analysis
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          RUN_TYPE: ${{ steps.run-type.outputs.type }}
+        run: node scripts/analyze.js
