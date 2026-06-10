@@ -270,7 +270,12 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
 let games = [];
 let bets = JSON.parse(localStorage.getItem('mlb_bets_v2') || '[]');
-let currentDate = new Date();
+// Use local date to avoid UTC offset issues
+function getLocalDate() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+let currentDate = getLocalDate();
 let currentFilter = 'all';
 let trackerFilter = 'all';
 let pendingLog = null;
@@ -278,7 +283,12 @@ let expanded = {};
 
 function fmtDate(d) { return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}); }
 function fmtDateShort(d) { return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
-function isoDate(d) { return d.toISOString().split('T')[0]; }
+function isoDate(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return year + '-' + month + '-' + day;
+}
 
 function goPage(name, btn) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
@@ -341,12 +351,13 @@ function sitFlagHTML(sits) {
   return sits.map(f => { const info = map[f] || ['sf-none',f]; return `<span class="sit-flag ${info[0]}">${info[1]}</span>`; }).join('');
 }
 
-function marketCell(label, verdict, ev, isBest, line, projTotal) {
+function marketCell(label, verdict, ev, isBest, line, projTotal, breakeven) {
   const v = verdict || 'SKIP';
   const cls = v.startsWith('BET') ? 'mv-bet' : v.includes('LEAN') ? 'mv-lean' : v.includes('OVER') ? 'mv-over' : v.includes('UNDER') ? 'mv-under' : 'mv-skip';
   const evHtml = ev != null && ev !== 0 ? `<div class="ev-val ${ev >= 0 ? 'ev-pos' : 'ev-neg'}">${ev >= 0 ? '+' : ''}${parseFloat(ev).toFixed(1)}% EV</div>` : '';
   const lineHtml = line != null && projTotal != null && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>` : '';
-  return `<div class="market-cell${isBest ? ' best' : ''}"><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}</div>`;
+  const breakHtml = breakeven && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--amber);font-family:'DM Mono',monospace;margin-top:1px">max: ${breakeven}</div>` : '';
+  return `<div class="market-cell${isBest ? ' best' : ''}"><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}</div>`;
 }
 
 function edgeBadge(g) {
@@ -428,15 +439,39 @@ function pitcherEdgeHTML(g) {
 
 function weatherHTML(g) {
   if (!g.weather_summary) return '';
-  const isDome = g.weather_dome;
-  if (isDome) return '';
+  if (g.weather_dome) return '';
   const hasFlag = g.weather_flags && g.weather_flags.length > 0;
   const impact = g.weather_impact;
-  const impactColor = impact === 'over' ? 'var(--over)' : impact === 'under' ? 'var(--under)' : impact === 'significant' ? 'var(--amber)' : 'var(--muted)';
-  return `<div style="font-size:11px;font-family:'DM Mono',monospace;color:${hasFlag?'var(--amber)':'var(--muted)'};margin-bottom:8px;display:flex;align-items:center;gap:6px">
-    <span>${hasFlag ? '⚠' : '🌤'}</span>
-    <span>${g.weather_summary}</span>
-    ${impact && impact !== 'none' ? `<span style="color:${impactColor};font-weight:500">→ ${impact.toUpperCase()}</span>` : ''}
+
+  // Parse wind direction arrow and field direction from summary
+  const arrowMatch = g.weather_summary.match(/\((↑|↓|←|→)\s+([^)]+)\)/);
+  const windArrow = arrowMatch ? arrowMatch[1] : '';
+  const fieldDir = arrowMatch ? arrowMatch[2] : '';
+
+  // Color based on impact
+  const impactColor = impact && impact.includes('over') ? 'var(--over)' :
+                      impact && impact.includes('under') ? 'var(--under)' :
+                      'var(--muted)';
+
+  const arrowSize = g.weather_wind_speed >= 15 ? '20px' : '16px';
+  const arrowColor = impact && impact.includes('over') ? 'var(--over)' :
+                     impact && impact.includes('under') ? 'var(--under)' :
+                     'var(--muted)';
+
+  const windDisplay = windArrow ? `
+    <span style="font-size:${arrowSize};color:${arrowColor};font-weight:bold">${windArrow}</span>
+    <span style="color:${arrowColor};font-weight:500">${fieldDir}</span>
+    <span style="color:var(--muted)">${g.weather_wind_speed}mph</span>` : 
+    `<span style="color:var(--muted)">${g.weather_wind_speed||'?'}mph</span>`;
+
+  return `<div style="font-size:11px;font-family:'DM Mono',monospace;margin-bottom:8px">
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <span>${hasFlag ? '⚠️' : '🌤️'}</span>
+      <span style="color:var(--muted)">${g.weather_temp||'?'}°F, ${g.weather_summary.split(',')[1]?.trim().split(',')[0]||''}</span>
+      ${windDisplay}
+      ${impact && impact !== 'none' && impact !== 'neutral' ? `<span style="color:${impactColor};font-weight:500;font-size:10px">→ ${impact.toUpperCase()}</span>` : ''}
+    </div>
+    ${hasFlag ? `<div style="color:var(--amber);font-size:10px;margin-top:2px">${(g.weather_flags||[]).join(' · ')}</div>` : ''}
   </div>`;
 }
 
@@ -472,10 +507,10 @@ function gameCardHTML(g) {
 
   const marketsHTML = g.analyzed
     ? `<div class="markets">
-        ${marketCell('ML', g.ml_verdict, g.ml_ev, g.best_market === 'ml')}
-        ${marketCell('RL', g.rl_verdict, g.rl_ev, g.best_market === 'rl')}
-        ${marketCell('TOTAL', g.total_verdict, g.total_ev, g.best_market === 'total', g.total_line, g.proj_total)}
-        ${marketCell('F5', g.f5_verdict, g.f5_ev, g.best_market === 'f5', g.f5_line, g.f5_proj_total)}
+        ${marketCell('ML', g.ml_verdict, g.ml_ev, g.best_market === 'ml', null, null, g.ml_breakeven)}
+        ${marketCell('RL', g.rl_verdict, g.rl_ev, g.best_market === 'rl', null, null, g.rl_breakeven)}
+        ${marketCell('TOTAL', g.total_verdict, g.total_ev, g.best_market === 'total', g.total_line, g.proj_total, g.total_breakeven)}
+        ${marketCell('F5', g.f5_verdict, g.f5_ev, g.best_market === 'f5', g.f5_line, g.f5_proj_total, g.f5_breakeven)}
       </div>`
     : `<div class="markets" style="opacity:.3">${['ML','RL','TOTAL','F5'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
 
@@ -502,7 +537,10 @@ function gameCardHTML(g) {
           · Total ${g.total||'?'}
         </div>
       </div>
-      <div class="card-time">${time}<br>${edgeBadge(g)}</div>
+      <div class="card-time" style="text-align:right">
+        ${time}<br>${edgeBadge(g)}
+        ${g.ml_away_prob && g.ml_home_prob ? `<div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);margin-top:3px">${Math.round(g.ml_away_prob)}% / ${Math.round(g.ml_home_prob)}%</div>` : ''}
+      </div>
     </div>
     <div class="card-body">
       <div class="sit-flags">${sitFlagHTML(g.situations)}</div>
@@ -573,7 +611,7 @@ function shiftDate(n) {
   expanded = {};
   loadGames();
 }
-function setToday() { currentDate = new Date(); expanded = {}; loadGames(); }
+function setToday() { currentDate = getLocalDate(); expanded = {}; loadGames(); }
 
 function openLog(id) {
   const g = games.find(x => x.id === id);
