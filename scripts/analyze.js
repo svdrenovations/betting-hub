@@ -302,8 +302,7 @@ async function fetchStatcast(pitcherName, pitcherId) {
     });
     if (!res.ok) return null;
     const csv = await res.text();
-    const lines = csv.trim().split('
-');
+    const lines = csv.trim().split('\n');
     if (lines.length < 2) return null;
 
     const headers = lines[0].split(',');
