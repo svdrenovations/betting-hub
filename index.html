@@ -358,6 +358,11 @@ const SUPABASE_URL = 'https://crfgkpqkmqfvyyifmprj.supabase.co';
 const ODDS_API_KEY = '3a041de5ae728cd0259c26d9d846e6ac';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNyZmdrcHFrbXFmdnl5aWZtcHJqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEwMzg5OTYsImV4cCI6MjA5NjYxNDk5Nn0.FH9ViDkYdnu_iR2s6kDAglBMb6waJljcaMTeqb8J8jY';
 
+// Standard deviation of MLB game total runs — converts a projected total into a
+// win probability. MUST match TOTAL_SD in analyze.js or the card and modal will
+// disagree. Tune from your own settled-bet results during calibration.
+const TOTAL_SD = 4.5;
+
 let games = [];
 let bets = [];
 // Use local date to avoid UTC offset issues
@@ -838,12 +843,12 @@ function statcastHTML(g) {
 
 function juiceSensitivityHTML(g) {
   if (!g.analyzed) return '';
-  
+
   // Parse total juice sensitivity
   let totalData = null, f5Data = null;
   try { if (g.total_juice_sensitivity) totalData = JSON.parse(g.total_juice_sensitivity); } catch(e) {}
   try { if (g.f5_juice_sensitivity) f5Data = JSON.parse(g.f5_juice_sensitivity); } catch(e) {}
-  
+
   if (!totalData?.lines?.length && !f5Data?.lines?.length) return '';
 
   // Only show if there's a positive EV total or F5 play
@@ -852,7 +857,7 @@ function juiceSensitivityHTML(g) {
   if (!hasTotalBet && !hasF5Bet) return '';
 
   const id = 'juice-' + g.id;
-  
+
   function buildRows(lines) {
     if (!lines?.length) return '';
     return lines.map(l => {
@@ -870,7 +875,7 @@ function juiceSensitivityHTML(g) {
   }
 
   return `<div style="margin-bottom:8px">
-    <button onclick="document.getElementById('${id}').style.display=document.getElementById('${id}').style.display==='none'?'block':'none'" 
+    <button onclick="document.getElementById('${id}').style.display=document.getElementById('${id}').style.display==='none'?'block':'none'"
       style="font-size:10px;font-family:DM Mono,monospace;color:var(--muted);background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;cursor:pointer;width:100%">
       line shopping guide ▾
     </button>
@@ -930,7 +935,7 @@ function weatherHTML(g) {
   const windDisplay = windArrow ? `
     <span style="font-size:${arrowSize};color:${arrowColor};font-weight:bold">${windArrow}</span>
     <span style="color:${arrowColor};font-weight:500">${fieldDir}</span>
-    <span style="color:var(--muted)">${g.weather_wind_speed}mph</span>` : 
+    <span style="color:var(--muted)">${g.weather_wind_speed}mph</span>` :
     `<span style="color:var(--muted)">${g.weather_wind_speed||'?'}mph</span>`;
 
   return `<div style="font-size:11px;font-family:DM Mono,monospace;margin-bottom:8px">
@@ -1135,21 +1140,41 @@ function quickLog(gameId, market, verdict, line, breakeven) {
 function calcLiveEV() {
   const odds = parseFloat(document.getElementById('log-odds').value);
   const type = document.getElementById('log-type').value.toLowerCase();
-  if (!pendingLog || isNaN(odds)) {
-    document.getElementById('log-ev-display').textContent = '';
-    return;
-  }
-  const g = pendingLog;
-  const isAway = type.includes('away') || type.includes('-1.5') || type.includes('over');
-  const prob = type.includes('over') || type.includes('under')
-    ? (type.includes('over') ? (g.away_win_pct + g.home_win_pct > 0 ? 52 : 52) : 48) / 100
-    : isAway ? (g.ml_away_prob||50)/100 : (g.ml_home_prob||50)/100;
-  const payout = odds > 0 ? odds/100 : 100/Math.abs(odds);
-  const ev = ((prob * payout) - (1-prob)) * 100;
+  const betLine = parseFloat(document.getElementById('log-line').value);
   const el = document.getElementById('log-ev-display');
+  if (!pendingLog || isNaN(odds)) { if(el) el.textContent = ''; return; }
+  const g = pendingLog;
+  let prob = null;
+
+  if (type.includes('over')) {
+    const proj = parseFloat(g.proj_total) || parseFloat(g.f5_proj_total) || 0;
+    const line = !isNaN(betLine) ? betLine : parseFloat(g.total_line) || 7.5;
+    if (proj > 0) {
+      const z = (line - proj) / TOTAL_SD;
+      prob = 1 / (1 + Math.exp(1.7 * z));
+    } else prob = 0.52;
+  } else if (type.includes('under')) {
+    const proj = parseFloat(g.proj_total) || parseFloat(g.f5_proj_total) || 0;
+    const line = !isNaN(betLine) ? betLine : parseFloat(g.total_line) || 7.5;
+    if (proj > 0) {
+      const z = (line - proj) / TOTAL_SD;
+      prob = 1 - (1 / (1 + Math.exp(1.7 * z)));
+    } else prob = 0.48;
+  } else if (type.includes('moneyline (away)') || type.includes('f5 moneyline (away)')) {
+    prob = (g.ml_away_prob || g.away_win_pct || 50) / 100;
+  } else if (type.includes('moneyline (home)') || type.includes('f5 moneyline (home)')) {
+    prob = (g.ml_home_prob || g.home_win_pct || 50) / 100;
+  } else if (type.includes('rl -1.5')) {
+    prob = Math.max(0.1, ((g.ml_away_prob || 50) / 100) - 0.08);
+  } else if (type.includes('rl +1.5')) {
+    prob = Math.min(0.9, ((g.ml_home_prob || 50) / 100) + 0.08);
+  } else prob = 0.50;
+
+  const payout = odds > 0 ? odds / 100 : 100 / Math.abs(odds);
+  const ev = ((prob * payout) - (1 - prob)) * 100;
   if (el) {
-    el.textContent = `EV: ${ev >= 0 ? '+' : ''}${ev.toFixed(1)}%`;
-    el.style.color = ev >= 0 ? 'var(--green)' : 'var(--red)';
+    el.textContent = 'EV: ' + (ev >= 0 ? '+' : '') + ev.toFixed(1) + '% (win prob: ' + Math.round(prob*100) + '%)';
+    el.style.color = ev >= 2 ? 'var(--green)' : ev >= 0 ? 'var(--amber)' : 'var(--red)';
   }
 }
 
