@@ -445,6 +445,69 @@ function statcastHTML(g) {
   </table>`;
 }
 
+function juiceSensitivityHTML(g) {
+  if (!g.analyzed) return '';
+  
+  // Parse total juice sensitivity
+  let totalData = null, f5Data = null;
+  try { if (g.total_juice_sensitivity) totalData = JSON.parse(g.total_juice_sensitivity); } catch(e) {}
+  try { if (g.f5_juice_sensitivity) f5Data = JSON.parse(g.f5_juice_sensitivity); } catch(e) {}
+  
+  if (!totalData?.lines?.length && !f5Data?.lines?.length) return '';
+
+  // Only show if there's a positive EV total or F5 play
+  const hasTotalBet = g.total_verdict && (g.total_verdict.startsWith('BET') || g.total_verdict.startsWith('LEAN'));
+  const hasF5Bet = g.f5_verdict && (g.f5_verdict.includes('OVER') || g.f5_verdict.includes('UNDER'));
+  if (!hasTotalBet && !hasF5Bet) return '';
+
+  const id = 'juice-' + g.id;
+  
+  function buildRows(lines) {
+    if (!lines?.length) return '';
+    return lines.map(l => {
+      const juice = l.maxJuice;
+      const ev = parseFloat(l.ev || 0);
+      const juiceColor = juice >= -110 ? 'var(--green)' : juice >= -118 ? 'var(--amber)' : 'var(--muted)';
+      const evColor = ev >= 4 ? 'var(--green)' : ev >= 2 ? 'var(--amber)' : 'var(--muted)';
+      const juiceStr = juice > 0 ? '+' + juice : juice;
+      return `<tr>
+        <td style="padding:4px 8px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text)">${l.direction} ${l.line}</td>
+        <td style="padding:4px 8px;font-family:'DM Mono',monospace;font-size:11px;color:${juiceColor};font-weight:500">max: ${juiceStr}</td>
+        <td style="padding:4px 8px;font-family:'DM Mono',monospace;font-size:11px;color:${evColor}">${ev >= 0 ? '+' : ''}${ev.toFixed(1)}% EV</td>
+      </tr>`;
+    }).join('');
+  }
+
+  return `<div style="margin-bottom:8px">
+    <button onclick="document.getElementById('${id}').style.display=document.getElementById('${id}').style.display==='none'?'block':'none'" 
+      style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);background:var(--s2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;cursor:pointer;width:100%">
+      line shopping guide ▾
+    </button>
+    <div id="${id}" style="display:none;background:var(--s2);border:1px solid var(--border);border-radius:0 0 6px 6px;overflow:hidden">
+      ${totalData?.lines?.length && hasTotalBet ? `
+        <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);padding:6px 8px 2px;text-transform:uppercase;letter-spacing:.05em">Full game total</div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Line</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Max juice</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">EV @-110</th>
+          </tr></thead>
+          <tbody>${buildRows(totalData.lines)}</tbody>
+        </table>` : ''}
+      ${f5Data?.lines?.length && hasF5Bet ? `
+        <div style="font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);padding:6px 8px 2px;text-transform:uppercase;letter-spacing:.05em;border-top:1px solid var(--border)">F5 total</div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Line</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">Max juice</th>
+            <th style="padding:3px 8px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-align:left;border-bottom:1px solid var(--border)">EV @-110</th>
+          </tr></thead>
+          <tbody>${buildRows(f5Data.lines)}</tbody>
+        </table>` : ''}
+    </div>
+  </div>`;
+}
+
 function pitcherEdgeHTML(g) {
   if (!g.pitcher_edge || g.pitcher_edge === 'EVEN' || !g.analyzed) return '';
   const color = g.pitcher_edge === g.away_team ? 'var(--blue)' : 'var(--purple)';
@@ -563,6 +626,7 @@ function gameCardHTML(g) {
       ${oddsTableHTML(g)}
       ${marketsHTML}
       ${statcastHTML(g)}
+      ${juiceSensitivityHTML(g)}
       ${pitcherEdgeHTML(g)}
       ${lineMoveHTML}
       ${notAnalyzed}
