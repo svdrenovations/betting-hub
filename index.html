@@ -255,7 +255,11 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     </div>
     <div class="form-row">
       <div class="form-field"><label>Units risked</label><input id="log-units" type="number" min="0.5" max="10" step="0.5" placeholder="1.0"></div>
+      <div class="form-field"><label>Total / Line</label><input id="log-line" placeholder="e.g. 7.5, -1.5"></div>
+    </div>
+    <div class="form-row">
       <div class="form-field"><label>Notes</label><input id="log-notes" placeholder="optional"></div>
+      <div class="form-field"><label>Max juice used</label><input id="log-max-juice" placeholder="e.g. -112"></div>
     </div>
     <div class="modal-actions">
       <button class="btn-save" onclick="saveBet()">Save bet</button>
@@ -717,6 +721,8 @@ function saveBet() {
   const odds = document.getElementById('log-odds').value;
   const units = parseFloat(document.getElementById('log-units').value) || 1;
   const notes = document.getElementById('log-notes').value;
+  const betLine = document.getElementById('log-line').value;
+  const maxJuice = document.getElementById('log-max-juice').value;
   const isAway = type.toLowerCase().includes('away');
   const prob = isAway ? (g.away_win_pct||50)/100 : type.toLowerCase().includes('home') ? (g.home_win_pct||50)/100 : null;
   const n = parseFloat(odds);
@@ -726,6 +732,8 @@ function saveBet() {
     matchup: `${g.away_team} @ ${g.home_team}`,
     awayPitcher: g.away_pitcher, homePitcher: g.home_pitcher,
     type, odds: odds||'?', units, notes, ev,
+    betLine: betLine||'',
+    maxJuice: maxJuice||'',
     situations: (g.situations||[]).join(','),
     confidence: g.confidence||'', result: 'pending'
   };
@@ -736,6 +744,8 @@ function saveBet() {
   document.getElementById('log-odds').value = '';
   document.getElementById('log-units').value = '';
   document.getElementById('log-notes').value = '';
+  document.getElementById('log-line').value = '';
+  document.getElementById('log-max-juice').value = '';
 }
 
 function setResult(id, r) {
@@ -759,13 +769,13 @@ function renderTracker() {
   if (!filtered.length) { el.innerHTML = `<div class="empty-state"><div class="empty-title">No bets ${trackerFilter!=='all'?'matching filter':'yet'}</div></div>`; return; }
   el.innerHTML = `<table class="t-table"><thead><tr>
     <th style="width:70px">Date</th><th>Matchup</th><th>Type</th>
-    <th style="width:52px">Odds</th><th style="width:46px">Units</th>
+    <th style="width:52px">Odds</th><th style="width:46px">Line</th><th style="width:46px">Units</th>
     <th style="width:58px">EV%</th><th style="width:52px">Conf</th>
     <th>Situation</th><th>Result</th><th style="width:28px"></th>
   </tr></thead><tbody>${filtered.map(b => {
     const btns = ['win','loss','push','pending'].map(r => `<button onclick="setResult(${b.id},'${r}')" class="${b.result===r?'on':''}">${r}</button>`).join('');
     const ev = b.ev!=null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
-    return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px">${b.matchup}</td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td><td><div class="rsel">${btns}</div></td><td><button onclick="deleteBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--dim);font-size:17px">×</button></td></tr>`;
+    return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px">${b.matchup}</td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td><td><div class="rsel">${btns}</div></td><td><button onclick="deleteBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--dim);font-size:17px">×</button></td></tr>`;
   }).join('')}</tbody></table>`;
 }
 
