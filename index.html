@@ -282,9 +282,11 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
       </div>
     </div>
     <div class="form-row">
-      <div class="form-field"><label>Odds</label><input id="log-odds" placeholder="-115"></div>
+      <div class="form-field"><label>Odds</label><input id="log-odds" placeholder="-115" oninput="calcLiveEV()"></div>
       <div class="form-field"><label>Spread / Total</label><input id="log-line" placeholder="e.g. 7.5, -1.5"></div>
     </div>
+    <div style="font-size:13px;font-weight:600;font-family:DM Mono,monospace;margin-bottom:8px;min-height:20px;padding:0 4px" id="log-ev-display"></div>
+    <input type="hidden" id="log-sit">
     <div class="form-row">
       <div class="form-field"><label>Units risked</label><input id="log-units" type="number" min="0.5" max="10" step="0.5" placeholder="1.0"></div>
       <div class="form-field"><label>Max juice</label><input id="log-max-juice" placeholder="e.g. -112"></div>
@@ -754,13 +756,14 @@ function sitFlagHTML(sits) {
   }).join('');
 }
 
-function marketCell(label, verdict, ev, isBest, line, projTotal, breakeven) {
+function marketCell(label, verdict, ev, isBest, line, projTotal, breakeven, gId) {
   const v = verdict || 'SKIP';
   const cls = v.startsWith('BET') ? 'mv-bet' : v.includes('LEAN') ? 'mv-lean' : v.includes('OVER') ? 'mv-over' : v.includes('UNDER') ? 'mv-under' : 'mv-skip';
   const evHtml = ev != null && ev !== 0 ? `<div class="ev-val ${ev >= 0 ? 'ev-pos' : 'ev-neg'}">${ev >= 0 ? '+' : ''}${parseFloat(ev).toFixed(1)}% EV</div>` : '';
   const lineHtml = line != null && projTotal != null && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--muted);font-family:DM Mono,monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>` : '';
   const breakHtml = breakeven && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>` : '';
-  return `<div class="market-cell${isBest ? ' best' : ''}"><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}</div>`;
+  const clickable = v !== 'SKIP' && ev > 0 ? `style="cursor:pointer" onclick="quickLog('${gId}','${label}','${v}','${line||''}','${breakeven||''}')"` : '';
+  return `<div class="market-cell${isBest ? ' best' : ''}" ${clickable}><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}</div>`;
 }
 
 function edgeBadge(g) {
@@ -973,10 +976,10 @@ function gameCardHTML(g) {
 
   const marketsHTML = g.analyzed
     ? `<div class="markets">
-        ${marketCell('ML', g.ml_verdict, g.ml_ev, g.best_market === 'ml', null, null, g.ml_breakeven)}
-        ${marketCell('RL', g.rl_verdict, g.rl_ev, g.best_market === 'rl', null, null, g.rl_breakeven)}
-        ${marketCell('TOTAL', g.total_verdict, g.total_ev, g.best_market === 'total', g.total_line, g.proj_total, g.total_breakeven)}
-        ${marketCell('F5', g.f5_verdict, g.f5_ev, g.best_market === 'f5', g.f5_line, g.f5_proj_total, g.f5_breakeven)}
+        ${marketCell('ML', g.ml_verdict, g.ml_ev, g.best_market === 'ml', null, null, g.ml_breakeven, g.id)}
+        ${marketCell('RL', g.rl_verdict, g.rl_ev, g.best_market === 'rl', null, null, g.rl_breakeven, g.id)}
+        ${marketCell('TOTAL', g.total_verdict, g.total_ev, g.best_market === 'total', g.total_line, g.proj_total, g.total_breakeven, g.id)}
+        ${marketCell('F5', g.f5_verdict, g.f5_ev, g.best_market === 'f5', g.f5_line, g.f5_proj_total, g.f5_breakeven, g.id)}
       </div>`
     : `<div class="markets" style="opacity:.3">${['ML','RL','TOTAL','F5'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
 
@@ -1082,6 +1085,74 @@ function shiftDate(n) {
 }
 function setToday() { currentDate = getLocalDate(); expanded = {}; loadGames(); }
 
+function quickLog(gameId, market, verdict, line, breakeven) {
+  const g = games.find(x => x.id === gameId);
+  if (!g) return;
+  pendingLog = g;
+  document.getElementById('log-matchup').value = `${g.away_team} @ ${g.home_team}`;
+  document.getElementById('log-date').value = g.game_date;
+
+  // Pre-select bet type based on market and verdict
+  const lt = document.getElementById('log-type');
+  const v = verdict.toUpperCase();
+  if (market === 'ML') {
+    lt.value = v.includes('AWAY') ? 'Moneyline (away)' : 'Moneyline (home)';
+  } else if (market === 'RL') {
+    lt.value = v.includes('AWAY') ? 'RL -1.5' : 'RL +1.5';
+  } else if (market === 'TOTAL') {
+    lt.value = v.includes('OVER') ? 'Game total over' : 'Game total under';
+  } else if (market === 'F5') {
+    if (v.includes('AWAY')) lt.value = 'F5 moneyline (away)';
+    else if (v.includes('HOME')) lt.value = 'F5 moneyline (home)';
+    else if (v.includes('OVER')) lt.value = 'F5 total over';
+    else lt.value = 'F5 total under';
+  }
+
+  // Pre-fill line
+  if (line) document.getElementById('log-line').value = line;
+  if (breakeven) document.getElementById('log-max-juice').value = breakeven;
+
+  // Pre-fill odds from odds table
+  if (market === 'ML') {
+    const odds = v.includes('AWAY') ? g.away_ml : g.home_ml;
+    if (odds) document.getElementById('log-odds').value = odds;
+  } else if (market === 'RL') {
+    const odds = v.includes('AWAY') ? g.away_rl_odds : g.home_rl_odds;
+    if (odds) document.getElementById('log-odds').value = odds;
+  } else if (market === 'TOTAL') {
+    const odds = v.includes('OVER') ? g.over_odds : g.under_odds;
+    if (odds) document.getElementById('log-odds').value = odds;
+  } else if (market === 'F5') {
+    const odds = v.includes('OVER') ? g.f5_over_odds : v.includes('UNDER') ? g.f5_under_odds : v.includes('AWAY') ? g.f5_away_ml : g.f5_home_ml;
+    if (odds) document.getElementById('log-odds').value = odds;
+  }
+
+  document.getElementById('log-sit').value = (g.situations||[]).join(', ') || 'none';
+  document.getElementById('log-modal').classList.add('show');
+  calcLiveEV();
+}
+
+function calcLiveEV() {
+  const odds = parseFloat(document.getElementById('log-odds').value);
+  const type = document.getElementById('log-type').value.toLowerCase();
+  if (!pendingLog || isNaN(odds)) {
+    document.getElementById('log-ev-display').textContent = '';
+    return;
+  }
+  const g = pendingLog;
+  const isAway = type.includes('away') || type.includes('-1.5') || type.includes('over');
+  const prob = type.includes('over') || type.includes('under')
+    ? (type.includes('over') ? (g.away_win_pct + g.home_win_pct > 0 ? 52 : 52) : 48) / 100
+    : isAway ? (g.ml_away_prob||50)/100 : (g.ml_home_prob||50)/100;
+  const payout = odds > 0 ? odds/100 : 100/Math.abs(odds);
+  const ev = ((prob * payout) - (1-prob)) * 100;
+  const el = document.getElementById('log-ev-display');
+  if (el) {
+    el.textContent = `EV: ${ev >= 0 ? '+' : ''}${ev.toFixed(1)}%`;
+    el.style.color = ev >= 0 ? 'var(--green)' : 'var(--red)';
+  }
+}
+
 function openLog(id) {
   const g = games.find(x => x.id === id);
   if (!g) return;
@@ -1110,8 +1181,12 @@ async function saveBet() {
   const betLine = document.getElementById('log-line').value;
   const maxJuice = document.getElementById('log-max-juice').value;
   const book = document.getElementById('log-book').value;
-  const isAway = type.toLowerCase().includes('away');
-  const prob = isAway ? (g.away_win_pct||50)/100 : type.toLowerCase().includes('home') ? (g.home_win_pct||50)/100 : null;
+  const isAway = type.toLowerCase().includes('away') || type.toLowerCase().includes('-1.5') || type.toLowerCase().includes('over');
+  const awayProb = (g.ml_away_prob||g.away_win_pct||50)/100;
+  const homeProb = (g.ml_home_prob||g.home_win_pct||50)/100;
+  const prob = type.toLowerCase().includes('over') || type.toLowerCase().includes('under')
+    ? (type.toLowerCase().includes('over') ? awayProb : homeProb)
+    : isAway ? awayProb : homeProb;
   const n = parseFloat(odds);
   const ev = !isNaN(n) && prob ? (((prob*(n>0?n/100:100/(-n)))-(1-prob))*100).toFixed(1) : null;
   const bet = {
