@@ -21,6 +21,13 @@ const TOTAL_SD = 5.5;
 // reads the stored probabilities, so no need to mirror it in index.html.
 const MARGIN_SD = 4.0;
 
+// Overall strength of the day-game shadow / scoring-distribution effect. Small and
+// conservative on purpose — this is an APPROXIMATION (we can't ray-trace the shadow
+// line without per-park structure heights), so it should nudge, not swing. Raise it
+// only if a backtest of day-game inning splits (e.g. Oracle F5 vs innings 6-9)
+// shows a real, unpriced front-load.
+const SHADOW_STRENGTH = 0.35;
+
 // MLB park coordinates and orientation
 // homeplateFacing = compass direction home plate faces (degrees)
 // Wind blowing FROM opposite direction = blowing OUT to CF
@@ -56,6 +63,120 @@ const PARK_COORDS = {
   'Toronto Blue Jays': { lat: 43.6414, lon: -79.3894, dome: true },
   'Washington Nationals': { lat: 38.8730, lon: -77.0074, dome: false , homeplateFacing: 80}
 };
+
+// Per-park factors — starting estimates, all meant to be TUNED from your own results.
+//   runFactor:   run-environment multiplier (1.0 neutral; >1 hitter-friendly)
+//   windFactor:  how much the park actually plays the wind (Wrigley high, shielded low; 0 = roofed)
+//   shadowSusc:  0-1 day-game shadow susceptibility (Oracle/Dodger high)
+//   retractable: roof that can be open or closed game-to-game (vs fixed dome)
+const PARK_FACTORS = {
+  'Arizona Diamondbacks': { runFactor: 1.03, windFactor: 0,    shadowSusc: 0,    retractable: true  },
+  'Atlanta Braves':       { runFactor: 1.02, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
+  'Baltimore Orioles':    { runFactor: 0.99, windFactor: 1.05, shadowSusc: 0.40, retractable: false },
+  'Boston Red Sox':       { runFactor: 1.04, windFactor: 1.0,  shadowSusc: 0.45, retractable: false },
+  'Chicago Cubs':         { runFactor: 1.00, windFactor: 1.5,  shadowSusc: 0.50, retractable: false },
+  'Chicago White Sox':    { runFactor: 1.01, windFactor: 1.1,  shadowSusc: 0.40, retractable: false },
+  'Cincinnati Reds':      { runFactor: 1.06, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
+  'Cleveland Guardians':  { runFactor: 0.98, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
+  'Colorado Rockies':     { runFactor: 1.15, windFactor: 1.1,  shadowSusc: 0.45, retractable: false },
+  'Detroit Tigers':       { runFactor: 0.97, windFactor: 0.9,  shadowSusc: 0.40, retractable: false },
+  'Houston Astros':       { runFactor: 1.00, windFactor: 0,    shadowSusc: 0,    retractable: true  },
+  'Kansas City Royals':   { runFactor: 0.99, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
+  'Los Angeles Angels':   { runFactor: 0.98, windFactor: 0.95, shadowSusc: 0.40, retractable: false },
+  'Los Angeles Dodgers':  { runFactor: 0.99, windFactor: 0.95, shadowSusc: 0.60, retractable: false },
+  'Miami Marlins':        { runFactor: 0.97, windFactor: 0,    shadowSusc: 0,    retractable: true  },
+  'Milwaukee Brewers':    { runFactor: 1.00, windFactor: 0,    shadowSusc: 0,    retractable: true  },
+  'Minnesota Twins':      { runFactor: 0.99, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
+  'New York Mets':        { runFactor: 0.96, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
+  'New York Yankees':     { runFactor: 1.03, windFactor: 1.1,  shadowSusc: 0.45, retractable: false },
+  'Oakland Athletics':    { runFactor: 0.98, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
+  'Philadelphia Phillies':{ runFactor: 1.03, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
+  'Pittsburgh Pirates':   { runFactor: 0.97, windFactor: 0.95, shadowSusc: 0.40, retractable: false },
+  'San Diego Padres':     { runFactor: 0.94, windFactor: 0.95, shadowSusc: 0.45, retractable: false },
+  'San Francisco Giants': { runFactor: 0.92, windFactor: 1.15, shadowSusc: 0.80, retractable: false },
+  'Seattle Mariners':     { runFactor: 0.94, windFactor: 0,    shadowSusc: 0,    retractable: true  },
+  'St. Louis Cardinals':  { runFactor: 0.99, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
+  'Tampa Bay Rays':       { runFactor: 0.97, windFactor: 0,    shadowSusc: 0,    retractable: false },
+  'Texas Rangers':        { runFactor: 1.00, windFactor: 0,    shadowSusc: 0,    retractable: true  },
+  'Toronto Blue Jays':    { runFactor: 1.00, windFactor: 0,    shadowSusc: 0,    retractable: true  },
+  'Washington Nationals': { runFactor: 1.00, windFactor: 1.0,  shadowSusc: 0.40, retractable: false }
+};
+
+function lookupCoords(team) {
+  let park = PARK_COORDS[team];
+  if (!park) {
+    const key = Object.keys(PARK_COORDS).find(k => k.includes(team.split(' ').pop()) || team.includes(k.split(' ').pop()));
+    if (key) park = PARK_COORDS[key];
+  }
+  return park || null;
+}
+
+function getParkFactors(team) {
+  let f = PARK_FACTORS[team];
+  if (!f) {
+    const key = Object.keys(PARK_FACTORS).find(k => k.includes(team.split(' ').pop()) || team.includes(k.split(' ').pop()));
+    if (key) f = PARK_FACTORS[key];
+  }
+  return f || { runFactor: 1.0, windFactor: 1.0, shadowSusc: 0.4, retractable: false };
+}
+
+// Sun elevation + azimuth (degrees) for a lat/lon at a given UTC Date. NOAA-style approximation.
+function solarPosition(lat, lon, date) {
+  const rad = Math.PI / 180, deg = 180 / Math.PI;
+  const jd = date.getTime() / 86400000 + 2440587.5;
+  const n = jd - 2451545.0;
+  const L = (((280.460 + 0.9856474 * n) % 360) + 360) % 360;
+  const g = ((((357.528 + 0.9856003 * n) % 360) + 360) % 360) * rad;
+  const lambda = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+  const epsilon = (23.439 - 0.0000004 * n) * rad;
+  const decl = Math.asin(Math.sin(epsilon) * Math.sin(lambda));
+  const RA = Math.atan2(Math.cos(epsilon) * Math.sin(lambda), Math.cos(lambda));
+  const gmst = (((280.46061837 + 360.98564736629 * n) % 360) + 360) % 360;
+  const lst = (gmst + lon) * rad;
+  const ha = lst - RA;
+  const latR = lat * rad;
+  const elevation = Math.asin(Math.sin(latR) * Math.sin(decl) + Math.cos(latR) * Math.cos(decl) * Math.cos(ha)) * deg;
+  let az = Math.atan2(-Math.sin(ha), Math.tan(decl) * Math.cos(latR) - Math.sin(latR) * Math.cos(ha)) * deg;
+  az = (az + 360) % 360;
+  return { elevation, azimuth: az };
+}
+
+// Day-game shadow / scoring-distribution profile. Returns a SMALL, tunable front-load:
+// early innings slightly up (high sun, warm, no shadow line), mid-late innings down
+// (shadow transition + cooling). APPROXIMATE — magnitude = SHADOW_STRENGTH x park
+// susceptibility x how far the sun falls. Tune from a backtest, do not trust as-is.
+function shadowProfile(homeTeam, gameTime) {
+  try {
+    const park = lookupCoords(homeTeam);
+    const pf = getParkFactors(homeTeam);
+    if (!park || park.dome) return null;          // roofed -> no shadows
+    const susc = pf.shadowSusc || 0;
+    if (susc <= 0) return null;
+    const start = new Date(gameTime);
+    const sun0 = solarPosition(park.lat, park.lon, start);
+    if (sun0.elevation < 25) return null;         // evening start / sun too low -> no clean day-game front-load
+    const sun5 = solarPosition(park.lat, park.lon, new Date(start.getTime() + 90 * 60000));  // ~inning 5
+    const sun8 = solarPosition(park.lat, park.lon, new Date(start.getTime() + 165 * 60000)); // ~inning 8
+    if (sun8.elevation < 10) return null;         // sun setting / under lights by late innings -> no differential
+    // Differential is worst when the LATE sun sits in the long-forward-shadow band (~15-45 deg).
+    const lateEl = sun8.elevation;
+    let band;
+    if (lateEl >= 15 && lateEl <= 45) band = 1;
+    else if (lateEl < 15) band = 0.4;
+    else if (lateEl <= 60) band = 0.5;
+    else band = 0.2;
+    const strength = SHADOW_STRENGTH * susc * band;
+    if (strength < 0.02) return null;
+    const earlyRuns = +(strength * 0.6).toFixed(2);
+    const lateRuns = -+(strength * 0.9).toFixed(2);
+    return {
+      isDay: true,
+      sun: { start: +sun0.elevation.toFixed(0), mid: +sun5.elevation.toFixed(0), late: +sun8.elevation.toFixed(0) },
+      earlyRuns, lateRuns,
+      note: `Day game, sun ${sun0.elevation.toFixed(0)}deg->${sun8.elevation.toFixed(0)}deg (park shadow susc ${susc}). Mild front-load: F5 ~+${earlyRuns} run, innings 6-9 ~${lateRuns} run. APPROXIMATE — tune from backtest.`
+    };
+  } catch(e) { return null; }
+}
 
 /* =============================================================================
    EV / BREAKEVEN / JUICE — SINGLE SOURCE OF TRUTH = PROBABILITY
@@ -232,7 +353,10 @@ async function fetchWeather(homeTeam, gameTime) {
       if (key) park = PARK_COORDS[key];
     }
     if (!park) { console.log(`  No park found for ${homeTeam}`); return null; }
-    if (park.dome) return { dome: true, description: 'Indoor dome — weather not a factor' };
+    const pf = getParkFactors(homeTeam);
+    if (park.dome && !pf.retractable) {
+      return { dome: true, runFactor: pf.runFactor, description: 'Fixed-roof dome — weather not a factor' };
+    }
 
     const res = await fetch(
       `https://api.openweathermap.org/data/2.5/forecast?lat=${park.lat}&lon=${park.lon}&appid=${WEATHER_API_KEY}&units=imperial`
@@ -254,6 +378,15 @@ async function fetchWeather(homeTeam, gameTime) {
     const windSpeed = Math.round(wind.speed);
     const windDeg = wind.deg;
 
+    // Retractable roof: estimate the chance it's open (warm & dry & daytime -> likely open).
+    let roofOpenProb = 1;
+    if (park.dome && pf.retractable) {
+      const rainy = /rain|storm|snow|drizzle/.test(desc);
+      roofOpenProb = (!rainy && temp >= 68 && temp <= 95) ? 0.7 : 0.2;
+    }
+    // Effective wind = raw wind x how much THIS park plays the wind x roof-open chance.
+    const effWind = Math.round(windSpeed * (pf.windFactor || 1) * roofOpenProb);
+
     // Calculate wind direction relative to stadium
     const homeplateFacing = park.homeplateFacing || 0;
 
@@ -273,11 +406,11 @@ async function fetchWeather(homeTeam, gameTime) {
     if (relAngle <= 45 || relAngle >= 315) {
       fieldWindDir = 'OUT to CF';
       windArrow = '↑';
-      windImpact = windSpeed >= 10 ? 'over' : 'neutral';
+      windImpact = effWind >= 10 ? 'over' : 'neutral';
     } else if (relAngle >= 135 && relAngle <= 225) {
       fieldWindDir = 'IN from CF';
       windArrow = '↓';
-      windImpact = windSpeed >= 10 ? 'under' : 'neutral';
+      windImpact = effWind >= 10 ? 'under' : 'neutral';
     } else if (relAngle > 45 && relAngle < 135) {
       fieldWindDir = 'L to R';
       windArrow = '→';
@@ -295,16 +428,17 @@ async function fetchWeather(homeTeam, gameTime) {
                      windDeg < 247.5 ? 'SW' : windDeg < 292.5 ? 'W' : 'NW';
 
     // Upgrade wind impact for strong winds
-    if (windSpeed >= 18 && windImpact === 'over') windImpact = 'significant over';
-    if (windSpeed >= 18 && windImpact === 'under') windImpact = 'significant under';
+    if (effWind >= 18 && windImpact === 'over') windImpact = 'significant over';
+    if (effWind >= 18 && windImpact === 'under') windImpact = 'significant under';
 
     // Flag significant weather
     const flags = [];
-    if (windSpeed >= 15) flags.push(windSpeed >= 20 ? 'HIGH WIND' : 'WIND FACTOR');
+    if (effWind >= 15) flags.push(effWind >= 20 ? 'HIGH WIND' : 'WIND FACTOR');
     if (temp <= 45) flags.push('COLD WEATHER');
     if (temp >= 90) flags.push('HOT WEATHER');
     if (desc.includes('rain') || desc.includes('storm')) flags.push('RAIN RISK');
-    if (windSpeed >= 10 && (fieldWindDir === 'OUT to CF' || fieldWindDir === 'IN from CF')) {
+    if (park.dome && pf.retractable) flags.push(`RETRACTABLE ROOF (~${Math.round(roofOpenProb*100)}% open)`);
+    if (effWind >= 10 && (fieldWindDir === 'OUT to CF' || fieldWindDir === 'IN from CF')) {
       flags.push(windImpact.toUpperCase());
     }
 
@@ -313,10 +447,15 @@ async function fetchWeather(homeTeam, gameTime) {
       temp,
       desc,
       windSpeed,
+      effWind,
       windCard,
       fieldWindDir,
       windArrow,
       windImpact,
+      runFactor: pf.runFactor,
+      windFactor: pf.windFactor,
+      retractable: !!(park.dome && pf.retractable),
+      roofOpenProb,
       flags,
       summary: `${temp}°F, ${desc}, wind ${windSpeed}mph ${windCard} (${windArrow} ${fieldWindDir})${flags.length ? ' — ' + flags.join(', ') : ''}`
     };
@@ -971,6 +1110,12 @@ async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, hom
     `${game.away_team} lineup bats: ${awayHand ? `${awayHand.L}L/${awayHand.R}R/${awayHand.S}S` : '?'} vs ${homePitcher?.throwHand||'?'}HP (home starter)\n` +
     `${game.home_team} lineup bats: ${homeHand ? `${homeHand.L}L/${homeHand.R}R/${homeHand.S}S` : '?'} vs ${awayPitcher?.throwHand||'?'}HP (away starter)`;
 
+  const pf = getParkFactors(game.home_team);
+  const parkInfo = `${game.home_team} park: run factor ${pf.runFactor} (1.0 = neutral, >1 = hitter-friendly), wind plays ${pf.windFactor}x (how much wind matters here)${pf.retractable ? ', retractable roof' : ''}`;
+
+  const shadow = shadowProfile(game.home_team, game.commence_time);
+  const shadowInfo = shadow ? shadow.note : 'No day-game shadow factor (night game, roofed park, or low susceptibility).';
+
   const awayTeamInfo = awayStats
     ? `${awayStats.teamName}: AVG ${awayStats.avg}, OPS ${awayStats.ops}, ${awayStats.runs} runs scored, ${awayStats.hr} HR, Last 10: ${awayStats.last10||'N/A'}`
     : `${game.away_team}: Stats unavailable`;
@@ -1019,6 +1164,12 @@ ${f5Info}
 WEATHER:
 ${weatherInfo}
 
+PARK FACTORS:
+${parkInfo}
+
+DAY-GAME SHADOW / SCORING DISTRIBUTION:
+${shadowInfo}
+
 PITCHING MATCHUP:
 Away: ${awayPitcherInfo}
 ${awayStatcastInfo}
@@ -1059,7 +1210,9 @@ ANALYSIS INSTRUCTIONS — CRITICAL:
 - Velocity UP or STABLE = trust the ERA and recent form
 - Hot pitchers (trending HOT — recent ERA significantly lower than season ERA) = team edge
 - Cold pitchers (trending COLD) = fade regardless of reputation or contract
-- Wind 15+ mph blowing out = more runs, 15+ mph in = fewer runs
+- Wind 15+ mph blowing out = more runs, 15+ mph in = fewer runs. The wind figure already accounts for how much THIS park plays the wind, so trust it as given.
+- APPLY THE PARK RUN FACTOR to your run projections: multiply the run environment by it (e.g. 1.06 = project ~6% more runs, 0.92 = ~8% fewer). This is a real number — use it instead of recalling park reputations.
+- DAY-GAME SHADOW: if a shadow profile is given, apply it as a SCORING-DISTRIBUTION shift, not a flat under — add its early-innings runs to your F5 projection and its late-innings runs to the full game. It is a small, approximate effect; do not let it swing a play on its own.
 - Current season form only — a team 2-8 in last 10 is a fade regardless of brand
 
 Return ONLY this JSON (no markdown). projAwayRuns, projHomeRuns, projTotal, and f5ProjTotal are what matter — the EV/breakeven/probability fields are recomputed downstream:
