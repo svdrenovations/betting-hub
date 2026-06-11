@@ -1248,12 +1248,13 @@ async function setResult(id, r) {
 }
 async function deleteBet(id) {
   const i = bets.findIndex(x => x.id === id);
-  if (i > -1) {
-    bets.splice(i, 1);
-    await deleteBetFromSupabase(id);
-    renderTracker();
-    updateNavRecord();
-  }
+  if (i < 0) return;
+  const b = bets[i];
+  if (!confirm(`Delete this bet?\n\n${b.matchup} — ${b.type}\n${b.odds} · ${b.units}u\n\nThis cannot be undone.`)) return;
+  bets.splice(i, 1);
+  await deleteBetFromSupabase(id);
+  renderTracker();
+  updateNavRecord();
 }
 
 function renderTracker() {
