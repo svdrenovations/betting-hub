@@ -14,6 +14,13 @@ const RUN_TYPE = process.env.RUN_TYPE || '11am';
 // the TOTAL_SD in index.html or the card and modal will disagree.
 const TOTAL_SD = 5.5;
 
+// Standard deviation of the run differential (away runs - home runs). Converts a
+// projected run margin into ML / RL win probabilities. ~4.0 matches real MLB
+// single-game margin variance. TUNE from your ML/RL results — higher pulls
+// probabilities toward 50% (more conservative). Lives only here; the frontend
+// reads the stored probabilities, so no need to mirror it in index.html.
+const MARGIN_SD = 4.0;
+
 // MLB park coordinates and orientation
 // homeplateFacing = compass direction home plate faces (degrees)
 // Wind blowing FROM opposite direction = blowing OUT to CF
@@ -121,9 +128,9 @@ function deriveNumbers(a, lines, f5Lines) {
     a.mlBreakeven = breakevenOdds(pHome);
   }
 
-  // ── Run line: derive cover prob from ML, same ±8 pts the modal uses ──
-  const pAwayRL = Math.max(0.02, pAway - 0.08);
-  const pHomeRL = Math.min(0.98, pHome + 0.08);
+  // ── Run line: use the run-model cover probs if present, else ±8 pts ──
+  const pAwayRL = a.rlAwayProb != null ? a.rlAwayProb / 100 : Math.max(0.02, pAway - 0.08);
+  const pHomeRL = a.rlHomeProb != null ? a.rlHomeProb / 100 : Math.min(0.98, pHome + 0.08);
   if (a.rl && a.rl.includes('AWAY')) {
     a.rlEV = evPct(pAwayRL, lines.awayRLOdds);
     a.rlBreakeven = breakevenOdds(pAwayRL);
@@ -174,6 +181,44 @@ function deriveNumbers(a, lines, f5Lines) {
   const evByMarket = { ml: a.mlEV, rl: a.rlEV, total: a.totalEV, f5: a.f5EV };
   if (a.best && evByMarket[a.best] != null) a.edgePct = evByMarket[a.best];
 
+  return a;
+}
+
+// Standard normal CDF (Abramowitz-Stegun 26.2.17), good to ~1e-7.
+function normCdf(x) {
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const d = 0.3989423 * Math.exp(-x * x / 2);
+  const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+  return x > 0 ? 1 - p : p;
+}
+
+// Turn the model's per-team run projections into ML + RL probabilities via a
+// normal model of the run margin. One run engine feeds ML, RL, and total — no
+// more gut ML number or ±0.08 RL hack. Falls back silently if the model didn't
+// return per-team runs.
+function deriveRunModel(a) {
+  if (!a) return a;
+  const la = parseFloat(a.projAwayRuns);
+  const lb = parseFloat(a.projHomeRuns);
+  if (!(la >= 0) || !(lb >= 0)) return a; // no per-team runs -> leave ML/RL as-is
+  const mu = la - lb;
+
+  // ML: P(away wins) ~ P(margin >= 1), P(home wins) ~ P(margin <= -1).
+  // Normalize out the no-tie gap since MLB games can't end tied.
+  const pAwayRaw = 1 - normCdf((0.5 - mu) / MARGIN_SD);
+  const pHomeRaw = normCdf((-0.5 - mu) / MARGIN_SD);
+  const denom = (pAwayRaw + pHomeRaw) || 1;
+  a.mlAwayProb = +((pAwayRaw / denom) * 100).toFixed(1);
+  a.mlHomeProb = +((pHomeRaw / denom) * 100).toFixed(1);
+  a.awayWinPct = a.mlAwayProb;
+  a.homeWinPct = a.mlHomeProb;
+
+  // RL: away -1.5 covers if margin >= 2; home +1.5 covers if margin <= 1 (complementary, no push at 1.5).
+  a.rlAwayProb = +((1 - normCdf((1.5 - mu) / MARGIN_SD)) * 100).toFixed(1);
+  a.rlHomeProb = +(normCdf((1.5 - mu) / MARGIN_SD) * 100).toFixed(1);
+
+  // Keep the total tied to the same projection if the model didn't give one.
+  if (a.projTotal == null || isNaN(parseFloat(a.projTotal))) a.projTotal = +(la + lb).toFixed(1);
   return a;
 }
 
@@ -594,6 +639,7 @@ async function fetchLineupMatchups(teamId, pitcherId, gameDate) {
   try {
     const lineup = await fetchLineup(teamId, gameDate);
     if (!lineup || !lineup.length) return null;
+    const handedness = await lineupHandedness(lineup.slice(0, 9));
 
     const matchups = await Promise.all(
       lineup.slice(0, 9).map(batter => fetchMatchupStats(batter.id, pitcherId))
@@ -601,7 +647,7 @@ async function fetchLineupMatchups(teamId, pitcherId, gameDate) {
 
     // Aggregate matchup stats (minimum 10 AB for meaningful data)
     const meaningful = matchups.filter(m => m && m.ab >= 10);
-    if (!meaningful.length) return { lineup: lineup.slice(0,9), matchups, meaningful: 0, note: 'Insufficient sample vs this pitcher' };
+    if (!meaningful.length) return { lineup: lineup.slice(0,9), matchups, meaningful: 0, handedness, note: 'Insufficient sample vs this pitcher' };
 
     const avgOPS = meaningful.reduce((sum, m) => sum + parseFloat(m.ops || 0), 0) / meaningful.length;
     const avgAVG = meaningful.reduce((sum, m) => sum + parseFloat(m.avg || 0), 0) / meaningful.length;
@@ -621,12 +667,155 @@ async function fetchLineupMatchups(teamId, pitcherId, gameDate) {
       kRate,
       hotBatters,
       coldBatters,
+      handedness,
       sample: `${meaningful.length} of 9 batters with 10+ AB vs this pitcher`
     };
   } catch(e) {
     console.log('  Lineup matchup error:', e.message);
     return null;
   }
+}
+
+// Real starter stats by ID: ERA/WHIP/recent form, avg innings per start, throw hand.
+// (The old pitcherMap only carried id/name — this fills in the actual numbers.)
+async function fetchPitcherDetail(pitcherId) {
+  try {
+    if (!pitcherId) return null;
+    const [statsRes, personRes] = await Promise.all([
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season,gameLog&group=pitching&season=2026`),
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}`)
+    ]);
+    let throwHand = null;
+    if (personRes.ok) {
+      const p = await personRes.json();
+      throwHand = p.people?.[0]?.pitchHand?.code || null;
+    }
+    if (!statsRes.ok) return throwHand ? { throwHand } : null;
+    const d = await statsRes.json();
+    const season = d.stats?.find(s => s.type?.displayName === 'season')?.splits?.[0]?.stat;
+    const gameLog = d.stats?.find(s => s.type?.displayName === 'gameLog')?.splits || [];
+    if (!season) return throwHand ? { throwHand } : null;
+
+    const starts = gameLog.filter(g => parseInt(g.stat?.gamesStarted || 0) > 0 || parseFloat(g.stat?.inningsPitched || 0) >= 3).slice(-5);
+    const avgIP = starts.length ? (starts.reduce((s, g) => s + parseFloat(g.stat?.inningsPitched || 0), 0) / starts.length).toFixed(1) : null;
+    const last3 = gameLog.slice(-3).map(g => ({ ip: g.stat?.inningsPitched, er: g.stat?.earnedRuns }));
+    const recentERA = last3.length
+      ? (last3.reduce((s, g) => s + parseFloat(g.er || 0), 0) / Math.max(1, last3.reduce((s, g) => s + parseFloat(g.ip || 0), 0)) * 9).toFixed(2)
+      : null;
+    const trending = recentERA && season.era
+      ? (parseFloat(recentERA) < parseFloat(season.era) - 0.5 ? 'HOT'
+        : parseFloat(recentERA) > parseFloat(season.era) + 0.5 ? 'COLD' : 'NEUTRAL')
+      : 'UNKNOWN';
+
+    return {
+      era: season.era, whip: season.whip, wins: season.wins, losses: season.losses,
+      ip: season.inningsPitched, recentERA, trending, avgIP, throwHand, last3
+    };
+  } catch(e) { return null; }
+}
+
+// Lineup handedness composition (L / R / S counts) from a batched people lookup.
+async function lineupHandedness(lineup) {
+  try {
+    if (!lineup || !lineup.length) return null;
+    const ids = lineup.map(p => p.id).filter(Boolean).join(',');
+    if (!ids) return null;
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/people?personIds=${ids}`);
+    if (!res.ok) return null;
+    const d = await res.json();
+    const sides = (d.people || []).map(p => p.batSide?.code);
+    return {
+      L: sides.filter(s => s === 'L').length,
+      R: sides.filter(s => s === 'R').length,
+      S: sides.filter(s => s === 'S').length
+    };
+  } catch(e) { return null; }
+}
+
+// Bullpen quality (IP-weighted ERA + K-BB%) and recent fatigue.
+async function fetchBullpen(teamId) {
+  try {
+    if (!teamId) return null;
+    const rosRes = await fetch(`https://statsapi.mlb.com/api/v1/teams/${teamId}/roster?rosterType=active`);
+    if (!rosRes.ok) return null;
+    const ros = await rosRes.json();
+    const pitchers = (ros.roster || []).filter(p => p.position?.abbreviation === 'P' || p.position?.code === '1');
+    if (!pitchers.length) return null;
+
+    const ids = pitchers.map(p => p.person.id);
+    const statsList = await Promise.all(ids.map(id =>
+      fetch(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=season&group=pitching&season=2026`)
+        .then(r => r.ok ? r.json() : null).catch(() => null)
+    ));
+
+    const relievers = [];
+    statsList.forEach((d, i) => {
+      const st = d?.stats?.[0]?.splits?.[0]?.stat;
+      if (!st) return;
+      const gp = parseInt(st.gamesPitched || 0), gs = parseInt(st.gamesStarted || 0);
+      if (gp >= 5 && gs / Math.max(1, gp) < 0.5) {
+        relievers.push({
+          id: ids[i], name: pitchers[i].person.fullName,
+          era: parseFloat(st.era), ip: parseFloat(st.inningsPitched) || 0,
+          k: parseInt(st.strikeOuts || 0), bb: parseInt(st.baseOnBalls || 0),
+          bf: parseInt(st.battersFaced || st.atBats || 0)
+        });
+      }
+    });
+    if (!relievers.length) return null;
+
+    const totIP = relievers.reduce((s, r) => s + r.ip, 0) || 1;
+    const wERA = relievers.reduce((s, r) => s + (isNaN(r.era) ? 4.5 : r.era) * r.ip, 0) / totIP;
+    const totK = relievers.reduce((s, r) => s + r.k, 0);
+    const totBB = relievers.reduce((s, r) => s + r.bb, 0);
+    const totBF = relievers.reduce((s, r) => s + r.bf, 0) || 1;
+    const kbbPct = (((totK - totBB) / totBF) * 100).toFixed(1);
+
+    const fatigue = await bullpenFatigue(teamId, relievers);
+
+    return {
+      count: relievers.length,
+      weightedERA: wERA.toFixed(2),
+      kbbPct,
+      fatigueNote: fatigue?.note || 'fresh',
+      tired: fatigue?.tired || [],
+      summary: `${relievers.length} arms, pen ERA ${wERA.toFixed(2)}, K-BB% ${kbbPct} — ${fatigue?.note || 'fresh'}`
+    };
+  } catch(e) { console.log('  Bullpen error:', e.message); return null; }
+}
+
+// Tally reliever innings across the team's last 3 completed games to flag fatigue.
+async function bullpenFatigue(teamId, relievers) {
+  try {
+    const end = new Date().toISOString().split('T')[0];
+    const start = new Date(Date.now() - 4 * 864e5).toISOString().split('T')[0];
+    const schedRes = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=${teamId}&startDate=${start}&endDate=${end}&gameType=R`);
+    if (!schedRes.ok) return null;
+    const sched = await schedRes.json();
+    const games = (sched.dates || []).flatMap(d => d.games || [])
+      .filter(g => g.status?.abstractGameState === 'Final').slice(-3);
+
+    const ipById = {};
+    for (const g of games) {
+      const box = await fetch(`https://statsapi.mlb.com/api/v1/game/${g.gamePk}/boxscore`)
+        .then(r => r.ok ? r.json() : null).catch(() => null);
+      if (!box) continue;
+      const side = box.teams?.home?.team?.id === teamId ? 'home' : 'away';
+      const players = box.teams?.[side]?.players || {};
+      Object.values(players).forEach(pl => {
+        const ip = parseFloat(pl.stats?.pitching?.inningsPitched || 0);
+        if (ip > 0) ipById[pl.person.id] = (ipById[pl.person.id] || 0) + ip;
+      });
+    }
+
+    const tired = relievers.filter(r => (ipById[r.id] || 0) >= 2.0).map(r => r.name);
+    const usedCount = relievers.filter(r => (ipById[r.id] || 0) > 0).length;
+    let note = 'fresh';
+    if (tired.length >= 2) note = `TAXED (${tired.length} arms heavy last 3d)`;
+    else if (tired.length === 1) note = `${tired[0]} taxed`;
+    else if (usedCount >= 4) note = 'worked recently';
+    return { note, tired };
+  } catch(e) { return null; }
 }
 
 async function fetchOddsAPI() {
@@ -757,7 +946,7 @@ function validateTotal(oddsTotal, anTotal) {
   return oddsTotal;
 }
 
-async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups) {
+async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen) {
   console.log(`  Analyzing ${game.away_team} @ ${game.home_team}...`);
 
   const weatherInfo = weather
@@ -766,12 +955,21 @@ async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, hom
     : 'Weather data unavailable';
 
   const awayPitcherInfo = awayPitcher
-    ? `${awayPitcher.name}: ERA ${awayPitcher.era}, WHIP ${awayPitcher.whip}, ${awayPitcher.wins}W-${awayPitcher.losses}L, Recent ERA ${awayPitcher.recentERA} (${awayPitcher.trending}), Last 3: ${awayPitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}`
+    ? `${awayPitcher.name} (${awayPitcher.throwHand||'?'}HP): ERA ${awayPitcher.era}, WHIP ${awayPitcher.whip}, ${awayPitcher.wins}W-${awayPitcher.losses}L, Recent ERA ${awayPitcher.recentERA} (${awayPitcher.trending}), avg ${awayPitcher.avgIP||'?'} IP/start, Last 3: ${awayPitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}`
     : 'Away pitcher: TBD';
 
   const homePitcherInfo = homePitcher
-    ? `${homePitcher.name}: ERA ${homePitcher.era}, WHIP ${homePitcher.whip}, ${homePitcher.wins}W-${homePitcher.losses}L, Recent ERA ${homePitcher.recentERA} (${homePitcher.trending}), Last 3: ${homePitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}`
+    ? `${homePitcher.name} (${homePitcher.throwHand||'?'}HP): ERA ${homePitcher.era}, WHIP ${homePitcher.whip}, ${homePitcher.wins}W-${homePitcher.losses}L, Recent ERA ${homePitcher.recentERA} (${homePitcher.trending}), avg ${homePitcher.avgIP||'?'} IP/start, Last 3: ${homePitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}`
     : 'Home pitcher: TBD';
+
+  const awayBullpenInfo = awayBullpen ? `${game.away_team} bullpen: ${awayBullpen.summary}` : `${game.away_team} bullpen: unavailable`;
+  const homeBullpenInfo = homeBullpen ? `${game.home_team} bullpen: ${homeBullpen.summary}` : `${game.home_team} bullpen: unavailable`;
+
+  const awayHand = awayMatchups?.handedness;
+  const homeHand = homeMatchups?.handedness;
+  const platoonInfo =
+    `${game.away_team} lineup bats: ${awayHand ? `${awayHand.L}L/${awayHand.R}R/${awayHand.S}S` : '?'} vs ${homePitcher?.throwHand||'?'}HP (home starter)\n` +
+    `${game.home_team} lineup bats: ${homeHand ? `${homeHand.L}L/${homeHand.R}R/${homeHand.S}S` : '?'} vs ${awayPitcher?.throwHand||'?'}HP (away starter)`;
 
   const awayTeamInfo = awayStats
     ? `${awayStats.teamName}: AVG ${awayStats.avg}, OPS ${awayStats.ops}, ${awayStats.runs} runs scored, ${awayStats.hr} HR, Last 10: ${awayStats.last10||'N/A'}`
@@ -827,6 +1025,13 @@ ${awayStatcastInfo}
 Home: ${homePitcherInfo}
 ${homeStatcastInfo}
 
+BULLPENS (quality + recent workload — a tired or weak pen loses late leads):
+${awayBullpenInfo}
+${homeBullpenInfo}
+
+PLATOON / HANDEDNESS:
+${platoonInfo}
+
 LINEUP VS PITCHER MATCHUPS (career stats — min 10 AB):
 ${awayMatchupInfo}
 ${homeMatchupInfo}
@@ -839,23 +1044,29 @@ PUBLIC BETTING:
 ${publicInfo}
 
 ANALYSIS INSTRUCTIONS — CRITICAL:
-- Your job is PROBABILITIES and PROJECTIONS, nothing else. Give honest mlAwayProb / mlHomeProb and projTotal / f5ProjTotal. The EV, breakeven, and juice-sensitivity numbers are computed DOWNSTREAM from your probabilities — do not freehand them or try to make them consistent yourself. A 52% ML at -110 is NEGATIVE EV; report 52% if that is your read and let the math decide skip.
+- Your job is PROBABILITIES and PROJECTIONS, nothing else. The EV, breakeven, win probabilities, and juice-sensitivity numbers are computed DOWNSTREAM from your projections — do not freehand them.
+- PROJECT EACH TEAM'S EXPECTED RUNS separately as projAwayRuns and projHomeRuns. These are the most important numbers you produce: the downstream math derives ML (who wins), RL (margin), and the total (their sum) all from these two numbers via a run-margin model. Project them carefully from 2026 run rates, the pitching matchup, Statcast, bullpens, platoon edges, lineup matchups, park, and weather.
+- ML / RL come from the projected run MARGIN (projAwayRuns - projHomeRuns), not a gut feel. A bigger projected margin = bigger favorite and better run-line cover odds. Do not hand-tune mlAwayProb; just project the runs accurately.
+- BULLPEN matters for who WINS, not just totals: a TAXED or high-ERA pen is more likely to blow a late lead — shade the run margin toward the team with the stronger/fresher pen, especially in tight projected games.
+- PLATOON: a lineup stacked opposite-handed to the starter (e.g. many R bats vs a LHP) should score more; same-handed heavy lineups score less. Fold this into the run projections.
+- EXPECTED STARTER LENGTH: a starter averaging under ~5 IP exposes the bullpen earlier — weight the bullpen more heavily for that team.
+- SHARP / LINE ACTION IS INFORMATIONAL ONLY. Report any sharp or line-movement read in lineNote / sharpSide / lineSharp for display, but DO NOT let public or sharp money move your run projections or probabilities. Project independently of the market.
 - The "situations" array must ONLY contain these exact lowercase values: revenge, travel, sharp, weather, rest, series, fade, mustwin, debut. DO NOT add any other values. DO NOT use situations to flag data availability issues. If data is missing just work with what you have.
-- USE ONLY 2026 SEASON STATS for all total projections. IGNORE all prior year data entirely.
-- TOTAL PROJECTION METHOD: (away team 2026 runs/game + home team 2026 runs/game) × pitcher adjustment × park factor × weather adjustment = projected total. Compare to line for edge.
+- USE ONLY 2026 SEASON STATS for all projections. IGNORE all prior year data entirely.
 - STATCAST IS CRITICAL: A pitcher with velocity DOWN trend is significantly worse than ERA suggests — fade. A pitcher with low barrel rate and high whiff rate is elite regardless of ERA — back. Hard hit rate above 42% means the pitcher is getting hit hard even if runs haven't scored yet.
-- LINEUP MATCHUPS OVERRIDE SEASON STATS for total projections: if the opposing lineup has OPS below .600 vs this pitcher with 25%+ K rate, project runs 20-25% lower than season average. If lineup has OPS above .850 vs this pitcher, project runs 20-25% higher.
+- LINEUP MATCHUPS OVERRIDE SEASON STATS: if the opposing lineup has OPS below .600 vs this pitcher with 25%+ K rate, project that team's runs 20-25% lower than season average. If lineup has OPS above .850 vs this pitcher, project 20-25% higher.
 - Velocity DOWN on last start vs season average = COLD flag, reduce confidence, lean against this pitcher
 - Velocity UP or STABLE = trust the ERA and recent form
 - Hot pitchers (trending HOT — recent ERA significantly lower than season ERA) = team edge
 - Cold pitchers (trending COLD) = fade regardless of reputation or contract
-- Wind 15+ mph blowing out = over lean, 15+ mph in = under lean
+- Wind 15+ mph blowing out = more runs, 15+ mph in = fewer runs
 - Current season form only — a team 2-8 in last 10 is a fade regardless of brand
-- For EACH market with positive EV include the EXACT LINE in projTotal and f5ProjTotal
 
-Return ONLY this JSON (no markdown). For mlEV/mlBreakeven/total*/f5* numeric fields, provide your best guess — they will be recomputed downstream, so accuracy of the PROBABILITY and PROJECTION fields is what matters:
+Return ONLY this JSON (no markdown). projAwayRuns, projHomeRuns, projTotal, and f5ProjTotal are what matter — the EV/breakeven/probability fields are recomputed downstream:
 {
   "situations": ["revenge","travel","sharp","weather","rest","series","fade","mustwin","debut"],
+  "projAwayRuns": NUMBER,
+  "projHomeRuns": NUMBER,
   "ml": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
   "mlEV": NUMBER,
   "mlAwayProb": NUMBER,
@@ -996,6 +1207,10 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       total_ev: analysis.totalEV,
       total_line: analysis.totalLine,
       proj_total: analysis.projTotal,
+      proj_away_runs: analysis.projAwayRuns ?? null,
+      proj_home_runs: analysis.projHomeRuns ?? null,
+      rl_away_prob: analysis.rlAwayProb ?? null,
+      rl_home_prob: analysis.rlHomeProb ?? null,
       f5_verdict: analysis.f5,
       f5_ev: analysis.f5EV,
       f5_line: analysis.f5Line,
@@ -1221,6 +1436,18 @@ async function main() {
       if (awayMatchups) console.log(`  Away lineup vs ${homePitcherInfo?.name}: OPS ${awayMatchups.avgOPS}, K% ${awayMatchups.kRate}`);
       if (homeMatchups) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: OPS ${homeMatchups.avgOPS}, K% ${homeMatchups.kRate}`);
 
+      // Real starter stats (ERA/WHIP/avg IP/hand) + bullpen quality & fatigue
+      const [awayDetail, homeDetail, awayBullpen, homeBullpen] = await Promise.all([
+        awayPitcherInfo?.id ? fetchPitcherDetail(awayPitcherInfo.id) : Promise.resolve(null),
+        homePitcherInfo?.id ? fetchPitcherDetail(homePitcherInfo.id) : Promise.resolve(null),
+        awayTeamId ? fetchBullpen(awayTeamId) : Promise.resolve(null),
+        homeTeamId ? fetchBullpen(homeTeamId) : Promise.resolve(null)
+      ]);
+      if (awayPitcherInfo && awayDetail) Object.assign(awayPitcherInfo, awayDetail);
+      if (homePitcherInfo && homeDetail) Object.assign(homePitcherInfo, homeDetail);
+      if (awayBullpen) console.log(`  ${game.away_team} pen: ${awayBullpen.summary}`);
+      if (homeBullpen) console.log(`  ${game.home_team} pen: ${homeBullpen.summary}`);
+
       const [anData, weather, awayStats, homeStats] = await Promise.all([
         fetchActionNetwork(game.away_team, game.home_team, game.commence_time),
         fetchWeather(game.home_team, game.commence_time),
@@ -1231,9 +1458,10 @@ async function main() {
       if (anData?.total) lines.total = validateTotal(lines.total, anData.total);
 
       const f5Lines = f5Map[game.id] || null;
-      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups);
+      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen);
 
-      // Recompute all EV / breakeven / juice from probabilities + real odds (single source of truth)
+      // Derive ML/RL probabilities from the projected run margin, then all EV/breakeven/juice
+      deriveRunModel(analysis);
       deriveNumbers(analysis, lines, f5Lines);
 
       await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups);
