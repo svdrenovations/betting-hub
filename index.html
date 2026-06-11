@@ -253,7 +253,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     </div>
     <div class="form-row">
       <div class="form-field"><label>Bet type</label>
-        <select id="log-type">
+        <select id="log-type" onchange="calcLiveEV()">
           <option>Moneyline (away)</option><option>Moneyline (home)</option>
           <option>RL -1.5</option><option>RL +1.5</option>
           <option>Game total over</option><option>Game total under</option>
@@ -283,7 +283,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     </div>
     <div class="form-row">
       <div class="form-field"><label>Odds</label><input id="log-odds" placeholder="-115" oninput="calcLiveEV()"></div>
-      <div class="form-field"><label>Spread / Total</label><input id="log-line" placeholder="e.g. 7.5, -1.5"></div>
+      <div class="form-field"><label>Spread / Total</label><input id="log-line" placeholder="e.g. 7.5, -1.5" oninput="calcLiveEV()"></div>
     </div>
     <div style="font-size:13px;font-weight:600;font-family:DM Mono,monospace;margin-bottom:8px;min-height:20px;padding:0 4px" id="log-ev-display"></div>
     <input type="hidden" id="log-sit">
@@ -374,6 +374,7 @@ let currentDate = getLocalDate();
 let currentFilter = 'all';
 let trackerFilter = 'all';
 let pendingLog = null;
+let pendingLogEV = null;
 let expanded = {};
 
 // ── LIVE LINES ───────────────────────────────────────────────────────────────
@@ -1172,9 +1173,10 @@ function calcLiveEV() {
   const type = document.getElementById('log-type').value;
   const betLine = document.getElementById('log-line').value;
   const el = document.getElementById('log-ev-display');
-  if (!pendingLog || isNaN(parseFloat(odds))) { if (el) el.textContent = ''; return; }
+  if (!pendingLog || isNaN(parseFloat(odds))) { pendingLogEV = null; if (el) el.textContent = ''; return; }
   const prob = winProb(pendingLog, type, betLine);
   const ev = evFromOdds(prob, odds);
+  pendingLogEV = ev;
   if (el && ev != null) {
     el.textContent = 'EV: ' + (ev >= 0 ? '+' : '') + ev.toFixed(1) + '% (win prob: ' + Math.round(prob * 100) + '%)';
     el.style.color = ev >= 2 ? 'var(--green)' : ev >= 0 ? 'var(--amber)' : 'var(--red)';
@@ -1209,9 +1211,8 @@ async function saveBet() {
   const betLine = document.getElementById('log-line').value;
   const maxJuice = document.getElementById('log-max-juice').value;
   const book = document.getElementById('log-book').value;
-  const prob = winProb(g, type, betLine);
-  const evNum = evFromOdds(prob, odds);
-  const ev = evNum != null ? evNum.toFixed(1) : null;
+  calcLiveEV(); // refresh the single computed value from current inputs
+  const ev = pendingLogEV != null ? pendingLogEV.toFixed(1) : null;
   const bet = {
     id: Date.now(), date: g.game_date,
     matchup: `${g.away_team} @ ${g.home_team}`,
