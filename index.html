@@ -1137,43 +1137,46 @@ function quickLog(gameId, market, verdict, line, breakeven) {
   calcLiveEV();
 }
 
+// ── SINGLE SOURCE OF TRUTH for win probability + EV ──────────────────────────
+// Used by BOTH the live modal (calcLiveEV) and saveBet, so the EV shown when
+// placing a bet is identical to the EV stored on the tracker. TOTAL_SD must
+// match analyze.js.
+function winProb(g, type, betLineRaw) {
+  const t = (type || '').toLowerCase();
+  if (t.includes('over') || t.includes('under')) {
+    const proj = parseFloat(g.proj_total) || parseFloat(g.f5_proj_total) || 0;
+    const bl = parseFloat(betLineRaw);
+    const line = !isNaN(bl) ? bl : (parseFloat(g.total_line) || 7.5);
+    if (proj > 0) {
+      const pOver = 1 / (1 + Math.exp(1.7 * (line - proj) / TOTAL_SD));
+      return t.includes('over') ? pOver : 1 - pOver;
+    }
+    return t.includes('over') ? 0.52 : 0.48;
+  }
+  if (t.includes('moneyline (away)') || t.includes('f5 moneyline (away)')) return (g.ml_away_prob || g.away_win_pct || 50) / 100;
+  if (t.includes('moneyline (home)') || t.includes('f5 moneyline (home)')) return (g.ml_home_prob || g.home_win_pct || 50) / 100;
+  if (t.includes('rl -1.5') || t.includes('run line (away')) return Math.max(0.1, ((g.ml_away_prob || 50) / 100) - 0.08);
+  if (t.includes('rl +1.5') || t.includes('run line (home')) return Math.min(0.9, ((g.ml_home_prob || 50) / 100) + 0.08);
+  return 0.50;
+}
+
+function evFromOdds(prob, oddsRaw) {
+  const n = parseFloat(oddsRaw);
+  if (isNaN(n) || !prob) return null;
+  const payout = n > 0 ? n / 100 : 100 / Math.abs(n);
+  return ((prob * payout) - (1 - prob)) * 100;
+}
+
 function calcLiveEV() {
-  const odds = parseFloat(document.getElementById('log-odds').value);
-  const type = document.getElementById('log-type').value.toLowerCase();
-  const betLine = parseFloat(document.getElementById('log-line').value);
+  const odds = document.getElementById('log-odds').value;
+  const type = document.getElementById('log-type').value;
+  const betLine = document.getElementById('log-line').value;
   const el = document.getElementById('log-ev-display');
-  if (!pendingLog || isNaN(odds)) { if(el) el.textContent = ''; return; }
-  const g = pendingLog;
-  let prob = null;
-
-  if (type.includes('over')) {
-    const proj = parseFloat(g.proj_total) || parseFloat(g.f5_proj_total) || 0;
-    const line = !isNaN(betLine) ? betLine : parseFloat(g.total_line) || 7.5;
-    if (proj > 0) {
-      const z = (line - proj) / TOTAL_SD;
-      prob = 1 / (1 + Math.exp(1.7 * z));
-    } else prob = 0.52;
-  } else if (type.includes('under')) {
-    const proj = parseFloat(g.proj_total) || parseFloat(g.f5_proj_total) || 0;
-    const line = !isNaN(betLine) ? betLine : parseFloat(g.total_line) || 7.5;
-    if (proj > 0) {
-      const z = (line - proj) / TOTAL_SD;
-      prob = 1 - (1 / (1 + Math.exp(1.7 * z)));
-    } else prob = 0.48;
-  } else if (type.includes('moneyline (away)') || type.includes('f5 moneyline (away)')) {
-    prob = (g.ml_away_prob || g.away_win_pct || 50) / 100;
-  } else if (type.includes('moneyline (home)') || type.includes('f5 moneyline (home)')) {
-    prob = (g.ml_home_prob || g.home_win_pct || 50) / 100;
-  } else if (type.includes('rl -1.5')) {
-    prob = Math.max(0.1, ((g.ml_away_prob || 50) / 100) - 0.08);
-  } else if (type.includes('rl +1.5')) {
-    prob = Math.min(0.9, ((g.ml_home_prob || 50) / 100) + 0.08);
-  } else prob = 0.50;
-
-  const payout = odds > 0 ? odds / 100 : 100 / Math.abs(odds);
-  const ev = ((prob * payout) - (1 - prob)) * 100;
-  if (el) {
-    el.textContent = 'EV: ' + (ev >= 0 ? '+' : '') + ev.toFixed(1) + '% (win prob: ' + Math.round(prob*100) + '%)';
+  if (!pendingLog || isNaN(parseFloat(odds))) { if (el) el.textContent = ''; return; }
+  const prob = winProb(pendingLog, type, betLine);
+  const ev = evFromOdds(prob, odds);
+  if (el && ev != null) {
+    el.textContent = 'EV: ' + (ev >= 0 ? '+' : '') + ev.toFixed(1) + '% (win prob: ' + Math.round(prob * 100) + '%)';
     el.style.color = ev >= 2 ? 'var(--green)' : ev >= 0 ? 'var(--amber)' : 'var(--red)';
   }
 }
@@ -1206,14 +1209,9 @@ async function saveBet() {
   const betLine = document.getElementById('log-line').value;
   const maxJuice = document.getElementById('log-max-juice').value;
   const book = document.getElementById('log-book').value;
-  const isAway = type.toLowerCase().includes('away') || type.toLowerCase().includes('-1.5') || type.toLowerCase().includes('over');
-  const awayProb = (g.ml_away_prob||g.away_win_pct||50)/100;
-  const homeProb = (g.ml_home_prob||g.home_win_pct||50)/100;
-  const prob = type.toLowerCase().includes('over') || type.toLowerCase().includes('under')
-    ? (type.toLowerCase().includes('over') ? awayProb : homeProb)
-    : isAway ? awayProb : homeProb;
-  const n = parseFloat(odds);
-  const ev = !isNaN(n) && prob ? (((prob*(n>0?n/100:100/(-n)))-(1-prob))*100).toFixed(1) : null;
+  const prob = winProb(g, type, betLine);
+  const evNum = evFromOdds(prob, odds);
+  const ev = evNum != null ? evNum.toFixed(1) : null;
   const bet = {
     id: Date.now(), date: g.game_date,
     matchup: `${g.away_team} @ ${g.home_team}`,
