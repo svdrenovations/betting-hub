@@ -317,7 +317,7 @@ function normCdf(x) {
 // normal model of the run margin. One run engine feeds ML, RL, and total — no
 // more gut ML number or ±0.08 RL hack. Falls back silently if the model didn't
 // return per-team runs.
-function deriveRunModel(a) {
+function deriveRunModel(a, lines) {
   if (!a) return a;
   const la = parseFloat(a.projAwayRuns);
   const lb = parseFloat(a.projHomeRuns);
@@ -334,9 +334,15 @@ function deriveRunModel(a) {
   a.awayWinPct = a.mlAwayProb;
   a.homeWinPct = a.mlHomeProb;
 
-  // RL: away -1.5 covers if margin >= 2; home +1.5 covers if margin <= 1 (complementary, no push at 1.5).
-  a.rlAwayProb = +((1 - normCdf((1.5 - mu) / MARGIN_SD)) * 100).toFixed(1);
-  a.rlHomeProb = +(normCdf((1.5 - mu) / MARGIN_SD) * 100).toFixed(1);
+  // RL: use each side's ACTUAL run-line number (favorite -1.5, dog +1.5 — whichever
+  // side is which). margin = away - home. Away covers if margin > -awayRLpt; home
+  // covers if margin < homeRLpt.
+  let awayRLpt = parseFloat(lines && lines.awayRL);
+  let homeRLpt = parseFloat(lines && lines.homeRL);
+  if (isNaN(awayRLpt)) awayRLpt = mu > 0 ? -1.5 : 1.5;
+  if (isNaN(homeRLpt)) homeRLpt = mu > 0 ? 1.5 : -1.5;
+  a.rlAwayProb = +((1 - normCdf((-awayRLpt - mu) / MARGIN_SD)) * 100).toFixed(1);
+  a.rlHomeProb = +(normCdf((homeRLpt - mu) / MARGIN_SD) * 100).toFixed(1);
 
   // Keep the total tied to the same projection if the model didn't give one.
   if (a.projTotal == null || isNaN(parseFloat(a.projTotal))) a.projTotal = +(la + lb).toFixed(1);
@@ -1477,13 +1483,11 @@ async function settlePendingBets() {
           else if (homeScore < awayScore) result = 'loss';
           else result = 'push';
         } else if (type.includes('rl -1.5') || type.includes('run line (away')) {
-          if (awayScore - homeScore > 1.5) result = 'win';
-          else if (awayScore - homeScore < 1.5) result = 'loss';
-          else result = 'push';
+          const sp = parseFloat(bet.bet_line); const d = (awayScore - homeScore) + (isNaN(sp) ? -1.5 : sp);
+          result = d > 0 ? 'win' : d < 0 ? 'loss' : 'push';
         } else if (type.includes('rl +1.5') || type.includes('run line (home')) {
-          if (homeScore - awayScore > -1.5) result = 'win';
-          else if (homeScore - awayScore < -1.5) result = 'loss';
-          else result = 'push';
+          const sp = parseFloat(bet.bet_line); const d = (homeScore - awayScore) + (isNaN(sp) ? 1.5 : sp);
+          result = d > 0 ? 'win' : d < 0 ? 'loss' : 'push';
         }
 
         if (result === 'pending') continue;
@@ -1614,7 +1618,7 @@ async function main() {
       const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen);
 
       // Derive ML/RL probabilities from the projected run margin, then all EV/breakeven/juice
-      deriveRunModel(analysis);
+      deriveRunModel(analysis, lines);
       deriveNumbers(analysis, lines, f5Lines);
 
       await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups);
