@@ -255,7 +255,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
       <div class="form-field"><label>Bet type</label>
         <select id="log-type" onchange="calcLiveEV()">
           <option>Moneyline (away)</option><option>Moneyline (home)</option>
-          <option>RL -1.5</option><option>RL +1.5</option>
+          <option>Run line (away)</option><option>Run line (home)</option>
           <option>Game total over</option><option>Game total under</option>
           <option>F5 moneyline (away)</option><option>F5 moneyline (home)</option>
           <option>F5 total over</option><option>F5 total under</option>
@@ -313,7 +313,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
       <div class="form-field"><label>Bet type</label>
         <select id="edit-type">
           <option>Moneyline (away)</option><option>Moneyline (home)</option>
-          <option>RL -1.5</option><option>RL +1.5</option>
+          <option>Run line (away)</option><option>Run line (home)</option>
           <option>Game total over</option><option>Game total under</option>
           <option>F5 moneyline (away)</option><option>F5 moneyline (home)</option>
           <option>F5 total over</option><option>F5 total under</option>
@@ -1104,7 +1104,9 @@ function quickLog(gameId, market, verdict, line, breakeven) {
   if (market === 'ML') {
     lt.value = v.includes('AWAY') ? 'Moneyline (away)' : 'Moneyline (home)';
   } else if (market === 'RL') {
-    lt.value = v.includes('AWAY') ? 'RL -1.5' : 'RL +1.5';
+    const awayRL = v.includes('AWAY');
+    lt.value = awayRL ? 'Run line (away)' : 'Run line (home)';
+    document.getElementById('log-line').value = awayRL ? (g.away_rl || '') : (g.home_rl || '');
   } else if (market === 'TOTAL') {
     lt.value = v.includes('OVER') ? 'Game total over' : 'Game total under';
   } else if (market === 'F5') {
@@ -1195,8 +1197,8 @@ function openLog(id) {
   else if (bv && bv.includes('HOME') && bk === 'ml') lt.value = 'Moneyline (home)';
   else if (bv && bv.includes('OVER') && bk === 'total') lt.value = 'Game total over';
   else if (bv && bv.includes('UNDER') && bk === 'total') lt.value = 'Game total under';
-  else if (bv && bv.includes('AWAY') && bk === 'rl') lt.value = 'Run line (away -1.5)';
-  else if (bv && bv.includes('HOME') && bk === 'rl') lt.value = 'Run line (home +1.5)';
+  else if (bv && bv.includes('AWAY') && bk === 'rl') { lt.value = 'Run line (away)'; document.getElementById('log-line').value = g.away_rl || ''; }
+  else if (bv && bv.includes('HOME') && bk === 'rl') { lt.value = 'Run line (home)'; document.getElementById('log-line').value = g.home_rl || ''; }
   document.getElementById('log-modal').classList.add('show');
 }
 function closeModal() { document.getElementById('log-modal').classList.remove('show'); pendingLog = null; }
@@ -1412,12 +1414,12 @@ async function settleBets() {
         if (homeScore > awayScore) result = 'win';
         else if (homeScore < awayScore) result = 'loss';
         else result = 'push';
-      } else if (type.includes('rl -1.5')) {
-        if (awayScore - homeScore > 1.5) result = 'win';
-        else result = 'loss';
-      } else if (type.includes('rl +1.5')) {
-        if (homeScore - awayScore > -1.5) result = 'win';
-        else result = 'loss';
+      } else if (type.includes('rl -1.5') || type.includes('run line (away')) {
+        const sp = parseFloat(bet.betLine); const d = (awayScore - homeScore) + (isNaN(sp) ? -1.5 : sp);
+        result = d > 0 ? 'win' : d < 0 ? 'loss' : 'push';
+      } else if (type.includes('rl +1.5') || type.includes('run line (home')) {
+        const sp = parseFloat(bet.betLine); const d = (homeScore - awayScore) + (isNaN(sp) ? 1.5 : sp);
+        result = d > 0 ? 'win' : d < 0 ? 'loss' : 'push';
       }
 
       if (result === 'pending') continue;
