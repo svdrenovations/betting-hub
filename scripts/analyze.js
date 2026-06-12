@@ -1517,7 +1517,11 @@ async function main() {
   const [games, f5Map, pitcherMap] = await Promise.all([fetchOddsAPI(), fetchF5Lines(), fetchProbablePitchers(today)]);
   const now = new Date();
   const todayGames = games.filter(g => {
-    if (!g.commence_time.startsWith(today)) return false;
+    // Compare each game's date in ET (matches how game_date is stored on upsert).
+    // The Odds API commence_time is UTC, so a naive startsWith(today) drops every
+    // game after ~8pm ET, whose UTC timestamp has already rolled to tomorrow.
+    const gameEtDate = new Date(g.commence_time).toLocaleDateString('en-CA', {timeZone: 'America/New_York'});
+    if (gameEtDate !== today) return false;
     const gameTime = new Date(g.commence_time);
     const minutesSinceStart = (now - gameTime) / 60000;
     // Skip games that started more than 5 minutes ago
