@@ -82,6 +82,11 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .eb-high{background:var(--green-bg);color:var(--green);border:1px solid var(--green-dim)}
 .eb-med{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-dim)}
 .eb-skip{background:var(--red-bg);color:var(--red);border:1px solid var(--red-dim)}
+.lineup-mark{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:3px 8px;border-radius:4px;margin-right:6px;font-family:DM Mono,monospace}
+.lm-confirmed{background:var(--green-bg);color:var(--green);border:1px solid var(--green-dim)}
+.lm-partial{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-dim)}
+.lm-projected{background:var(--s2);color:var(--muted);border:1px solid var(--border)}
+.lm-mismatch{background:var(--red-bg);color:var(--red);border:1px solid var(--red-dim)}
 .card-actions{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
 .btn-expand{padding:6px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border);background:none;color:var(--muted);cursor:pointer;font-family:DM Mono,monospace}
 .btn-log{padding:6px 12px;font-size:12px;font-weight:500;border-radius:6px;border:1px solid var(--green-dim);background:var(--green-bg);color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif}
@@ -710,7 +715,7 @@ async function loadGames(forceRefresh = false) {
     games = data;
 
     if (!games.length) {
-      document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-icon">⚾</div><div class="empty-title">No games found for ${fmtDateShort(currentDate)}</div><div class="empty-sub">Analysis runs automatically at 11am and 4pm ET.<br>Check back then or use the date navigation to view another day.</div></div>`;
+      document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-icon">⚾</div><div class="empty-title">No games found for ${fmtDateShort(currentDate)}</div><div class="empty-sub">Analysis runs automatically at 12pm and 5:30pm ET.<br>Check back then or use the date navigation to view another day.</div></div>`;
       document.getElementById('games-subtitle').textContent = `No games for ${fmtDateShort(currentDate)}`;
       document.getElementById('filters').style.display = 'none';
       document.getElementById('best-plays').classList.remove('show');
@@ -974,6 +979,23 @@ function oddsTableHTML(g) {
   </table>`;
 }
 
+function pitcherMarkerHTML(g) {
+  if (!g.analyzed) return '';
+  const s = g.pitcher_status || 'tbd';
+  if (s === 'confirmed') return '<span class="lineup-mark lm-confirmed" title="Both probable starters verified from the same official MLB game">✓ probables confirmed</span>';
+  if (s === 'mismatch')  return '<span class="lineup-mark lm-mismatch" title="Resolved starters could not be verified to the same game — possible team-mapping issue">⚠ matchup unverified</span>';
+  if (s === 'partial')   return '<span class="lineup-mark lm-partial" title="Only one probable starter was available at analysis time">◐ one starter set</span>';
+  return '<span class="lineup-mark lm-projected" title="Probable starters not yet posted">○ starters TBD</span>';
+}
+
+function lineupMarkerHTML(g) {
+  if (!g.analyzed) return '';
+  const s = g.lineup_status || 'projected';
+  if (s === 'confirmed') return '<span class="lineup-mark lm-confirmed" title="Analysis used the official posted starting lineups">● confirmed lineups</span>';
+  if (s === 'partial')   return '<span class="lineup-mark lm-partial" title="Only one team\'s official lineup was posted at analysis time">◐ partial lineups</span>';
+  return '<span class="lineup-mark lm-projected" title="Lineups not yet posted at analysis time — projected/season data used">○ projected lineups</span>';
+}
+
 function gameCardHTML(g) {
   const edge = getTopEdge(g);
   const edgeCls = edge === 'high' ? 'edge-high' : edge === 'med' ? 'edge-med' : '';
@@ -999,16 +1021,16 @@ function gameCardHTML(g) {
       <div class="analysis-label">Risks</div><p>${(g.risks_text||'').replace(/<[^>]*>/g,'')}</p>
     </div>` : '';
 
-  const notAnalyzed = !g.analyzed ? `<p style="font-size:12px;color:var(--muted);margin-bottom:8px">Analysis runs at 11am and 4pm ET</p>` : '';
+  const notAnalyzed = !g.analyzed ? `<p style="font-size:12px;color:var(--muted);margin-bottom:8px">Analysis runs at 12pm and 5:30pm ET</p>` : '';
 
   return `<div class="game-card ${edgeCls}" id="card-${g.id}">
     <div class="card-header">
       <div>
         <div class="card-matchup">${g.away_team} @ ${g.home_team}</div>
         <div class="card-meta">
-          ${g.away_pitcher||'TBD'}${g.away_pitcher_debut ? ' <span style="color:var(--amber);font-weight:500">★ MLB DEBUT</span>' : ''}
+          ${g.away_pitcher||'TBD'}${g.away_pitcher_hand?` <span style="color:var(--muted)">(${g.away_pitcher_hand}HP)</span>`:''}${g.away_pitcher_debut ? ' <span style="color:var(--amber);font-weight:500">★ MLB DEBUT</span>' : ''}
           vs
-          ${g.home_pitcher||'TBD'}${g.home_pitcher_debut ? ' <span style="color:var(--amber);font-weight:500">★ MLB DEBUT</span>' : ''}
+          ${g.home_pitcher||'TBD'}${g.home_pitcher_hand?` <span style="color:var(--muted)">(${g.home_pitcher_hand}HP)</span>`:''}${g.home_pitcher_debut ? ' <span style="color:var(--amber);font-weight:500">★ MLB DEBUT</span>' : ''}
           · Total ${g.total||'?'}
         </div>
       </div>
@@ -1018,7 +1040,7 @@ function gameCardHTML(g) {
       </div>
     </div>
     <div class="card-body">
-      <div class="sit-flags">${sitFlagHTML(g.situations)}</div>
+      <div class="sit-flags">${pitcherMarkerHTML(g)}${lineupMarkerHTML(g)}${sitFlagHTML(g.situations)}</div>
       ${weatherHTML(g)}
       ${oddsTableHTML(g)}
       ${marketsHTML}
