@@ -1221,51 +1221,19 @@ ANALYSIS INSTRUCTIONS — CRITICAL:
 - DAY-GAME SHADOW: if a shadow profile is given, apply it as a SCORING-DISTRIBUTION shift, not a flat under — add its early-innings runs to your F5 projection and its late-innings runs to the full game. It is a small, approximate effect; do not let it swing a play on its own.
 - Current season form only — a team 2-8 in last 10 is a fade regardless of brand
 
-Return ONLY this JSON (no markdown). projAwayRuns, projHomeRuns, projTotal, and f5ProjTotal are what matter — the EV/breakeven/probability fields are recomputed downstream:
+Return ONLY this JSON (no markdown, no code fences). Return ONLY these fields — every EV, breakeven, win-probability, and juice table is recomputed downstream from your projections, so do NOT include them:
 {
   "situations": ["revenge","travel","sharp","weather","rest","series","fade","mustwin","debut"],
   "projAwayRuns": NUMBER,
   "projHomeRuns": NUMBER,
-  "ml": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
-  "mlEV": NUMBER,
-  "mlAwayProb": NUMBER,
-  "mlHomeProb": NUMBER,
-  "mlBreakeven": "the worst American odds line that still has positive EV e.g. -118",
-  "rl": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
-  "rlEV": NUMBER,
-  "rlBreakeven": "worst American odds still +EV e.g. -105",
-  "total": "BET OVER|BET UNDER|LEAN OVER|LEAN UNDER|SKIP",
-  "totalEV": NUMBER,
-  "totalLine": NUMBER,
   "projTotal": NUMBER,
-  "totalBreakeven": "worst total line still +EV e.g. Over 9.0 or Under 8.5",
-  "totalJuiceSensitivity": {
-    "description": "max juice at each nearby line where bet still has +EV",
-    "lines": [
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER}
-    ]
-  },
-  "f5": "BET AWAY|BET HOME|BET OVER|BET UNDER|LEAN AWAY|LEAN HOME|LEAN OVER|LEAN UNDER|SKIP",
-  "f5EV": NUMBER,
-  "f5Line": NUMBER,
   "f5ProjTotal": NUMBER,
-  "f5Breakeven": "worst f5 line still +EV",
-  "f5JuiceSensitivity": {
-    "lines": [
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER},
-      {"line": NUMBER, "direction": "Over|Under", "maxJuice": NUMBER, "ev": NUMBER}
-    ]
-  },
+  "ml": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
+  "rl": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
+  "total": "BET OVER|BET UNDER|LEAN OVER|LEAN UNDER|SKIP",
+  "f5": "BET AWAY|BET HOME|BET OVER|BET UNDER|LEAN AWAY|LEAN HOME|LEAN OVER|LEAN UNDER|SKIP",
   "best": "ml|rl|total|f5",
   "bestPlay": "one sentence on the strongest play",
-  "awayWinPct": NUMBER,
-  "homeWinPct": NUMBER,
-  "edgePct": NUMBER,
   "confidence": "LOW|MEDIUM|HIGH",
   "lineSharp": true|false,
   "sharpSide": "${game.away_team}|${game.home_team}|NONE",
@@ -1282,7 +1250,7 @@ The projTotal and f5ProjTotal are the most important numbers you produce — the
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 1200, messages: [{ role: 'user', content: prompt }] })
+    body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] })
   });
 
   if (!res.ok) throw new Error(`Claude error: ${res.status}`);
@@ -1616,6 +1584,11 @@ async function main() {
 
       const f5Lines = f5Map[game.id] || null;
       const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen);
+
+      if (!analysis) {
+        console.error(`  ✗ ${game.away_team} @ ${game.home_team}: analysis parse failed — keeping previous row, not overwriting`);
+        continue;
+      }
 
       // Derive ML/RL probabilities from the projected run margin, then all EV/breakeven/juice
       deriveRunModel(analysis, lines);
