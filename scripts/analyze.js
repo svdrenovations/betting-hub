@@ -603,12 +603,16 @@ async function fetchProbablePitchers(gameDate) {
         if (awayPitcher) pitcherMap[`away_${awayId}`] = {
           id: awayPitcher.id,
           name: awayPitcher.fullName,
-          note: awayPitcher.note || null
+          note: awayPitcher.note || null,
+          vs: homeId,
+          gamePk: game.gamePk
         };
         if (homePitcher) pitcherMap[`home_${homeId}`] = {
           id: homePitcher.id,
           name: homePitcher.fullName,
-          note: homePitcher.note || null
+          note: homePitcher.note || null,
+          vs: awayId,
+          gamePk: game.gamePk
         };
       }
     }
@@ -642,10 +646,17 @@ async function getTeamId(teamName) {
     const res = await fetch('https://statsapi.mlb.com/api/v1/teams?sportId=1&season=2026');
     if (!res.ok) return null;
     const data = await res.json();
-    const team = data.teams?.find(t =>
-      t.name.toLowerCase().includes(teamName.toLowerCase().split(' ').pop().toLowerCase()) ||
-      teamName.toLowerCase().includes(t.name.toLowerCase().split(' ').pop().toLowerCase())
-    );
+    const teams = data.teams || [];
+    const norm = s => (s || '').toLowerCase().replace(/[^a-z ]/g, '').trim();
+    const target = norm(teamName);
+    // 1) exact full-name match (the Odds API almost always uses MLB's full names)
+    let team = teams.find(t => norm(t.name) === target);
+    // 2) full-name containment (handles minor punctuation/variant) — NOT last-word,
+    //    so "Chicago White Sox" can't collide with "Boston Red Sox".
+    if (!team) team = teams.find(t => { const tn = norm(t.name); return target.includes(tn) || tn.includes(target); });
+    // 3) Athletics relocation/naming alias
+    if (!team && target.includes('athletics')) team = teams.find(t => norm(t.name).includes('athletics'));
+    if (!team) console.log(`  ⚠ Could not resolve team id for "${teamName}"`);
     return team?.id || null;
   } catch(e) { return null; }
 }
@@ -1266,7 +1277,7 @@ The projTotal and f5ProjTotal are the most important numbers you produce — the
   }
 }
 
-async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData) {
+async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData, pitcherStatus) {
   const row = {
     id: game.id,
     game_date: new Date(game.commence_time).toLocaleDateString('en-CA', {timeZone: 'America/New_York'}),
@@ -1275,6 +1286,9 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
     commence_time: game.commence_time,
     away_pitcher: awayPitcherData?.name || 'TBD',
     home_pitcher: homePitcherData?.name || 'TBD',
+    away_pitcher_hand: awayPitcherData?.throwHand || null,
+    home_pitcher_hand: homePitcherData?.throwHand || null,
+    pitcher_status: pitcherStatus || 'tbd',
     away_pitcher_debut: awayPitcherData?.debut || false,
     home_pitcher_debut: homePitcherData?.debut || false,
     away_ml: lines.awayML,
@@ -1318,7 +1332,8 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
     away_lineup_ops: awayMatchupData?.avgOPS || null,
     away_lineup_k_rate: awayMatchupData?.kRate || null,
     home_lineup_ops: homeMatchupData?.avgOPS || null,
-    home_lineup_k_rate: homeMatchupData?.kRate || null
+    home_lineup_k_rate: homeMatchupData?.kRate || null,
+    lineup_status: (awayMatchupData && homeMatchupData) ? 'confirmed' : (awayMatchupData || homeMatchupData) ? 'partial' : 'projected'
   };
 
   if (analysis) {
@@ -1537,6 +1552,23 @@ async function main() {
       const awayPitcherInfo = awayTeamId ? pitcherMap[`away_${awayTeamId}`] : null;
       const homePitcherInfo = homeTeamId ? pitcherMap[`home_${homeTeamId}`] : null;
 
+      // Confirm both probables come from the SAME real MLB game between these two teams.
+      // If a probable's recorded opponent/gamePk doesn't line up, the team mapping is off.
+      let pitcherStatus = 'tbd';
+      if (awayPitcherInfo && homePitcherInfo) {
+        const sameGame = awayPitcherInfo.gamePk && awayPitcherInfo.gamePk === homePitcherInfo.gamePk;
+        const opponentsMatch = awayPitcherInfo.vs === homeTeamId && homePitcherInfo.vs === awayTeamId;
+        if (sameGame && opponentsMatch) {
+          pitcherStatus = 'confirmed';
+        } else {
+          pitcherStatus = 'mismatch';
+          console.log(`  ⚠ PITCHER MATCHUP UNVERIFIED for ${game.away_team} @ ${game.home_team}: ${awayPitcherInfo.name} (gamePk ${awayPitcherInfo.gamePk}, vs ${awayPitcherInfo.vs}) / ${homePitcherInfo.name} (gamePk ${homePitcherInfo.gamePk}, vs ${homePitcherInfo.vs}); resolved team ids away=${awayTeamId} home=${homeTeamId}`);
+        }
+      } else if (awayPitcherInfo || homePitcherInfo) {
+        pitcherStatus = 'partial';
+      }
+      if (pitcherStatus === 'confirmed') console.log(`  ✓ Pitchers confirmed: ${awayPitcherInfo.name} @ ${homePitcherInfo.name} (gamePk ${awayPitcherInfo.gamePk})`);
+
       // Check for MLB debut
       const [awayDebut, homeDebut] = await Promise.all([
         awayPitcherInfo ? checkMLBDebut(awayPitcherInfo.id) : Promise.resolve(false),
@@ -1594,7 +1626,7 @@ async function main() {
       deriveRunModel(analysis, lines);
       deriveNumbers(analysis, lines, f5Lines);
 
-      await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups);
+      await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, pitcherStatus);
 
       const ap = awayPitcherInfo?.name || 'TBD';
       const hp = homePitcherInfo?.name || 'TBD';
