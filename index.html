@@ -382,7 +382,7 @@ function betPasses(b){
   if(g.market==='total' && !t.includes('total')) return false;
   if(g.market==='rl' && !(t.includes('run line')||t.includes('rl '))) return false;
   if(g.market==='f5' && !t.includes('f5')) return false;
-  if(g.ev!=='all'){ const e=parseFloat(b.ev); if(isNaN(e)) return false; if(g.ev==='pos'&&e<0) return false; if(g.ev==='3'&&e<3) return false; if(g.ev==='6'&&e<6) return false; }
+  if(g.ev!=='all'){ const e=parseFloat(b.ev); if(isNaN(e)) return false; if(g.ev==='lo'&&!(e>=0.1&&e<2.5)) return false; if(g.ev==='mid'&&!(e>=2.5&&e<6)) return false; if(g.ev==='hi'&&e<6) return false; }
   if(g.clv==='beat' && !(b.clv!=null && parseFloat(b.clv)>0)) return false;
   if(g.clv==='miss' && !(b.clv!=null && parseFloat(b.clv)<0)) return false;
   if(g.from && b.date && String(b.date) < g.from) return false;
@@ -393,7 +393,7 @@ function filterBarHTML(){
   const grp=(key,opts)=>opts.map(([v,lbl])=>`<button class="filter-btn ${g[key]===v?'on':''}" onclick="setG('${key}','${v}')">${lbl}</button>`).join('');
   return `<div class="tracker-filters">${grp('result',[['all','All'],['pending','Pending'],['win','Won'],['loss','Lost']])}</div>`
     + `<div class="tracker-filters">${grp('market',[['all','All mkts'],['moneyline','ML'],['total','Total'],['rl','RL'],['f5','F5']])}</div>`
-    + `<div class="tracker-filters">${grp('ev',[['all','Any EV'],['pos','+EV'],['3','3%+'],['6','6%+']])}`
+    + `<div class="tracker-filters">${grp('ev',[['all','Any EV'],['lo','.1% - 2.4%'],['mid','2.5% - 5.9%'],['hi','6%+']])}`
     + grp('clv',[['all','Any CLV'],['beat','Beat close'],['miss','Missed']])
     + `<input type="date" class="filter-date" value="${g.from||''}" onchange="setG('from',this.value)" title="Only plays on or after this date">`
     + (g.from?`<button class="filter-btn" onclick="setG('from','')">clear date</button>`:'')
