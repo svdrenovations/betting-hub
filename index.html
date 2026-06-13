@@ -144,6 +144,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .section-head{font-size:11px;font-family:DM Mono,monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin:1.5rem 0 .75rem;padding-bottom:.5rem;border-bottom:1px solid var(--border)}
 .tracker-filters{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap}
 .filter-date{padding:5px 10px;font-size:12px;border-radius:20px;border:1px solid var(--border);background:none;color:var(--text);font-family:DM Mono,monospace;color-scheme:dark}
+.filter-datelbl{font-size:11px;color:var(--muted);font-family:DM Mono,monospace;align-self:center}
 .ol{color:var(--muted);padding:4px 6px;text-align:left;white-space:nowrap}
 .ov{color:var(--text);padding:4px 6px}
 .ov strong{color:var(--green)}
@@ -373,8 +374,8 @@ function getLocalDate() {
 }
 let currentDate = getLocalDate();
 let currentFilter = 'all';
-let gFilter = { result:'all', market:'all', ev:'all', clv:'all', from:'' };
-function anyFilterActive(){ return gFilter.result!=='all' || gFilter.market!=='all' || gFilter.ev!=='all' || gFilter.clv!=='all' || !!gFilter.from; }
+let gFilter = { result:'all', market:'all', ev:'all', clv:'all', from:'', to:'' };
+function anyFilterActive(){ return gFilter.result!=='all' || gFilter.market!=='all' || gFilter.ev!=='all' || gFilter.clv!=='all' || !!gFilter.from || !!gFilter.to; }
 function betPasses(b){
   const g=gFilter, t=(b.type||'').toLowerCase();
   if(g.result!=='all' && b.result!==g.result) return false;
@@ -386,6 +387,7 @@ function betPasses(b){
   if(g.clv==='beat' && !(b.clv!=null && parseFloat(b.clv)>0)) return false;
   if(g.clv==='miss' && !(b.clv!=null && parseFloat(b.clv)<0)) return false;
   if(g.from && b.date && String(b.date) < g.from) return false;
+  if(g.to && b.date && String(b.date) > g.to) return false;
   return true;
 }
 function filterBarHTML(){
@@ -395,11 +397,67 @@ function filterBarHTML(){
     + `<div class="tracker-filters">${grp('market',[['all','All mkts'],['moneyline','ML'],['total','Total'],['rl','RL'],['f5','F5']])}</div>`
     + `<div class="tracker-filters">${grp('ev',[['all','Any EV'],['lo','.1% - 2.4%'],['mid','2.5% - 5.9%'],['hi','6%+']])}`
     + grp('clv',[['all','Any CLV'],['beat','Beat close'],['miss','Missed']])
-    + `<input type="date" class="filter-date" value="${g.from||''}" onchange="setG('from',this.value)" title="Only plays on or after this date">`
-    + (g.from?`<button class="filter-btn" onclick="setG('from','')">clear date</button>`:'')
+    + `<span class="filter-datelbl">from</span><input type="date" class="filter-date" value="${g.from||''}" onchange="setG('from',this.value)" title="From date (inclusive). Set From = To for a single day.">`
+    + `<span class="filter-datelbl">to</span><input type="date" class="filter-date" value="${g.to||''}" onchange="setG('to',this.value)" title="To date (inclusive)">`
+    + ((g.from||g.to)?`<button class="filter-btn" onclick="clearDates()">clear dates</button>`:'')
     + `</div>`;
 }
 function setG(key,val){ gFilter[key]=val; renderTracker(); renderStats(); }
+function clearDates(){ gFilter.from=''; gFilter.to=''; renderTracker(); renderStats(); }
+
+// ── TRACKER COLUMN SORTING ───────────────────────────────────────────────────
+let gSort = { col:'date', dir:'desc' };
+const TRACKER_COLS = [
+  { key:'date',       label:'Date',       w:70, t:'str'  },
+  { key:'matchup',    label:'Matchup',    w:0,  t:'str'  },
+  { key:'type',       label:'Type',       w:0,  t:'str'  },
+  { key:'odds',       label:'Odds',       w:52, t:'num'  },
+  { key:'betLine',    label:'Spread/Tot', w:60, t:'num'  },
+  { key:'maxJuice',   label:'Max juice',  w:60, t:'num'  },
+  { key:'book',       label:'Book',       w:80, t:'str'  },
+  { key:'units',      label:'Units',      w:46, t:'num'  },
+  { key:'ev',         label:'EV%',        w:58, t:'num'  },
+  { key:'confidence', label:'Conf',       w:52, t:'rank' },
+  { key:'situations', label:'Situation',  w:0,  t:'str'  },
+  { key:'score',      label:'Score',      w:50, t:'num'  },
+  { key:'clv',        label:'CLV',        w:56, t:'num'  },
+  { key:'result',     label:'Result',     w:0,  t:'rank' }
+];
+function sortVal(b, col){
+  switch(col){
+    case 'odds':     return parseFloat(b.odds);
+    case 'betLine':  return parseFloat(b.betLine);
+    case 'maxJuice': return parseFloat(b.maxJuice);
+    case 'units':    return parseFloat(b.units);
+    case 'ev':       return parseFloat(b.ev);
+    case 'clv':      return parseFloat(b.clv);
+    case 'score':    return (b.awayScore!=null && b.homeScore!=null) ? (Number(b.awayScore)+Number(b.homeScore)) : null;
+    case 'confidence': return ({LOW:1,MEDIUM:2,HIGH:3})[(b.confidence||'').toUpperCase()] ?? null;
+    case 'result':   return ({win:1,loss:2,push:3,pending:4})[b.result] ?? null;
+    default:         return (b[col]==null || b[col]==='') ? null : String(b[col]).toLowerCase();
+  }
+}
+function sortBets(arr){
+  const { col, dir } = gSort, s = dir==='asc' ? 1 : -1;
+  return arr.slice().sort((a,b)=>{
+    const va=sortVal(a,col), vb=sortVal(b,col);
+    const an=(va==null||(typeof va==='number'&&isNaN(va))), bn=(vb==null||(typeof vb==='number'&&isNaN(vb)));
+    if(an&&bn) return 0; if(an) return 1; if(bn) return -1;   // missing values always sort last
+    if(va<vb) return -1*s; if(va>vb) return 1*s; return 0;
+  });
+}
+function setSort(col){
+  if(gSort.col===col) gSort.dir = gSort.dir==='asc' ? 'desc' : 'asc';
+  else { gSort.col=col; const c=TRACKER_COLS.find(x=>x.key===col); gSort.dir = (c && c.t==='str') ? 'asc' : 'desc'; }
+  renderTracker();
+}
+function trackerHeadHTML(){
+  return TRACKER_COLS.map(c=>{
+    const active = gSort.col===c.key, arrow = active ? (gSort.dir==='asc'?' ▲':' ▼') : '';
+    return `<th style="${c.w?`width:${c.w}px;`:''}cursor:pointer;user-select:none;${active?'color:var(--text)':''}" onclick="setSort('${c.key}')" title="Sort by ${c.label}">${c.label}${arrow}</th>`;
+  }).join('') + '<th style="width:28px"></th>';
+}
+function clearDates(){ gFilter.from=''; gFilter.to=''; renderTracker(); renderStats(); }
 let pendingLog = null;
 let pendingLogEV = null;
 let expanded = {};
@@ -1324,12 +1382,8 @@ function renderTracker() {
     : `${filtered.length} bets${anyFilterActive()?' match':' logged'}`;
   if (!filtered.length) { el.innerHTML = `<div class="empty-state"><div class="empty-title">No bets ${anyFilterActive()?'match the filter':'yet'}</div></div>`; return; }
   el.innerHTML = `<table class="t-table"><thead><tr>
-    <th style="width:70px">Date</th><th>Matchup</th><th>Type</th>
-    <th style="width:52px">Odds</th><th style="width:60px">Spread/Tot</th><th style="width:60px">Max juice</th>
-    <th style="width:80px">Book</th><th style="width:46px">Units</th>
-    <th style="width:58px">EV%</th><th style="width:52px">Conf</th>
-    <th>Situation</th><th style="width:50px">Score</th><th style="width:56px">CLV</th><th>Result</th><th style="width:28px"></th>
-  </tr></thead><tbody>${filtered.map(b => {
+    ${trackerHeadHTML()}
+  </tr></thead><tbody>${sortBets(filtered).map(b => {
     const btns = ['win','loss','push','pending'].map(r => `<button onclick="setResult(${b.id},'${r}')" class="${r}-btn ${b.result===r?'on':''}">${r}</button>`).join('');
     const ev = b.ev!=null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
     return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px">${b.matchup}</td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td>
