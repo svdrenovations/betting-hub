@@ -1561,7 +1561,55 @@ async function settlePendingBets() {
   }
 }
 
+// ── CLOSING-LINE REFRESH (lightweight) ───────────────────────────────────────
+// Runs ~5 min before each block of games (RUN_TYPE=closing). Only re-pulls odds and
+// PATCHes the odds columns on existing game rows — no Claude calls, no re-analysis, so
+// the day's verdicts are untouched. Games already underway are skipped, so each game's
+// row keeps the last line seen before its first pitch ≈ the true close.
+async function refreshClosingOdds() {
+  console.log('\n=== Closing-line refresh ===');
+  console.log(`${new Date().toLocaleString('en-US',{timeZone:'America/New_York'})} ET\n`);
+  const etDate = new Date().toLocaleDateString('en-US', {timeZone:'America/New_York', year:'numeric', month:'2-digit', day:'2-digit'});
+  const [etMonth, etDay, etYear] = etDate.split('/');
+  const today = etYear + '-' + etMonth + '-' + etDay;
+  const [games, f5Map] = await Promise.all([fetchOddsAPI(), fetchF5Lines()]);
+  const now = new Date();
+  let updated = 0;
+  for (const g of games) {
+    const gameEtDate = new Date(g.commence_time).toLocaleDateString('en-CA', {timeZone:'America/New_York'});
+    if (gameEtDate !== today) continue;
+    const minutesSinceStart = (now - new Date(g.commence_time)) / 60000;
+    if (minutesSinceStart > 5) continue; // already started — its last refresh holds the close
+    const lines = parseOddsData(g);
+    const awayML = parseFloat(lines.awayML), homeML = parseFloat(lines.homeML);
+    if (!isNaN(awayML) && !isNaN(homeML) && (Math.abs(awayML) > 600 || Math.abs(homeML) > 600)) continue; // live/in-game pricing
+    const f5 = f5Map[g.id] || null;
+    const payload = {
+      away_ml: lines.awayML, home_ml: lines.homeML, total: lines.total,
+      over_odds: lines.overOdds, under_odds: lines.underOdds,
+      away_rl: lines.awayRL, home_rl: lines.homeRL,
+      away_rl_odds: lines.awayRLOdds, home_rl_odds: lines.homeRLOdds,
+      f5_away_ml: f5?.f5AwayML || null, f5_home_ml: f5?.f5HomeML || null,
+      f5_total: f5?.f5Total || null, f5_over_odds: f5?.f5OverOdds || null, f5_under_odds: f5?.f5UnderOdds || null
+    };
+    const url = `${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&away_team=eq.${encodeURIComponent(g.away_team)}&home_team=eq.${encodeURIComponent(g.home_team)}`;
+    try {
+      const res = await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type':'application/json', 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}`, 'Prefer':'return=minimal' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) { updated++; console.log(`  ✓ Close refreshed: ${g.away_team} @ ${g.home_team} | ML ${lines.awayML}/${lines.homeML} | ${lines.total}`); }
+      else console.error(`  ✗ ${g.away_team} @ ${g.home_team}: ${await res.text()}`);
+    } catch(e) { console.error(`  ✗ ${g.away_team} @ ${g.home_team}:`, e.message); }
+    await new Promise(r => setTimeout(r, 300));
+  }
+  console.log(`\n✅ Closing refresh done — ${updated} games updated`);
+  await settlePendingBets();
+}
+
 async function main() {
+  if (RUN_TYPE === 'closing') { await refreshClosingOdds(); return; }
   console.log(`\n=== MLB Analysis: ${RUN_TYPE} ===`);
   console.log(`${new Date().toLocaleString('en-US',{timeZone:'America/New_York'})} ET\n`);
 
