@@ -51,7 +51,7 @@ const PARK_COORDS = {
   'Minnesota Twins': { lat: 44.9817, lon: -93.2777, dome: false , homeplateFacing: 100},
   'New York Mets': { lat: 40.7571, lon: -73.8458, dome: false , homeplateFacing: 335},
   'New York Yankees': { lat: 40.8296, lon: -73.9262, dome: false , homeplateFacing: 325},
-  'Oakland Athletics': { lat: 37.7516, lon: -122.2005, dome: false , homeplateFacing: 60},
+  'Athletics': { lat: 38.5803, lon: -121.5135, dome: false , homeplateFacing: 30},
   'Philadelphia Phillies': { lat: 39.9061, lon: -75.1665, dome: false , homeplateFacing: 340},
   'Pittsburgh Pirates': { lat: 40.4469, lon: -80.0057, dome: false , homeplateFacing: 30},
   'San Diego Padres': { lat: 32.7076, lon: -117.1570, dome: false , homeplateFacing: 300},
@@ -89,7 +89,7 @@ const PARK_FACTORS = {
   'Minnesota Twins':      { runFactor: 0.99, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
   'New York Mets':        { runFactor: 0.96, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
   'New York Yankees':     { runFactor: 1.03, windFactor: 1.1,  shadowSusc: 0.45, retractable: false },
-  'Oakland Athletics':    { runFactor: 0.98, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
+  'Athletics':            { runFactor: 1.09, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
   'Philadelphia Phillies':{ runFactor: 1.03, windFactor: 1.0,  shadowSusc: 0.40, retractable: false },
   'Pittsburgh Pirates':   { runFactor: 0.97, windFactor: 0.95, shadowSusc: 0.40, retractable: false },
   'San Diego Padres':     { runFactor: 0.94, windFactor: 0.95, shadowSusc: 0.45, retractable: false },
@@ -102,7 +102,16 @@ const PARK_FACTORS = {
   'Washington Nationals': { runFactor: 1.00, windFactor: 1.0,  shadowSusc: 0.40, retractable: false }
 };
 
-function lookupCoords(team) {
+// Non-standard / neutral-site venues, resolved by the schedule's actual venue name
+// rather than the team's usual home park. Handles the A's 2026 Las Vegas homestand,
+// future international/neutral-site series, etc. Values are tunable estimates.
+const VENUE_PARKS = {
+  'Las Vegas Ballpark': { lat: 36.1568, lon: -115.3289, dome: false, homeplateFacing: 30, runFactor: 1.12, windFactor: 1.05, shadowSusc: 0.40, retractable: false },
+  'Sutter Health Park': { lat: 38.5803, lon: -121.5135, dome: false, homeplateFacing: 30, runFactor: 1.09, windFactor: 1.00, shadowSusc: 0.40, retractable: false }
+};
+
+function lookupCoords(team, venue) {
+  if (venue && VENUE_PARKS[venue]) { const v = VENUE_PARKS[venue]; return { lat: v.lat, lon: v.lon, dome: v.dome, homeplateFacing: v.homeplateFacing }; }
   let park = PARK_COORDS[team];
   if (!park) {
     const key = Object.keys(PARK_COORDS).find(k => k.includes(team.split(' ').pop()) || team.includes(k.split(' ').pop()));
@@ -111,7 +120,8 @@ function lookupCoords(team) {
   return park || null;
 }
 
-function getParkFactors(team) {
+function getParkFactors(team, venue) {
+  if (venue && VENUE_PARKS[venue]) { const v = VENUE_PARKS[venue]; return { runFactor: v.runFactor, windFactor: v.windFactor, shadowSusc: v.shadowSusc, retractable: v.retractable }; }
   let f = PARK_FACTORS[team];
   if (!f) {
     const key = Object.keys(PARK_FACTORS).find(k => k.includes(team.split(' ').pop()) || team.includes(k.split(' ').pop()));
@@ -145,10 +155,10 @@ function solarPosition(lat, lon, date) {
 // early innings slightly up (high sun, warm, no shadow line), mid-late innings down
 // (shadow transition + cooling). APPROXIMATE — magnitude = SHADOW_STRENGTH x park
 // susceptibility x how far the sun falls. Tune from a backtest, do not trust as-is.
-function shadowProfile(homeTeam, gameTime) {
+function shadowProfile(homeTeam, gameTime, venue) {
   try {
-    const park = lookupCoords(homeTeam);
-    const pf = getParkFactors(homeTeam);
+    const park = lookupCoords(homeTeam, venue);
+    const pf = getParkFactors(homeTeam, venue);
     if (!park || park.dome) return null;          // roofed -> no shadows
     const susc = pf.shadowSusc || 0;
     if (susc <= 0) return null;
@@ -350,16 +360,11 @@ function deriveRunModel(a, lines) {
 }
 
 // Fetch weather for home park
-async function fetchWeather(homeTeam, gameTime) {
+async function fetchWeather(homeTeam, gameTime, venue) {
   try {
-    let park = PARK_COORDS[homeTeam];
-    if (!park) {
-      // fuzzy match
-      const key = Object.keys(PARK_COORDS).find(k => k.includes(homeTeam.split(' ').pop()) || homeTeam.includes(k.split(' ').pop()));
-      if (key) park = PARK_COORDS[key];
-    }
+    const park = lookupCoords(homeTeam, venue);
     if (!park) { console.log(`  No park found for ${homeTeam}`); return null; }
-    const pf = getParkFactors(homeTeam);
+    const pf = getParkFactors(homeTeam, venue);
     if (park.dome && !pf.retractable) {
       return { dome: true, runFactor: pf.runFactor, description: 'Fixed-roof dome — weather not a factor' };
     }
@@ -591,13 +596,16 @@ async function fetchProbablePitchers(gameDate) {
     const res = await fetch(
       `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${gameDate}&gameType=R&hydrate=probablePitcher(note),team`
     );
-    if (!res.ok) return {};
+    if (!res.ok) return { pitcherMap: {}, venueMap: {} };
     const data = await res.json();
     const pitcherMap = {};
+    const venueMap = {};
     for (const date of (data.dates || [])) {
       for (const game of (date.games || [])) {
         const awayId = game.teams?.away?.team?.id;
         const homeId = game.teams?.home?.team?.id;
+        const venueName = game.venue?.name || null;
+        if (homeId) venueMap[`home_${homeId}`] = venueName; // actual park for this game (handles neutral sites)
         const awayPitcher = game.teams?.away?.probablePitcher;
         const homePitcher = game.teams?.home?.probablePitcher;
         if (awayPitcher) pitcherMap[`away_${awayId}`] = {
@@ -605,22 +613,24 @@ async function fetchProbablePitchers(gameDate) {
           name: awayPitcher.fullName,
           note: awayPitcher.note || null,
           vs: homeId,
-          gamePk: game.gamePk
+          gamePk: game.gamePk,
+          venue: venueName
         };
         if (homePitcher) pitcherMap[`home_${homeId}`] = {
           id: homePitcher.id,
           name: homePitcher.fullName,
           note: homePitcher.note || null,
           vs: awayId,
-          gamePk: game.gamePk
+          gamePk: game.gamePk,
+          venue: venueName
         };
       }
     }
     console.log(`Probable pitchers found: ${Object.keys(pitcherMap).length}`);
-    return pitcherMap;
+    return { pitcherMap, venueMap };
   } catch(e) {
     console.log('Pitcher lookup failed:', e.message);
-    return {};
+    return { pitcherMap: {}, venueMap: {} };
   }
 }
 
@@ -1102,7 +1112,7 @@ function validateTotal(oddsTotal, anTotal) {
   return oddsTotal;
 }
 
-async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen) {
+async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName) {
   console.log(`  Analyzing ${game.away_team} @ ${game.home_team}...`);
 
   const weatherInfo = weather
@@ -1127,10 +1137,11 @@ async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, hom
     `${game.away_team} lineup bats: ${awayHand ? `${awayHand.L}L/${awayHand.R}R/${awayHand.S}S` : '?'} vs ${homePitcher?.throwHand||'?'}HP (home starter)\n` +
     `${game.home_team} lineup bats: ${homeHand ? `${homeHand.L}L/${homeHand.R}R/${homeHand.S}S` : '?'} vs ${awayPitcher?.throwHand||'?'}HP (away starter)`;
 
-  const pf = getParkFactors(game.home_team);
-  const parkInfo = `${game.home_team} park: run factor ${pf.runFactor} (1.0 = neutral, >1 = hitter-friendly), wind plays ${pf.windFactor}x (how much wind matters here)${pf.retractable ? ', retractable roof' : ''}`;
+  const pf = getParkFactors(game.home_team, venueName);
+  const atNeutral = venueName && VENUE_PARKS[venueName];
+  const parkInfo = `${atNeutral ? `Venue: ${venueName} (neutral/alternate site) — ` : ''}${game.home_team} park: run factor ${pf.runFactor} (1.0 = neutral, >1 = hitter-friendly), wind plays ${pf.windFactor}x (how much wind matters here)${pf.retractable ? ', retractable roof' : ''}`;
 
-  const shadow = shadowProfile(game.home_team, game.commence_time);
+  const shadow = shadowProfile(game.home_team, game.commence_time, venueName);
   const shadowInfo = shadow ? shadow.note : 'No day-game shadow factor (night game, roofed park, or low susceptibility).';
 
   const awayTeamInfo = awayStats
@@ -1514,7 +1525,9 @@ async function main() {
   const etDate = new Date().toLocaleDateString('en-US', {timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'});
   const [etMonth, etDay, etYear] = etDate.split('/');
   const today = etYear + '-' + etMonth + '-' + etDay;
-  const [games, f5Map, pitcherMap] = await Promise.all([fetchOddsAPI(), fetchF5Lines(), fetchProbablePitchers(today)]);
+  const [games, f5Map, probables] = await Promise.all([fetchOddsAPI(), fetchF5Lines(), fetchProbablePitchers(today)]);
+  const pitcherMap = probables.pitcherMap;
+  const venueMap = probables.venueMap;
   const now = new Date();
   const todayGames = games.filter(g => {
     // Compare each game's date in ET (matches how game_date is stored on upsert).
@@ -1555,6 +1568,9 @@ async function main() {
 
       const awayPitcherInfo = awayTeamId ? pitcherMap[`away_${awayTeamId}`] : null;
       const homePitcherInfo = homeTeamId ? pitcherMap[`home_${homeTeamId}`] : null;
+
+      // Actual venue for THIS game (handles neutral sites like the A's Las Vegas series).
+      const venueName = (homeTeamId && venueMap[`home_${homeTeamId}`]) || homePitcherInfo?.venue || awayPitcherInfo?.venue || null;
 
       // Confirm both probables come from the SAME real MLB game between these two teams.
       // If a probable's recorded opponent/gamePk doesn't line up, the team mapping is off.
@@ -1611,7 +1627,7 @@ async function main() {
 
       const [anData, weather, awayStats, homeStats] = await Promise.all([
         fetchActionNetwork(game.away_team, game.home_team, game.commence_time),
-        fetchWeather(game.home_team, game.commence_time),
+        fetchWeather(game.home_team, game.commence_time, venueName),
         fetchTeamStats(game.away_team),
         fetchTeamStats(game.home_team)
       ]);
@@ -1619,7 +1635,7 @@ async function main() {
       if (anData?.total) lines.total = validateTotal(lines.total, anData.total);
 
       const f5Lines = f5Map[game.id] || null;
-      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen);
+      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName);
 
       if (!analysis) {
         console.error(`  ✗ ${game.away_team} @ ${game.home_team}: analysis parse failed — keeping previous row, not overwriting`);
