@@ -1408,6 +1408,21 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
 }
 
 // ── AUTO SETTLE PENDING BETS ─────────────────────────────────────────────────
+// Convert American odds to implied probability (includes vig; fine for CLV deltas
+// since both sides carry comparable juice and we compare the same market over time).
+function americanToProb(o){ o=parseFloat(o); if(isNaN(o)) return null; return o>0 ? 100/(o+100) : (-o)/((-o)+100); }
+// Map a bet's type to the closing price + line on its exact side, from a stored game row.
+function closingForBet(typeRaw, g){
+  const type=(typeRaw||'').toLowerCase(), f5=type.includes('f5');
+  if(type.includes('over'))  return { odds: f5?g.f5_over_odds:g.over_odds,  line: f5?g.f5_total:g.total };
+  if(type.includes('under')) return { odds: f5?g.f5_under_odds:g.under_odds, line: f5?g.f5_total:g.total };
+  if(type.includes('(away')) return { odds: f5?g.f5_away_ml:(type.includes('run line')?g.away_rl_odds:g.away_ml), line: type.includes('run line')?g.away_rl:null };
+  if(type.includes('(home')) return { odds: f5?g.f5_home_ml:(type.includes('run line')?g.home_rl_odds:g.home_ml), line: type.includes('run line')?g.home_rl:null };
+  if(type.includes('rl -1.5')) return { odds: g.away_rl_odds, line: g.away_rl };
+  if(type.includes('rl +1.5')) return { odds: g.home_rl_odds, line: g.home_rl };
+  return { odds:null, line:null };
+}
+
 async function settlePendingBets() {
   console.log('\nChecking pending bets for settlement...');
   try {
@@ -1422,6 +1437,7 @@ async function settlePendingBets() {
     const bets = await res.json();
     if (!bets.length) { console.log('  No pending bets to settle'); return; }
     console.log(`  Found ${bets.length} pending bets`);
+    const closingCache = new Map(); // game_date -> stored game rows (closing-ish odds)
 
     for (const bet of bets) {
       try {
@@ -1486,6 +1502,30 @@ async function settlePendingBets() {
 
         if (result === 'pending') continue;
 
+        // Capture closing line + CLV (best-effort — never blocks settlement)
+        let closing_odds=null, closing_line=null, clv=null;
+        try {
+          if (!closingCache.has(bet.game_date)) {
+            const gRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=away_team,home_team,away_ml,home_ml,total,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,f5_away_ml,f5_home_ml,f5_total,f5_over_odds,f5_under_odds`, {
+              headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
+            });
+            closingCache.set(bet.game_date, gRes.ok ? await gRes.json() : []);
+          }
+          const rows = closingCache.get(bet.game_date) || [];
+          const gmatch = rows.find(r => {
+            const at=r.away_team||'', ht=r.home_team||'';
+            return (at.includes(awayName.split(' ').pop()) || awayName.includes(at.split(' ').pop())) &&
+                   (ht.includes((homeName||'').split(' ').pop()) || (homeName||'').includes(ht.split(' ').pop()));
+          });
+          if (gmatch) {
+            const c = closingForBet(bet.bet_type, gmatch);
+            closing_odds = c.odds || null;
+            closing_line = (c.line != null && c.line !== '') ? String(c.line) : null;
+            const pc = americanToProb(c.odds), pb = americanToProb(bet.odds);
+            if (pc != null && pb != null) clv = +(((pc - pb) * 100).toFixed(1));
+          }
+        } catch (e) { /* CLV is best-effort */ }
+
         // Update bet in Supabase
         const updateRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
           method: 'PATCH',
@@ -1499,12 +1539,16 @@ async function settlePendingBets() {
             result,
             away_score: awayScore,
             home_score: homeScore,
+            closing_odds,
+            closing_line,
+            clv,
             settled_at: new Date().toISOString()
           })
         });
 
         if (updateRes.ok) {
-          console.log(`  ✓ Settled: ${bet.matchup} — ${result.toUpperCase()} (${awayScore}-${homeScore})`);
+          const clvTag = clv != null ? ` · CLV ${clv>=0?'+':''}${clv}%` : '';
+          console.log(`  ✓ Settled: ${bet.matchup} — ${result.toUpperCase()} (${awayScore}-${homeScore})${clvTag}`);
         }
 
         await new Promise(r => setTimeout(r, 500));
