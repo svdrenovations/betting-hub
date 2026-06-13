@@ -1140,6 +1140,20 @@ function parseOddsData(game) {
     }
     if (awayML&&homeML&&total&&awayRL) break;
   }
+  // MLB run-line invariant: the moneyline favorite is ALWAYS the -1.5 side. If the feed
+  // landed the -1.5 on the ML underdog (an outcome-ordering quirk that flips some games),
+  // swap the run-line points AND their odds so the favorite holds -1.5. No-op when already
+  // correct. Keeps the displayed RL, the cover probabilities, EV, and the verdict all
+  // consistent with the moneyline instead of contradicting it.
+  const aProb = americanToProb(awayML), hProb = americanToProb(homeML);
+  const aRLpt = parseFloat(awayRL), hRLpt = parseFloat(homeRL);
+  if (aProb != null && hProb != null && aProb !== hProb && !isNaN(aRLpt) && !isNaN(hRLpt) && (aRLpt < 0) !== (hRLpt < 0)) {
+    const awayIsFav = aProb > hProb;
+    if (awayIsFav !== (aRLpt < 0)) {
+      [awayRL, homeRL] = [homeRL, awayRL];
+      [awayRLOdds, homeRLOdds] = [homeRLOdds, awayRLOdds];
+    }
+  }
   return {awayML,homeML,total,overOdds,underOdds,awayRL,homeRL,awayRLOdds,homeRLOdds};
 }
 
