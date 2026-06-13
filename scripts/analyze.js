@@ -1601,6 +1601,56 @@ async function settlePendingBets() {
   } catch(e) {
     console.error('Settlement error:', e.message);
   }
+  await backfillClv();
+}
+
+// One-time/ongoing backfill: settled bets that predate CLV capture (or whose game row
+// had no odds when they settled) have clv = null. Recompute it from the game's stored
+// closing-ish odds. Idempotent — once clv is set, the bet drops out of the query.
+async function backfillClv() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?result=in.(win,loss,push)&clv=is.null&order=game_date.desc&limit=300`, {
+      headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
+    });
+    if (!res.ok) return;
+    const bets = await res.json();
+    if (!bets.length) return;
+    console.log(`\nBackfilling CLV for ${bets.length} settled bets missing it...`);
+    const cache = new Map();
+    let filled = 0;
+    for (const bet of bets) {
+      try {
+        const matchup = bet.matchup || '';
+        const awayName = matchup.split(' @ ')[0] || '';
+        const homeName = matchup.split(' @ ')[1] || '';
+        if (!cache.has(bet.game_date)) {
+          const gRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=away_team,home_team,away_ml,home_ml,total,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,f5_away_ml,f5_home_ml,f5_total,f5_over_odds,f5_under_odds`, {
+            headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
+          });
+          cache.set(bet.game_date, gRes.ok ? await gRes.json() : []);
+        }
+        const rows = cache.get(bet.game_date) || [];
+        const g = rows.find(r => {
+          const at=r.away_team||'', ht=r.home_team||'';
+          return (at.includes(awayName.split(' ').pop()) || awayName.includes(at.split(' ').pop())) &&
+                 (ht.includes(homeName.split(' ').pop()) || homeName.includes(ht.split(' ').pop()));
+        });
+        if (!g) continue;
+        const c = closingForBet(bet.bet_type, g);
+        const pc = americanToProb(c.odds), pb = americanToProb(bet.odds);
+        if (pc == null || pb == null) continue;
+        const clv = +(((pc - pb) * 100).toFixed(1));
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type':'application/json', 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}`, 'Prefer':'return=minimal' },
+          body: JSON.stringify({ closing_odds: c.odds || null, closing_line: (c.line!=null&&c.line!=='')?String(c.line):null, clv })
+        });
+        if (r.ok) { filled++; console.log(`  ✓ CLV backfilled: ${bet.matchup} — ${clv>=0?'+':''}${clv}%`); }
+        await new Promise(rr => setTimeout(rr, 200));
+      } catch(e) { /* skip this bet */ }
+    }
+    console.log(`  Backfilled ${filled} bets`);
+  } catch(e) { console.error('Backfill error:', e.message); }
 }
 
 // ── CLOSING-LINE REFRESH (lightweight) ───────────────────────────────────────
