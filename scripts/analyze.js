@@ -28,6 +28,15 @@ const MARGIN_SD = 4.0;
 // shows a real, unpriced front-load.
 const SHADOW_STRENGTH = 0.35;
 
+// Action-label thresholds, in EV percentage points. The verdict word (BET / LEAN /
+// SKIP) is now derived from each market's recomputed EV — NOT from the model's gut —
+// so the label can never contradict the number. A "BET" should clear the noise floor
+// of model error; "LEAN" is a real-but-thin edge; below that is a pass. TUNE these as
+// CLV and settled-bet ROI come in: if "BET"-labeled plays aren't beating the close,
+// raise VERDICT_BET; if you're passing on profitable thin edges, lower VERDICT_LEAN.
+const VERDICT_BET = 5;   // EV% ≥ this → BET
+const VERDICT_LEAN = 2;  // EV% in [VERDICT_LEAN, VERDICT_BET) → LEAN; below → SKIP
+
 // MLB park coordinates and orientation
 // homeplateFacing = compass direction home plate faces (degrees)
 // Wind blowing FROM opposite direction = blowing OUT to CF
@@ -245,72 +254,105 @@ function buildJuiceTable(proj, direction, steps) {
 }
 
 // Overwrite every EV / breakeven / juice field from probabilities + real odds.
+// From a list of {ev, label, ...} candidates, the one whose price the model's
+// probability beats by the most. Skips candidates with no usable EV (missing odds).
+function pickSide(opts) {
+  let best = null;
+  for (const o of opts) {
+    if (o.ev == null || isNaN(o.ev)) continue;
+    if (!best || o.ev > best.ev) best = o;
+  }
+  return best;
+}
+// EV (in %) → action word. Side is appended only when it's an actual play.
+function verdictFor(ev, sideLabel) {
+  if (ev == null || isNaN(ev) || ev < VERDICT_LEAN) return 'SKIP';
+  return `${ev >= VERDICT_BET ? 'BET' : 'LEAN'} ${sideLabel}`;
+}
+
+// Overwrite every EV / breakeven / juice / verdict field from probabilities + real
+// odds. The verdict is chosen by EV, not by the model's text, so "BET" always means
+// the math found real edge — and the strongest-priced side is the one taken.
 function deriveNumbers(a, lines, f5Lines) {
   if (!a) return a;
 
-  // ── Moneyline ──
+  // Win probabilities from the run model (fall back to 50/50 if absent).
   const pAway = (a.mlAwayProb != null ? a.mlAwayProb : (a.awayWinPct != null ? a.awayWinPct : 50)) / 100;
   const pHome = (a.mlHomeProb != null ? a.mlHomeProb : (a.homeWinPct != null ? a.homeWinPct : 50)) / 100;
-  if (a.ml && a.ml.includes('AWAY')) {
-    a.mlEV = evPct(pAway, lines.awayML);
-    a.mlBreakeven = breakevenOdds(pAway);
-  } else if (a.ml && a.ml.includes('HOME')) {
-    a.mlEV = evPct(pHome, lines.homeML);
-    a.mlBreakeven = breakevenOdds(pHome);
+
+  // ── Moneyline: take whichever side the price misprices most ──
+  {
+    const side = pickSide([
+      { ev: evPct(pAway, lines.awayML), label: 'AWAY', p: pAway },
+      { ev: evPct(pHome, lines.homeML), label: 'HOME', p: pHome }
+    ]);
+    if (side) { a.mlEV = side.ev; a.mlBreakeven = breakevenOdds(side.p); a.ml = verdictFor(side.ev, side.label); }
+    else { a.ml = 'SKIP'; }
   }
 
-  // ── Run line: use the run-model cover probs if present, else ±8 pts ──
+  // ── Run line: use run-model cover probs if present, else ±8 pts ──
   const pAwayRL = a.rlAwayProb != null ? a.rlAwayProb / 100 : Math.max(0.02, pAway - 0.08);
   const pHomeRL = a.rlHomeProb != null ? a.rlHomeProb / 100 : Math.min(0.98, pHome + 0.08);
-  if (a.rl && a.rl.includes('AWAY')) {
-    a.rlEV = evPct(pAwayRL, lines.awayRLOdds);
-    a.rlBreakeven = breakevenOdds(pAwayRL);
-  } else if (a.rl && a.rl.includes('HOME')) {
-    a.rlEV = evPct(pHomeRL, lines.homeRLOdds);
-    a.rlBreakeven = breakevenOdds(pHomeRL);
+  {
+    const side = pickSide([
+      { ev: evPct(pAwayRL, lines.awayRLOdds), label: 'AWAY', p: pAwayRL },
+      { ev: evPct(pHomeRL, lines.homeRLOdds), label: 'HOME', p: pHomeRL }
+    ]);
+    if (side) { a.rlEV = side.ev; a.rlBreakeven = breakevenOdds(side.p); a.rl = verdictFor(side.ev, side.label); }
+    else { a.rl = 'SKIP'; }
   }
 
   // ── Full-game total ──
   const proj = parseFloat(a.projTotal);
   const postedTotal = parseFloat(a.totalLine != null ? a.totalLine : lines.total);
-  if (a.total && a.total.includes('OVER') && proj > 0) {
-    const p = totalsProbOver(postedTotal, proj);
-    a.totalEV = evPct(p, lines.overOdds);
-    const be = breakevenOdds(p);
-    a.totalBreakeven = be ? `Over ${postedTotal} @ ${be}` : null;
-    a.totalJuiceSensitivity = buildJuiceTable(proj, 'Over');
-  } else if (a.total && a.total.includes('UNDER') && proj > 0) {
-    const p = 1 - totalsProbOver(postedTotal, proj);
-    a.totalEV = evPct(p, lines.underOdds);
-    const be = breakevenOdds(p);
-    a.totalBreakeven = be ? `Under ${postedTotal} @ ${be}` : null;
-    a.totalJuiceSensitivity = buildJuiceTable(proj, 'Under');
-  }
+  if (proj > 0 && !isNaN(postedTotal)) {
+    const pOver = totalsProbOver(postedTotal, proj);
+    const side = pickSide([
+      { ev: evPct(pOver, lines.overOdds), label: 'OVER', p: pOver, dir: 'Over' },
+      { ev: evPct(1 - pOver, lines.underOdds), label: 'UNDER', p: 1 - pOver, dir: 'Under' }
+    ]);
+    if (side) {
+      a.totalEV = side.ev;
+      const be = breakevenOdds(side.p);
+      a.totalBreakeven = be ? `${side.dir} ${postedTotal} @ ${be}` : null;
+      a.totalJuiceSensitivity = buildJuiceTable(proj, side.dir);
+      a.total = verdictFor(side.ev, side.label);
+    } else { a.total = 'SKIP'; }
+  } else { a.total = 'SKIP'; }
 
-  // ── F5 total ──
+  // ── F5: compare F5 total over/under AND F5 ML away/home, take the best ──
   const f5proj = parseFloat(a.f5ProjTotal);
   const f5line = parseFloat(a.f5Line != null ? a.f5Line : (f5Lines && f5Lines.f5Total));
-  if (a.f5 && a.f5.includes('OVER') && f5proj > 0) {
-    const p = totalsProbOver(f5line, f5proj);
-    a.f5EV = evPct(p, f5Lines && f5Lines.f5OverOdds);
-    const be = breakevenOdds(p);
-    a.f5Breakeven = be ? `Over ${f5line} @ ${be}` : null;
-    a.f5JuiceSensitivity = buildJuiceTable(f5proj, 'Over', 3);
-  } else if (a.f5 && a.f5.includes('UNDER') && f5proj > 0) {
-    const p = 1 - totalsProbOver(f5line, f5proj);
-    a.f5EV = evPct(p, f5Lines && f5Lines.f5UnderOdds);
-    const be = breakevenOdds(p);
-    a.f5Breakeven = be ? `Under ${f5line} @ ${be}` : null;
-    a.f5JuiceSensitivity = buildJuiceTable(f5proj, 'Under', 3);
-  } else if (a.f5 && a.f5.includes('AWAY')) {
-    a.f5EV = evPct(pAway, f5Lines && f5Lines.f5AwayML);
-  } else if (a.f5 && a.f5.includes('HOME')) {
-    a.f5EV = evPct(pHome, f5Lines && f5Lines.f5HomeML);
+  {
+    const opts = [];
+    if (f5proj > 0 && !isNaN(f5line)) {
+      const pO = totalsProbOver(f5line, f5proj);
+      opts.push({ ev: evPct(pO, f5Lines && f5Lines.f5OverOdds), label: 'OVER', p: pO, dir: 'Over' });
+      opts.push({ ev: evPct(1 - pO, f5Lines && f5Lines.f5UnderOdds), label: 'UNDER', p: 1 - pO, dir: 'Under' });
+    }
+    opts.push({ ev: evPct(pAway, f5Lines && f5Lines.f5AwayML), label: 'AWAY' });
+    opts.push({ ev: evPct(pHome, f5Lines && f5Lines.f5HomeML), label: 'HOME' });
+    const side = pickSide(opts);
+    if (side) {
+      a.f5EV = side.ev;
+      if (side.dir) {
+        const be = breakevenOdds(side.p);
+        a.f5Breakeven = be ? `${side.dir} ${f5line} @ ${be}` : null;
+        a.f5JuiceSensitivity = buildJuiceTable(f5proj, side.dir, 3);
+      }
+      a.f5 = verdictFor(side.ev, side.label);
+    } else { a.f5 = 'SKIP'; }
   }
 
-  // ── Keep edge_pct consistent with the best market's recomputed EV ──
+  // ── Best market = highest-EV market that clears the LEAN floor ──
   const evByMarket = { ml: a.mlEV, rl: a.rlEV, total: a.totalEV, f5: a.f5EV };
-  if (a.best && evByMarket[a.best] != null) a.edgePct = evByMarket[a.best];
+  let bestMkt = null, bestEv = -Infinity;
+  for (const k of ['ml','rl','total','f5']) {
+    const e = evByMarket[k];
+    if (e != null && !isNaN(e) && e > bestEv) { bestEv = e; bestMkt = k; }
+  }
+  a.best = (bestMkt && bestEv >= VERDICT_LEAN) ? bestMkt : null;
+  if (a.best) a.edgePct = evByMarket[a.best];
 
   return a;
 }
