@@ -182,7 +182,8 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
       <button class="btn" id="settle-btn" onclick="settleBets()">Settle pending →</button>
       <button class="btn" onclick="exportCSV()">Export CSV</button>
     </div>
-      <button class="btn" onclick="loadGames(true)" id="refresh-btn">Refresh →</button>
+      <button class="btn" onclick="loadGames()" id="refresh-btn">Reload ↻</button>
+      <button class="btn" onclick="triggerAnalysis()" id="rerun-btn">Re-run analysis →</button>
     </div>
   </div>
 
@@ -807,6 +808,34 @@ function goPage(name, btn) {
   btn.classList.add('on');
   if (name === 'tracker') renderTracker();
   if (name === 'stats') renderStats();
+}
+
+async function triggerAnalysis() {
+  const btn = document.getElementById('rerun-btn');
+  const sub = document.getElementById('games-subtitle');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Triggering…'; }
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/trigger-analysis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      if (btn) btn.textContent = data.status === 'already_running' ? 'Already running…' : 'Triggered ✓';
+      if (sub) sub.textContent = data.message || 'Analysis triggered — reload in ~2 min';
+      // Pull fresh results once the run has had time to finish.
+      setTimeout(() => loadGames(), 150000);
+    } else {
+      if (btn) btn.textContent = 'Trigger failed';
+      if (sub) sub.textContent = `Trigger failed: ${data.error || res.status}`;
+    }
+  } catch (e) {
+    if (btn) btn.textContent = 'Trigger failed';
+    if (sub) sub.textContent = `Trigger error: ${e.message}`;
+  } finally {
+    setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = orig; } }, 8000);
+  }
 }
 
 async function loadGames(forceRefresh = false) {
