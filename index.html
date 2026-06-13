@@ -374,35 +374,61 @@ function getLocalDate() {
 }
 let currentDate = getLocalDate();
 let currentFilter = 'all';
-let gFilter = { result:'all', market:'all', ev:'all', clv:'all', from:'', to:'' };
-function anyFilterActive(){ return gFilter.result!=='all' || gFilter.market!=='all' || gFilter.ev!=='all' || gFilter.clv!=='all' || !!gFilter.from || !!gFilter.to; }
+let gFilter = { result:[], market:[], ev:[], clv:[], from:'', to:'' };
+function anyFilterActive(){ return gFilter.result.length || gFilter.market.length || gFilter.ev.length || gFilter.clv.length || !!gFilter.from || !!gFilter.to; }
 function betPasses(b){
   const g=gFilter, t=(b.type||'').toLowerCase();
-  if(g.result!=='all' && b.result!==g.result) return false;
-  if(g.market==='moneyline' && !t.includes('moneyline')) return false;
-  if(g.market==='total' && !t.includes('total')) return false;
-  if(g.market==='rl' && !(t.includes('run line')||t.includes('rl '))) return false;
-  if(g.market==='f5' && !t.includes('f5')) return false;
-  if(g.ev!=='all'){ const e=parseFloat(b.ev); if(isNaN(e)) return false; if(g.ev==='lo'&&!(e>=0.1&&e<2.5)) return false; if(g.ev==='mid'&&!(e>=2.5&&e<6)) return false; if(g.ev==='hi'&&e<6) return false; }
-  if(g.clv==='beat' && !(b.clv!=null && parseFloat(b.clv)>0)) return false;
-  if(g.clv==='miss' && !(b.clv!=null && parseFloat(b.clv)<0)) return false;
+  // Within a group the selections are OR'd; across groups they're AND'd. Empty group = no constraint.
+  if(g.result.length && !g.result.includes(b.result)) return false;
+  if(g.market.length){
+    const ok = g.market.some(v =>
+      v==='moneyline' ? t.includes('moneyline') :
+      v==='total'     ? t.includes('total') :
+      v==='rl'        ? (t.includes('run line')||t.includes('rl ')) :
+      v==='f5'        ? t.includes('f5') : false);
+    if(!ok) return false;
+  }
+  if(g.ev.length){
+    const e=parseFloat(b.ev);
+    const ok = !isNaN(e) && g.ev.some(v =>
+      v==='lo'  ? (e>=0.1&&e<2.5) :
+      v==='mid' ? (e>=2.5&&e<6) :
+      v==='hi'  ? (e>=6) : false);
+    if(!ok) return false;
+  }
+  if(g.clv.length){
+    const c = b.clv!=null ? parseFloat(b.clv) : null;
+    const ok = g.clv.some(v =>
+      v==='beat' ? (c!=null && c>0) :
+      v==='miss' ? (c!=null && c<0) : false);
+    if(!ok) return false;
+  }
   if(g.from && b.date && String(b.date) < g.from) return false;
   if(g.to && b.date && String(b.date) > g.to) return false;
   return true;
 }
 function filterBarHTML(){
   const g=gFilter;
-  const grp=(key,opts)=>opts.map(([v,lbl])=>`<button class="filter-btn ${g[key]===v?'on':''}" onclick="setG('${key}','${v}')">${lbl}</button>`).join('');
-  return `<div class="tracker-filters">${grp('result',[['all','All'],['pending','Pending'],['win','Won'],['loss','Lost']])}</div>`
-    + `<div class="tracker-filters">${grp('market',[['all','All mkts'],['moneyline','ML'],['total','Total'],['rl','RL'],['f5','F5']])}</div>`
-    + `<div class="tracker-filters">${grp('ev',[['all','Any EV'],['lo','.1% - 2.4%'],['mid','2.5% - 5.9%'],['hi','6%+']])}`
-    + grp('clv',[['all','Any CLV'],['beat','Beat close'],['miss','Missed']])
+  // Each group: an "all" button that clears the group, plus toggle buttons. Multiple
+  // toggles can be on at once (OR within the group).
+  const grp=(key,allLabel,opts)=>{
+    const sel=g[key];
+    const all=`<button class="filter-btn ${sel.length===0?'on':''}" onclick="clearG('${key}')">${allLabel}</button>`;
+    const vals=opts.map(([v,lbl])=>`<button class="filter-btn ${sel.includes(v)?'on':''}" onclick="toggleG('${key}','${v}')">${lbl}</button>`).join('');
+    return all+vals;
+  };
+  return `<div class="tracker-filters">${grp('result','All',[['pending','Pending'],['win','Won'],['loss','Lost']])}</div>`
+    + `<div class="tracker-filters">${grp('market','All mkts',[['moneyline','ML'],['total','Total'],['rl','RL'],['f5','F5']])}</div>`
+    + `<div class="tracker-filters">${grp('ev','Any EV',[['lo','.1% - 2.4%'],['mid','2.5% - 5.9%'],['hi','6%+']])}`
+    + grp('clv','Any CLV',[['beat','Beat close'],['miss','Missed']])
     + `<span class="filter-datelbl">from</span><input type="date" class="filter-date" value="${g.from||''}" onchange="setG('from',this.value)" title="From date (inclusive). Set From = To for a single day.">`
     + `<span class="filter-datelbl">to</span><input type="date" class="filter-date" value="${g.to||''}" onchange="setG('to',this.value)" title="To date (inclusive)">`
     + ((g.from||g.to)?`<button class="filter-btn" onclick="clearDates()">clear dates</button>`:'')
     + `</div>`;
 }
 function setG(key,val){ gFilter[key]=val; renderTracker(); renderStats(); }
+function toggleG(key,val){ const arr=gFilter[key], i=arr.indexOf(val); if(i>=0) arr.splice(i,1); else arr.push(val); renderTracker(); renderStats(); }
+function clearG(key){ gFilter[key]=[]; renderTracker(); renderStats(); }
 function clearDates(){ gFilter.from=''; gFilter.to=''; renderTracker(); renderStats(); }
 
 // ── TRACKER COLUMN SORTING ───────────────────────────────────────────────────
