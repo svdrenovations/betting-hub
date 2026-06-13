@@ -1612,12 +1612,12 @@ async function backfillClv() {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?result=in.(win,loss,push)&clv=is.null&order=game_date.desc&limit=300`, {
       headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
     });
-    if (!res.ok) return;
+    if (!res.ok) { console.error(`  Backfill query failed: ${res.status} ${await res.text()}`); return; }
     const bets = await res.json();
-    if (!bets.length) return;
+    if (!bets.length) { console.log('  Backfill: no settled bets are missing CLV.'); return; }
     console.log(`\nBackfilling CLV for ${bets.length} settled bets missing it...`);
     const cache = new Map();
-    let filled = 0;
+    let filled = 0, noGame = 0, noOdds = 0, failed = 0;
     for (const bet of bets) {
       try {
         const matchup = bet.matchup || '';
@@ -1635,10 +1635,10 @@ async function backfillClv() {
           return (at.includes(awayName.split(' ').pop()) || awayName.includes(at.split(' ').pop())) &&
                  (ht.includes(homeName.split(' ').pop()) || homeName.includes(ht.split(' ').pop()));
         });
-        if (!g) continue;
+        if (!g) { noGame++; continue; }
         const c = closingForBet(bet.bet_type, g);
         const pc = americanToProb(c.odds), pb = americanToProb(bet.odds);
-        if (pc == null || pb == null) continue;
+        if (pc == null || pb == null) { noOdds++; continue; }
         const clv = +(((pc - pb) * 100).toFixed(1));
         const r = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
           method: 'PATCH',
@@ -1646,10 +1646,11 @@ async function backfillClv() {
           body: JSON.stringify({ closing_odds: c.odds || null, closing_line: (c.line!=null&&c.line!=='')?String(c.line):null, clv })
         });
         if (r.ok) { filled++; console.log(`  ✓ CLV backfilled: ${bet.matchup} — ${clv>=0?'+':''}${clv}%`); }
+        else { failed++; if (failed <= 2) console.error(`  ✗ PATCH failed for ${bet.matchup}: ${r.status} ${await r.text()}`); }
         await new Promise(rr => setTimeout(rr, 200));
       } catch(e) { /* skip this bet */ }
     }
-    console.log(`  Backfilled ${filled} bets`);
+    console.log(`  Backfill done — filled ${filled}, no game row ${noGame}, no usable odds ${noOdds}, write failures ${failed}`);
   } catch(e) { console.error('Backfill error:', e.message); }
 }
 
