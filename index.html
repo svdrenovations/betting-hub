@@ -143,6 +143,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .bar-val{font-size:11px;font-family:DM Mono,monospace;font-weight:500;width:40px;text-align:right}
 .section-head{font-size:11px;font-family:DM Mono,monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin:1.5rem 0 .75rem;padding-bottom:.5rem;border-bottom:1px solid var(--border)}
 .tracker-filters{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap}
+.filter-date{padding:5px 10px;font-size:12px;border-radius:20px;border:1px solid var(--border);background:none;color:var(--text);font-family:DM Mono,monospace;color-scheme:dark}
 .ol{color:var(--muted);padding:4px 6px;text-align:left;white-space:nowrap}
 .ov{color:var(--text);padding:4px 6px}
 .ov strong{color:var(--green)}
@@ -226,12 +227,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
       <button class="btn" onclick="exportCSV()">Export CSV</button>
     </div>
   </div>
-  <div class="tracker-filters">
-    <button class="filter-btn on" onclick="setTrackerFilter('all',this)">All</button>
-    <button class="filter-btn" onclick="setTrackerFilter('pending',this)">Pending</button>
-    <button class="filter-btn" onclick="setTrackerFilter('win',this)">Wins</button>
-    <button class="filter-btn" onclick="setTrackerFilter('loss',this)">Losses</button>
-  </div>
+  <div class="tracker-filters" id="tracker-filter-bar"></div>
   <div class="t-table-wrap" id="tracker-table">
     <div class="empty-state"><div class="empty-title">No bets logged yet</div></div>
   </div>
@@ -377,7 +373,33 @@ function getLocalDate() {
 }
 let currentDate = getLocalDate();
 let currentFilter = 'all';
-let trackerFilter = 'all';
+let gFilter = { result:'all', market:'all', ev:'all', clv:'all', from:'' };
+function anyFilterActive(){ return gFilter.result!=='all' || gFilter.market!=='all' || gFilter.ev!=='all' || gFilter.clv!=='all' || !!gFilter.from; }
+function betPasses(b){
+  const g=gFilter, t=(b.type||'').toLowerCase();
+  if(g.result!=='all' && b.result!==g.result) return false;
+  if(g.market==='moneyline' && !t.includes('moneyline')) return false;
+  if(g.market==='total' && !t.includes('total')) return false;
+  if(g.market==='rl' && !(t.includes('run line')||t.includes('rl '))) return false;
+  if(g.market==='f5' && !t.includes('f5')) return false;
+  if(g.ev!=='all'){ const e=parseFloat(b.ev); if(isNaN(e)) return false; if(g.ev==='pos'&&e<0) return false; if(g.ev==='3'&&e<3) return false; if(g.ev==='6'&&e<6) return false; }
+  if(g.clv==='beat' && !(b.clv!=null && parseFloat(b.clv)>0)) return false;
+  if(g.clv==='miss' && !(b.clv!=null && parseFloat(b.clv)<0)) return false;
+  if(g.from && b.date && String(b.date) < g.from) return false;
+  return true;
+}
+function filterBarHTML(){
+  const g=gFilter;
+  const grp=(key,opts)=>opts.map(([v,lbl])=>`<button class="filter-btn ${g[key]===v?'on':''}" onclick="setG('${key}','${v}')">${lbl}</button>`).join('');
+  return `<div class="tracker-filters">${grp('result',[['all','All'],['pending','Pending'],['win','Won'],['loss','Lost']])}</div>`
+    + `<div class="tracker-filters">${grp('market',[['all','All mkts'],['moneyline','ML'],['total','Total'],['rl','RL'],['f5','F5']])}</div>`
+    + `<div class="tracker-filters">${grp('ev',[['all','Any EV'],['pos','+EV'],['3','3%+'],['6','6%+']])}`
+    + grp('clv',[['all','Any CLV'],['beat','Beat close'],['miss','Missed']])
+    + `<input type="date" class="filter-date" value="${g.from||''}" onchange="setG('from',this.value)" title="Only plays on or after this date">`
+    + (g.from?`<button class="filter-btn" onclick="setG('from','')">clear date</button>`:'')
+    + `</div>`;
+}
+function setG(key,val){ gFilter[key]=val; renderTracker(); renderStats(); }
 let pendingLog = null;
 let pendingLogEV = null;
 let expanded = {};
@@ -606,7 +628,10 @@ async function loadBetsFromSupabase() {
       confidence: b.confidence,
       result: b.result,
       awayScore: b.away_score,
-      homeScore: b.home_score
+      homeScore: b.home_score,
+      closingOdds: b.closing_odds,
+      closingLine: b.closing_line,
+      clv: b.clv
     }));
     updateNavRecord();
     // Migrate any existing localStorage bets to Supabase
@@ -653,7 +678,7 @@ async function saveBetToSupabase(bet) {
   } catch(e) { return false; }
 }
 
-async function updateBetResult(id, result) {
+async function updateBetResult(id, result, extra={}) {
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${id}`, {
       method: 'PATCH',
@@ -663,7 +688,7 @@ async function updateBetResult(id, result) {
         'Authorization': `Bearer ${SUPABASE_KEY}`,
         'Prefer': 'return=minimal'
       },
-      body: JSON.stringify({ result })
+      body: JSON.stringify({ result, ...extra })
     });
     return res.ok;
   } catch(e) { return false; }
@@ -1265,7 +1290,13 @@ async function setResult(id, r) {
   const b = bets.find(x => x.id === id);
   if (b) {
     b.result = r;
-    await updateBetResult(id, r);
+    let extra = {};
+    if (r==='win' || r==='loss' || r==='push') {
+      const cap = await captureClosing(b);
+      b.closingOdds = cap.closing_odds; b.closingLine = cap.closing_line; b.clv = cap.clv;
+      extra = { closing_odds: cap.closing_odds, closing_line: cap.closing_line, clv: cap.clv };
+    }
+    await updateBetResult(id, r, extra);
     renderTracker();
     updateNavRecord();
   }
@@ -1283,25 +1314,27 @@ async function deleteBet(id) {
 
 function renderTracker() {
   const el = document.getElementById('tracker-table');
-  let filtered = bets;
-  if (trackerFilter !== 'all') filtered = bets.filter(b => b.result === trackerFilter);
-  const settled = bets.filter(b => b.result==='win'||b.result==='loss');
-  const wins = bets.filter(b => b.result==='win').length;
+  const barEl = document.getElementById('tracker-filter-bar');
+  if (barEl) barEl.innerHTML = filterBarHTML();
+  const filtered = bets.filter(betPasses);
+  const settled = filtered.filter(b => b.result==='win'||b.result==='loss');
+  const wins = filtered.filter(b => b.result==='win').length;
   document.getElementById('tracker-subtitle').textContent = settled.length
-    ? `${wins}-${settled.length-wins} record (${Math.round(wins/settled.length*100)}%) · ${bets.filter(b=>b.result==='pending').length} pending`
-    : `${bets.length} bets logged`;
-  if (!filtered.length) { el.innerHTML = `<div class="empty-state"><div class="empty-title">No bets ${trackerFilter!=='all'?'matching filter':'yet'}</div></div>`; return; }
+    ? `${wins}-${settled.length-wins} record (${Math.round(wins/settled.length*100)}%) · ${filtered.filter(b=>b.result==='pending').length} pending`
+    : `${filtered.length} bets${anyFilterActive()?' match':' logged'}`;
+  if (!filtered.length) { el.innerHTML = `<div class="empty-state"><div class="empty-title">No bets ${anyFilterActive()?'match the filter':'yet'}</div></div>`; return; }
   el.innerHTML = `<table class="t-table"><thead><tr>
     <th style="width:70px">Date</th><th>Matchup</th><th>Type</th>
     <th style="width:52px">Odds</th><th style="width:60px">Spread/Tot</th><th style="width:60px">Max juice</th>
     <th style="width:80px">Book</th><th style="width:46px">Units</th>
     <th style="width:58px">EV%</th><th style="width:52px">Conf</th>
-    <th>Situation</th><th style="width:50px">Score</th><th>Result</th><th style="width:28px"></th>
+    <th>Situation</th><th style="width:50px">Score</th><th style="width:56px">CLV</th><th>Result</th><th style="width:28px"></th>
   </tr></thead><tbody>${filtered.map(b => {
     const btns = ['win','loss','push','pending'].map(r => `<button onclick="setResult(${b.id},'${r}')" class="${r}-btn ${b.result===r?'on':''}">${r}</button>`).join('');
     const ev = b.ev!=null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
     return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px">${b.matchup}</td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td>
       <td style="font-size:11px;color:var(--muted)">${b.awayScore !== undefined && b.homeScore !== undefined && b.result !== 'pending' ? b.awayScore+'-'+b.homeScore : '—'}</td>
+      <td class="mono" style="font-size:11px" title="${b.clv!=null?`closed ${b.closingOdds||'?'}${b.closingLine?(' @ '+b.closingLine):''}`:'no closing line captured'}">${b.clv!=null?`<span style="color:${parseFloat(b.clv)>=0?'var(--green)':'var(--red)'}">${parseFloat(b.clv)>=0?'+':''}${b.clv}%</span>`:'—'}</td>
       <td><div class="rsel">${btns}</div></td><td style="display:flex;gap:4px"><button onclick="openEdit(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:13px" title="Edit">✏️</button><button onclick="deleteBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--dim);font-size:17px">×</button></td></tr>`;
   }).join('')}</tbody></table>`;
 }
@@ -1380,6 +1413,37 @@ async function saveEdit() {
 }
 
 // ── MANUAL SETTLE ────────────────────────────────────────────────────────────
+// ── CLV CAPTURE (frontend) ───────────────────────────────────────────────────
+// Mirrors analyze.js: compares the bet's price to the game's last pre-start odds on
+// the same side. Used by both settle paths so CLV lands no matter how a bet is graded.
+const _closeCache = {};
+function americanToProbJS(o){ o=parseFloat(o); if(isNaN(o)) return null; return o>0 ? 100/(o+100) : (-o)/((-o)+100); }
+function closingForBetJS(typeRaw, g){
+  const type=(typeRaw||'').toLowerCase(), f5=type.includes('f5');
+  if(type.includes('over'))  return { odds: f5?g.f5_over_odds:g.over_odds,  line: f5?g.f5_total:g.total };
+  if(type.includes('under')) return { odds: f5?g.f5_under_odds:g.under_odds, line: f5?g.f5_total:g.total };
+  if(type.includes('(away')) return { odds: f5?g.f5_away_ml:(type.includes('run line')?g.away_rl_odds:g.away_ml), line: type.includes('run line')?g.away_rl:null };
+  if(type.includes('(home')) return { odds: f5?g.f5_home_ml:(type.includes('run line')?g.home_rl_odds:g.home_ml), line: type.includes('run line')?g.home_rl:null };
+  if(type.includes('rl -1.5')) return { odds: g.away_rl_odds, line: g.away_rl };
+  if(type.includes('rl +1.5')) return { odds: g.home_rl_odds, line: g.home_rl };
+  return { odds:null, line:null };
+}
+async function captureClosing(bet){
+  try {
+    const d = bet.date;
+    if(!_closeCache[d]){
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${d}&select=away_team,home_team,away_ml,home_ml,total,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,f5_away_ml,f5_home_ml,f5_total,f5_over_odds,f5_under_odds`, { headers:{ 'apikey':SUPABASE_KEY, 'Authorization':`Bearer ${SUPABASE_KEY}` }});
+      _closeCache[d] = r.ok ? await r.json() : [];
+    }
+    const aw=(bet.matchup||'').split(' @ ')[0], hm=(bet.matchup||'').split(' @ ')[1]||'';
+    const g = (_closeCache[d]||[]).find(row=>{ const at=row.away_team||'',ht=row.home_team||''; return (at.includes(aw.split(' ').pop())||aw.includes(at.split(' ').pop())) && (ht.includes(hm.split(' ').pop())||hm.includes(ht.split(' ').pop())); });
+    if(!g) return {closing_odds:null,closing_line:null,clv:null};
+    const c=closingForBetJS(bet.type,g);
+    const pc=americanToProbJS(c.odds), pb=americanToProbJS(bet.odds);
+    return { closing_odds: c.odds||null, closing_line:(c.line!=null&&c.line!=='')?String(c.line):null, clv:(pc!=null&&pb!=null)?+(((pc-pb)*100).toFixed(1)):null };
+  } catch(e){ return {closing_odds:null,closing_line:null,clv:null}; }
+}
+
 async function settleBets() {
   const btn = document.getElementById('settle-btn');
   const pending = bets.filter(b => b.result === 'pending');
@@ -1446,6 +1510,8 @@ async function settleBets() {
 
       if (result === 'pending') continue;
 
+      const cap = await captureClosing(bet);
+
       // Update Supabase
       await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
         method: 'PATCH',
@@ -1459,6 +1525,9 @@ async function settleBets() {
           result,
           away_score: awayScore,
           home_score: homeScore,
+          closing_odds: cap.closing_odds,
+          closing_line: cap.closing_line,
+          clv: cap.clv,
           settled_at: new Date().toISOString()
         })
       });
@@ -1467,6 +1536,9 @@ async function settleBets() {
       bet.result = result;
       bet.awayScore = awayScore;
       bet.homeScore = homeScore;
+      bet.closingOdds = cap.closing_odds;
+      bet.closingLine = cap.closing_line;
+      bet.clv = cap.clv;
       settled++;
     } catch(e) { console.error('Settle error:', e); }
   }
@@ -1479,13 +1551,6 @@ async function settleBets() {
   else alert('No completed games found yet. Check back after games finish.');
 }
 
-function setTrackerFilter(f, btn) {
-  trackerFilter = f;
-  document.querySelectorAll('.tracker-filters .filter-btn').forEach(b => b.classList.remove('on'));
-  btn.classList.add('on');
-  renderTracker();
-}
-
 function updateNavRecord() {
   const s = bets.filter(b => b.result==='win'||b.result==='loss');
   const w = bets.filter(b => b.result==='win').length;
@@ -1494,13 +1559,15 @@ function updateNavRecord() {
 
 function renderStats() {
   const el = document.getElementById('stats-content');
-  const settled = bets.filter(b => b.result==='win'||b.result==='loss');
-  if (!settled.length) { el.innerHTML = `<div class="empty-state"><div class="empty-title">No settled bets yet</div><div class="empty-sub">Log and settle bets to see your edge stats.</div></div>`; return; }
-  const wins = bets.filter(b=>b.result==='win').length;
-  const losses = bets.filter(b=>b.result==='loss').length;
+  const bar = filterBarHTML();
+  const base = bets.filter(betPasses);
+  const settled = base.filter(b => b.result==='win'||b.result==='loss');
+  if (!settled.length) { el.innerHTML = bar + `<div class="empty-state"><div class="empty-title">No settled bets ${anyFilterActive()?'match the filter':'yet'}</div><div class="empty-sub">${anyFilterActive()?'Adjust the filter above.':'Log and settle bets to see your edge stats.'}</div></div>`; return; }
+  const wins = base.filter(b=>b.result==='win').length;
+  const losses = base.filter(b=>b.result==='loss').length;
   const pct = Math.round(wins/settled.length*100);
   let profit=0, risked=0;
-  bets.filter(b=>['win','loss','push'].includes(b.result)).forEach(b=>{
+  base.filter(b=>['win','loss','push'].includes(b.result)).forEach(b=>{
     const u=parseFloat(b.units)||1; risked+=u;
     const n=parseFloat(b.odds);
     if(b.result==='win') profit+=isNaN(n)?u:(n>0?u*n/100:u*100/(-n));
@@ -1526,7 +1593,7 @@ function renderStats() {
       const total=d.w+d.l;
       const p2=Math.round(d.w/total*100);
       const c=p2>=57?'var(--green)':p2>=52?'var(--amber)':'var(--red)';
-      return `<div class="bar-row"><div class="bar-lbl">${k} <span style="opacity:.55;font-weight:400">${d.w}/${total}</span></div><div class="bar-track"><div class="bar-fill" style="width:${p2}%;background:${c}"></div></div><div class="bar-val" style="color:${c}">${p2}%</div></div>`;
+      return `<div class="bar-row"><div class="bar-lbl">${k} <span style="color:var(--text);font-weight:600">${d.w}/${total}</span></div><div class="bar-track"><div class="bar-fill" style="width:${p2}%;background:${c}"></div></div><div class="bar-val" style="color:${c}">${p2}%</div></div>`;
     }).join('');
   }
 
@@ -1538,7 +1605,7 @@ function renderStats() {
   function roiRow(label,d){
     const total=d.w+d.l, p2=total?Math.round(d.w/total*100):0;
     const roi=d.risked?(d.profit/d.risked*100):0, rc=roi>=0?'var(--green)':'var(--red)';
-    return `<div class="bar-row"><div class="bar-lbl">${label} <span style="opacity:.55;font-weight:400">${d.w}/${total}</span></div><div class="bar-track"><div class="bar-fill" style="width:${p2}%;background:${rc}"></div></div><div class="bar-val" style="width:auto;min-width:78px;text-align:right"><span style="color:var(--text)">${p2}%</span> <span style="color:${rc}">${roi>=0?'+':''}${roi.toFixed(0)}%</span></div></div>`;
+    return `<div class="bar-row"><div class="bar-lbl">${label} <span style="color:var(--text);font-weight:600">${d.w}/${total}</span></div><div class="bar-track"><div class="bar-fill" style="width:${p2}%;background:${rc}"></div></div><div class="bar-val" style="width:auto;min-width:78px;text-align:right"><span style="color:var(--text)">${p2}%</span> <span style="color:${rc}">${roi>=0?'+':''}${roi.toFixed(0)}%</span></div></div>`;
   }
   function accRoi(t,k,b){
     if(!t[k]) t[k]={w:0,l:0,profit:0,risked:0};
@@ -1562,18 +1629,36 @@ function renderStats() {
     if(!evOrder.some(k=>t[k])) return '';
     return `<div class="section-head">EV bucket <span style="opacity:.5;font-weight:400">(higher EV should pay more · win% · ROI)</span></div>${evOrder.filter(k=>t[k]).map(k=>roiRow(k,t[k])).join('')}`;
   }
-  el.innerHTML = `
+  // CLV — the fast edge signal. Captured at settlement (bet odds vs the game's last
+  // pre-start odds on the same side). Beating the close consistently is the strongest
+  // sign of real edge, and it converges far faster than win rate.
+  const clvBets = base.filter(b => b.clv != null && b.clv !== '');
+  const avgClv = clvBets.length ? clvBets.reduce((s,b)=>s+parseFloat(b.clv),0)/clvBets.length : null;
+  const beatRate = clvBets.length ? Math.round(clvBets.filter(b=>parseFloat(b.clv)>0).length/clvBets.length*100) : null;
+  function clvSection(){
+    const t={}, order=['CLV < 0','CLV 0–2%','CLV 2%+'];
+    const bucket=c=>{c=parseFloat(c); if(isNaN(c))return null; if(c<0)return 'CLV < 0'; if(c<2)return 'CLV 0–2%'; return 'CLV 2%+';};
+    base.filter(b=>(b.result==='win'||b.result==='loss')&&b.clv!=null).forEach(b=>{ const k=bucket(b.clv); if(k) accRoi(t,k,b); });
+    if(!order.some(k=>t[k])) return '';
+    return `<div class="section-head">Results by CLV <span style="opacity:.5;font-weight:400">(does beating the close predict winning? · win% · ROI)</span></div>${order.filter(k=>t[k]).map(k=>roiRow(k,t[k])).join('')}`;
+  }
+  const clvCard = clvBets.length
+    ? `<div class="stat-card"><div class="stat-label">Avg CLV</div><div class="stat-val" style="color:${avgClv>=0?'var(--green)':'var(--red)'}">${avgClv>=0?'+':''}${avgClv.toFixed(1)}%</div><div class="stat-sub">${beatRate}% beat the close · n=${clvBets.length}</div></div>`
+    : '';
+  el.innerHTML = bar + `
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-label">Win rate</div><div class="stat-val" style="color:${pCol}">${pct}%</div><div class="stat-sub">breakeven = 52.4%</div></div>
-      <div class="stat-card"><div class="stat-label">Record</div><div class="stat-val">${wins}–${losses}</div><div class="stat-sub">${bets.filter(b=>b.result==='pending').length} pending</div></div>
+      <div class="stat-card"><div class="stat-label">Record</div><div class="stat-val">${wins}–${losses}</div><div class="stat-sub">${base.filter(b=>b.result==='pending').length} pending</div></div>
       <div class="stat-card"><div class="stat-label">Profit (units)</div><div class="stat-val" style="color:${profit>=0?'var(--green)':'var(--red)'}">${profit>=0?'+':''}${profit.toFixed(2)}</div><div class="stat-sub">${risked.toFixed(1)} risked</div></div>
       <div class="stat-card"><div class="stat-label">ROI</div><div class="stat-val" style="color:${parseFloat(roi)>=0?'var(--green)':'var(--red)'}">${parseFloat(roi)>=0?'+':''}${roi}%</div><div class="stat-sub">return on investment</div></div>
+      ${clvCard}
     </div>
     ${Object.keys(byType).length?`<div class="section-head">Win rate by bet type</div>${barRows(byType)}`:''}
     ${tierSection('Moneyline by price', t=>t.includes('moneyline'))}
     ${tierSection('Totals by price', t=>t.includes('total'))}
     ${tierSection('Run line by price', t=>t.includes('run line')||t.includes('rl '))}
     ${evSection()}
+    ${clvSection()}
     ${Object.keys(bySit).length?`<div class="section-head">Win rate by situation</div>${barRows(bySit)}`:''}
     ${Object.keys(byConf).length?`<div class="section-head">Win rate by confidence</div>${barRows(byConf)}`:''}
     <div class="disc">Data stored locally. Export CSV to back up.</div>`;
