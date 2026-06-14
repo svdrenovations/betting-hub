@@ -59,17 +59,26 @@ function samplePA(probs, rng = Math.random) {
   return 'out';
 }
 
-// Advance existing runners by k bases (single=1, double=2, triple=3, HR=4). Returns runs.
-// SIMPLIFICATION: runners advance exactly k bases. Real baserunning is more aggressive
-// (runner from 2nd often scores on a single) — a tuning knob to add later.
-function advance(bases, k) {
-  let runs = 0;
-  const nb = [false, false, false];
-  for (let i = 0; i < 3; i++) {
-    if (bases[i]) { const np = (i + 1) + k; if (np >= 4) runs++; else nb[np - 1] = true; }
+// Advance runners on a hit, with league-ish baserunning (a runner on 2nd often scores on a
+// single, a runner on 1st sometimes scores on a double). Returns runs scored.
+function advance(bases, type, rng) {
+  let [b1, b2, b3] = bases, runs = 0;
+  if (type === 'hr') return { bases: [false, false, false], runs: 1 + (b1?1:0) + (b2?1:0) + (b3?1:0) };
+  if (type === 't')  return { bases: [false, false, true],  runs: (b1?1:0) + (b2?1:0) + (b3?1:0) };
+  if (type === 'd') {
+    if (b3) runs++;
+    if (b2) runs++;
+    let occ3 = false;
+    if (b1) { if (rng() < 0.46) runs++; else occ3 = true; }              // 1st scores ~46% on a double
+    return { bases: [false, true, occ3], runs };                         // batter to 2nd
   }
-  if (k >= 4) runs++; else nb[k - 1] = true; // batter
-  return { bases: nb, runs };
+  // single
+  if (b3) runs++;
+  let occ3 = false;
+  if (b2) { if (rng() < 0.63) runs++; else occ3 = true; }                // 2nd scores ~63% on a single
+  let occ2 = false;
+  if (b1) { if (!occ3 && rng() < 0.30) occ3 = true; else occ2 = true; }  // 1st->3rd ~30% if 3rd open
+  return { bases: [true, occ2, occ3], runs };                            // batter to 1st
 }
 
 // Force-advance on a walk / HBP.
@@ -87,10 +96,16 @@ function simHalf(models, ptr, rng) {
   while (outs < 3) {
     const o = samplePA(models[ptr % 9], rng);
     ptr++;
-    if (o === 'k' || o === 'out') { outs++; continue; }   // (no DPs/productive outs yet)
-    const res = (o === 'bb')
-      ? walk(bases)
-      : advance(bases, o === 's' ? 1 : o === 'd' ? 2 : o === 't' ? 3 : 4);
+    if (o === 'k') { outs++; continue; }
+    if (o === 'out') {                                     // in-play out — may be productive
+      if (outs < 2) {
+        if (bases[2] && rng() < 0.53) { runs++; bases[2] = false; }                       // sac fly scores from 3rd
+        if (bases[1] && !bases[2] && rng() < 0.25) { bases[2] = true; bases[1] = false; }  // groundout: 2nd->3rd
+        if (bases[0] && !bases[1] && rng() < 0.20) { bases[1] = true; bases[0] = false; }  // groundout: 1st->2nd
+      }
+      outs++; continue;
+    }
+    const res = (o === 'bb') ? walk(bases) : advance(bases, o, rng);
     bases = res.bases; runs += res.runs;
   }
   return { runs, ptr };
