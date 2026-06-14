@@ -1220,11 +1220,11 @@ async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, hom
     ? `${homePitcher?.name||'Home'} Statcast: avg velo ${homeStatcast.avgVelo}mph (${homeStatcast.veloTrend}), last start ${homeStatcast.lastStartVelo}mph, whiff% ${homeStatcast.whiffRate}, hard hit% ${homeStatcast.hardHitRate}, barrel% ${homeStatcast.barrelRate}`
     : 'Home pitcher Statcast: unavailable';
 
-  const awayMatchupInfo = awayMatchups
+  const awayMatchupInfo = (awayMatchups && awayMatchups.avgOPS != null)
     ? `${game.away_team} lineup vs ${homePitcher?.name||'home pitcher'}: avg OPS ${awayMatchups.avgOPS}, avg AVG ${awayMatchups.avgAVG}, K% ${awayMatchups.kRate}, hot bats ${awayMatchups.hotBatters}, cold bats ${awayMatchups.coldBatters} (${awayMatchups.sample})`
     : `${game.away_team} lineup matchup data: unavailable (lineup not yet posted or no history vs this pitcher)`;
 
-  const homeMatchupInfo = homeMatchups
+  const homeMatchupInfo = (homeMatchups && homeMatchups.avgOPS != null)
     ? `${game.home_team} lineup vs ${awayPitcher?.name||'away pitcher'}: avg OPS ${homeMatchups.avgOPS}, avg AVG ${homeMatchups.avgAVG}, K% ${homeMatchups.kRate}, hot bats ${homeMatchups.hotBatters}, cold bats ${homeMatchups.coldBatters} (${homeMatchups.sample})`
     : `${game.home_team} lineup matchup data: unavailable (lineup not yet posted or no history vs this pitcher)`;
 
@@ -1809,8 +1809,10 @@ async function main() {
 
       if (awayStatcast) console.log(`  Statcast ${awayPitcherInfo.name}: velo ${awayStatcast.avgVelo} (${awayStatcast.veloTrend}), whiff ${awayStatcast.whiffRate}%, barrel ${awayStatcast.barrelRate}%`);
       if (homeStatcast) console.log(`  Statcast ${homePitcherInfo.name}: velo ${homeStatcast.avgVelo} (${homeStatcast.veloTrend}), whiff ${homeStatcast.whiffRate}%, barrel ${homeStatcast.barrelRate}%`);
-      if (awayMatchups) console.log(`  Away lineup vs ${homePitcherInfo?.name}: OPS ${awayMatchups.avgOPS}, K% ${awayMatchups.kRate}`);
-      if (homeMatchups) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: OPS ${homeMatchups.avgOPS}, K% ${homeMatchups.kRate}`);
+      if (awayMatchups?.avgOPS != null) console.log(`  Away lineup vs ${homePitcherInfo?.name}: OPS ${awayMatchups.avgOPS}, K% ${awayMatchups.kRate}`);
+      else if (awayMatchups) console.log(`  Away lineup vs ${homePitcherInfo?.name}: no batter-vs-pitcher sample (using season stats)`);
+      if (homeMatchups?.avgOPS != null) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: OPS ${homeMatchups.avgOPS}, K% ${homeMatchups.kRate}`);
+      else if (homeMatchups) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: no batter-vs-pitcher sample (using season stats)`);
 
       // Real starter stats (ERA/WHIP/avg IP/hand) + bullpen quality & fatigue
       const [awayDetail, homeDetail, awayBullpen, homeBullpen] = await Promise.all([
