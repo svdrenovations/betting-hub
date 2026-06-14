@@ -7,6 +7,8 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
 const RUN_TYPE = process.env.RUN_TYPE || '11am';
 
+const { simulateGame } = require('./sim-data.js'); // Monte Carlo run sim (shadow mode)
+
 // Standard deviation of MLB game total runs, used to convert a projected total
 // into a win probability. ~4.5 reflects real game variance + projection error.
 // TUNE THIS from your own settled-bet results during calibration — lower = more
@@ -1418,6 +1420,8 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       proj_total: analysis.projTotal,
       proj_away_runs: analysis.projAwayRuns ?? null,
       proj_home_runs: analysis.projHomeRuns ?? null,
+      sim_away_runs: analysis.simAwayRuns ?? null,
+      sim_home_runs: analysis.simHomeRuns ?? null,
       rl_away_prob: analysis.rlAwayProb ?? null,
       rl_home_prob: analysis.rlHomeProb ?? null,
       f5_verdict: analysis.f5,
@@ -1841,6 +1845,30 @@ async function main() {
       if (!analysis) {
         console.error(`  ✗ ${game.away_team} @ ${game.home_team}: analysis parse failed — keeping previous row, not overwriting`);
         continue;
+      }
+
+      // SHADOW MODE: run the Monte Carlo sim next to the LLM projection. It logs and stores
+      // its expected runs for side-by-side comparison on the site, but does NOT drive the
+      // verdict yet. Fully wrapped so a sim failure can never disrupt the existing analysis.
+      try {
+        if (awayMatchups?.lineup?.length >= 9 && homeMatchups?.lineup?.length >= 9 &&
+            awayPitcherInfo?.id && homePitcherInfo?.id && awayTeamId && homeTeamId) {
+          const simProbs = await simulateGame({
+            awayLineupIds: awayMatchups.lineup.map(p => p.id),
+            homeLineupIds: homeMatchups.lineup.map(p => p.id),
+            awayStarterId: awayPitcherInfo.id,
+            homeStarterId: homePitcherInfo.id,
+            awayTeamId, homeTeamId,
+            ctx: {},                         // park/weather neutral for now
+            totalLine: lines.total,
+            f5Line: f5Lines?.f5Total || null,
+          });
+          analysis.simAwayRuns = +simProbs.meanAway.toFixed(2);
+          analysis.simHomeRuns = +simProbs.meanHome.toFixed(2);
+          console.log(`  SIM ${game.away_team} ${analysis.simAwayRuns} - ${analysis.simHomeRuns} ${game.home_team} | LLM ${analysis.projAwayRuns ?? '?'} - ${analysis.projHomeRuns ?? '?'} (sim pAwayML ${(simProbs.pAwayML*100).toFixed(0)}%, pOver ${(simProbs.pOver*100).toFixed(0)}%)`);
+        }
+      } catch (e) {
+        console.log(`  sim shadow error: ${e.message}`);
       }
 
       // Derive ML/RL probabilities from the projected run margin, then all EV/breakeven/juice
