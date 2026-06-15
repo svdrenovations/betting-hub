@@ -1467,7 +1467,14 @@ function renderTracker() {
     const ev = b.ev!=null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
     return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px">${b.matchup}</td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td>
       <td style="font-size:11px;color:var(--muted)">${b.awayScore !== undefined && b.homeScore !== undefined && b.result !== 'pending' ? b.awayScore+'-'+b.homeScore : '—'}</td>
-      <td class="mono" style="font-size:11px" title="${b.clv!=null?`closed ${b.closingOdds||'?'}${b.closingLine?(' @ '+b.closingLine):''}`:'no closing line captured'}">${b.clv!=null?`<span style="color:${parseFloat(b.clv)>=0?'var(--green)':'var(--red)'}">${parseFloat(b.clv)>=0?'+':''}${b.clv}%</span>`:'—'}</td>
+      <td class="mono" style="font-size:11px">${(() => {
+        if (b.clv != null) {
+          const closed = `${b.closingOdds||'?'}${b.closingLine?(' @ '+b.closingLine):''}`;
+          return `<span style="color:${parseFloat(b.clv)>=0?'var(--green)':'var(--red)'}">${parseFloat(b.clv)>=0?'+':''}${b.clv}%</span> <span style="color:var(--muted);font-size:10px">closed ${closed}</span>`;
+        }
+        if (!b.book || !String(b.book).trim()) return `<span style="color:var(--amber);font-size:10px" title="Enter the book you bet at and CLV will populate">+ add book</span>`;
+        return `<span style="color:var(--dim);font-size:10px" title="Book recorded — CLV posts once the closing line is captured (near first pitch)">pending</span>`;
+      })()}</td>
       <td><div class="rsel">${btns}</div></td><td style="display:flex;gap:4px"><button onclick="openEdit(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:13px" title="Edit">✏️</button><button onclick="deleteBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--dim);font-size:17px">×</button></td></tr>`;
   }).join('')}</tbody></table>`;
 }
@@ -1538,6 +1545,22 @@ async function saveEdit() {
         b.result = updates.result;
         b.notes = updates.notes;
       }
+      // Recompute CLV now — populates the instant you enter the book, instead of waiting
+      // for the next backend run. Book-gated inside captureClosing (no book -> stays blank).
+      if (b) {
+        try {
+          delete _closeCache[b.date]; // force a fresh per-book snapshot read
+          const cap = await captureClosing(b);
+          b.closingOdds = cap.closing_odds; b.closingLine = cap.closing_line; b.clv = cap.clv;
+          if (cap.clv != null || cap.closing_odds != null) {
+            await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${pendingEdit.id}`, {
+              method:'PATCH',
+              headers:{ 'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`,'Prefer':'return=minimal' },
+              body: JSON.stringify({ closing_odds: cap.closing_odds, closing_line: cap.closing_line, clv: cap.clv })
+            });
+          }
+        } catch(e) { /* CLV is best-effort */ }
+      }
       closeEditModal();
       renderTracker();
       updateNavRecord();
@@ -1551,6 +1574,18 @@ async function saveEdit() {
 // the same side. Used by both settle paths so CLV lands no matter how a bet is graded.
 const _closeCache = {};
 function americanToProbJS(o){ o=parseFloat(o); if(isNaN(o)) return null; return o>0 ? 100/(o+100) : (-o)/((-o)+100); }
+// Mirror of analyze.js book resolution so the site and the backend agree on CLV.
+const BOOK_ALIASES_JS = { dk:'draftkings', fd:'fanduel', mgm:'betmgm', czr:'caesars', wh:'williamhill_us', williamhill:'williamhill_us', caesars:'williamhill_us', br:'betrivers', pb:'pointsbetus', pointsbet:'pointsbetus', espn:'espnbet', hardrock:'hardrockbet' };
+function normalizeBookJS(s){ return (s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+function resolveBookKeyJS(userBook, cl){
+  if(!userBook || !cl) return null;
+  const n = normalizeBookJS(userBook), a = BOOK_ALIASES_JS[n] || n;
+  for (const k of Object.keys(cl)){
+    const nk = normalizeBookJS(k), nt = normalizeBookJS(cl[k] && cl[k].title);
+    if (nk===n || nk===a || nt===n || nt===a) return k;
+  }
+  return null;
+}
 function closingForBetJS(typeRaw, g){
   const type=(typeRaw||'').toLowerCase(), f5=type.includes('f5');
   if(type.includes('over'))  return { odds: f5?g.f5_over_odds:g.over_odds,  line: f5?g.f5_total:g.total };
@@ -1561,20 +1596,25 @@ function closingForBetJS(typeRaw, g){
   if(type.includes('rl +1.5')) return { odds: g.home_rl_odds, line: g.home_rl };
   return { odds:null, line:null };
 }
+// Book-gated: returns clv=null (no write) unless the bet has a book that's present in the
+// game's per-book closing snapshot. Status tells the UI which gate state to show.
 async function captureClosing(bet){
   try {
+    if(!bet.book || !String(bet.book).trim()) return {closing_odds:null,closing_line:null,clv:null,status:'no_book'};
     const d = bet.date;
     if(!_closeCache[d]){
-      const r = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${d}&select=away_team,home_team,away_ml,home_ml,total,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,f5_away_ml,f5_home_ml,f5_total,f5_over_odds,f5_under_odds`, { headers:{ 'apikey':SUPABASE_KEY, 'Authorization':`Bearer ${SUPABASE_KEY}` }});
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${d}&select=away_team,home_team,closing_lines`, { headers:{ 'apikey':SUPABASE_KEY, 'Authorization':`Bearer ${SUPABASE_KEY}` }});
       _closeCache[d] = r.ok ? await r.json() : [];
     }
     const aw=(bet.matchup||'').split(' @ ')[0], hm=(bet.matchup||'').split(' @ ')[1]||'';
     const g = (_closeCache[d]||[]).find(row=>{ const at=row.away_team||'',ht=row.home_team||''; return (at.includes(aw.split(' ').pop())||aw.includes(at.split(' ').pop())) && (ht.includes(hm.split(' ').pop())||hm.includes(ht.split(' ').pop())); });
-    if(!g) return {closing_odds:null,closing_line:null,clv:null};
-    const c=closingForBetJS(bet.type,g);
+    if(!g || !g.closing_lines) return {closing_odds:null,closing_line:null,clv:null,status:'no_snapshot'};
+    const key = resolveBookKeyJS(bet.book, g.closing_lines);
+    if(!key) return {closing_odds:null,closing_line:null,clv:null,status:'book_unmatched'};
+    const c=closingForBetJS(bet.type,g.closing_lines[key]);
     const pc=americanToProbJS(c.odds), pb=americanToProbJS(bet.odds);
-    return { closing_odds: c.odds||null, closing_line:(c.line!=null&&c.line!=='')?String(c.line):null, clv:(pc!=null&&pb!=null)?+(((pc-pb)*100).toFixed(1)):null };
-  } catch(e){ return {closing_odds:null,closing_line:null,clv:null}; }
+    return { closing_odds: c.odds||null, closing_line:(c.line!=null&&c.line!=='')?String(c.line):null, clv:(pc!=null&&pb!=null)?+(((pc-pb)*100).toFixed(1)):null, status:'ok' };
+  } catch(e){ return {closing_odds:null,closing_line:null,clv:null,status:'error'}; }
 }
 
 async function settleBets() {
