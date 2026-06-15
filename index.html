@@ -1898,8 +1898,29 @@ function renderStats() {
 
 function exportCSV() {
   if (!bets.length) { alert('No bets to export.'); return; }
-  const headers = ['date','matchup','awayPitcher','homePitcher','type','odds','units','ev','confidence','situations','result','notes'];
-  const rows = bets.map(b => headers.map(h => `"${(b[h]||'').toString().replace(/"/g,'""')}"`).join(','));
+  // [header, accessor] — keeps original columns and adds final score + CLV block.
+  const cols = [
+    ['date',         b => b.date],
+    ['matchup',      b => b.matchup],
+    ['awayPitcher',  b => b.awayPitcher],
+    ['homePitcher',  b => b.homePitcher],
+    ['type',         b => b.type],
+    ['odds',         b => b.odds],
+    ['units',        b => b.units],
+    ['ev',           b => b.ev],
+    ['confidence',   b => b.confidence],
+    ['situations',   b => b.situations],
+    ['result',       b => b.result],
+    ['final_score',  b => (b.awayScore != null && b.homeScore != null) ? `${b.awayScore}-${b.homeScore}` : ''],
+    ['book',         b => b.book],
+    ['clv_pct',      b => (b.clv != null && b.clv !== '') ? b.clv : ''],
+    ['closing_odds', b => (b.closingOdds != null && b.closingOdds !== '') ? b.closingOdds : ''],
+    ['closing_line', b => (b.closingLine != null && b.closingLine !== '') ? b.closingLine : ''],
+    ['notes',        b => b.notes]
+  ];
+  const esc = v => `"${(v == null ? '' : v).toString().replace(/"/g,'""')}"`;
+  const headers = cols.map(c => c[0]);
+  const rows = bets.map(b => cols.map(c => esc(c[1](b))).join(','));
   const csv = [headers.join(','), ...rows].join('\n');
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
