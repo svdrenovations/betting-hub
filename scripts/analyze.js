@@ -1845,8 +1845,25 @@ async function main() {
   });
   console.log(`Today: ${todayGames.length} games\n`);
 
+  // Idempotency: a frequent cron fires all day, but each game should be analyzed exactly
+  // ONCE — the moment its probable pitchers and starting lineups are both confirmed. Pull the
+  // games already finished on confirmed pitchers+lineups and skip them on later ticks (so we
+  // never burn an LLM call redoing them, and never overwrite a verdict you've already bet).
+  const doneSet = new Set();
+  try {
+    const dRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&select=away_team,home_team,pitcher_status,lineup_status`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }});
+    if (dRes.ok) for (const r of await dRes.json()) {
+      if (r.pitcher_status === 'confirmed' && r.lineup_status === 'confirmed') doneSet.add(`${r.away_team}@${r.home_team}`);
+    }
+    if (doneSet.size) console.log(`Already analyzed on confirmed lineups: ${doneSet.size} — will skip those.\n`);
+  } catch(e) { /* if this read fails, worst case we re-analyze a game; not fatal */ }
+
   for (const game of todayGames) {
     try {
+      if (doneSet.has(`${game.away_team}@${game.home_team}`)) {
+        console.log(`  ⏭  ${game.away_team} @ ${game.home_team} — already analyzed (confirmed pitchers + lineups), skipping`);
+        continue;
+      }
       const lines = parseOddsData(game, { commenceTime: game.commence_time });
       if (lines.stale) console.log(`  ⚠ ${game.away_team} @ ${game.home_team} — line is ${lines.lineAgeMin}m old (${lines.bookUsed||'?'}), may be stale`);
 
@@ -1879,6 +1896,13 @@ async function main() {
       }
       if (pitcherStatus === 'confirmed') console.log(`  ✓ Pitchers confirmed: ${awayPitcherInfo.name} @ ${homePitcherInfo.name} (gamePk ${awayPitcherInfo.gamePk})`);
 
+      // GATE 1 — probable pitchers must be confirmed (both, same real game) before we analyze.
+      // 'tbd' / 'partial' / 'mismatch' all mean "not ready" — skip and let a later tick retry.
+      if (pitcherStatus !== 'confirmed') {
+        console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — probable pitchers not confirmed yet (${pitcherStatus}); will analyze once set`);
+        continue;
+      }
+
       // Check for MLB debut
       const [awayDebut, homeDebut] = await Promise.all([
         awayPitcherInfo ? checkMLBDebut(awayPitcherInfo.id) : Promise.resolve(false),
@@ -1899,6 +1923,15 @@ async function main() {
       ]);
 
       if (awayStatcast) console.log(`  Statcast ${awayPitcherInfo.name}: velo ${awayStatcast.avgVelo} (${awayStatcast.veloTrend}), whiff ${awayStatcast.whiffRate}%, barrel ${awayStatcast.barrelRate}%`);
+
+      // GATE 2 — both starting lineups must be officially posted before we analyze. fetchLineupMatchups
+      // returns null until MLB posts the lineup, so a null/short matchup means "not out yet." This is
+      // the gate you described: confirm pitchers + lineups first, THEN run the analysis on the game.
+      const lineupsReady = (awayMatchups?.lineup?.length >= 9) && (homeMatchups?.lineup?.length >= 9);
+      if (!lineupsReady) {
+        console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — starting lineups not posted yet; will analyze once confirmed`);
+        continue;
+      }
       if (homeStatcast) console.log(`  Statcast ${homePitcherInfo.name}: velo ${homeStatcast.avgVelo} (${homeStatcast.veloTrend}), whiff ${homeStatcast.whiffRate}%, barrel ${homeStatcast.barrelRate}%`);
       if (awayMatchups?.avgOPS != null) console.log(`  Away lineup vs ${homePitcherInfo?.name}: OPS ${awayMatchups.avgOPS}, K% ${awayMatchups.kRate}`);
       else if (awayMatchups) console.log(`  Away lineup vs ${homePitcherInfo?.name}: no batter-vs-pitcher sample (using season stats)`);
