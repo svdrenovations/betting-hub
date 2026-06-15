@@ -1341,6 +1341,7 @@ ANALYSIS INSTRUCTIONS — CRITICAL:
 - EXPECTED STARTER LENGTH: a starter averaging under ~5 IP exposes the bullpen earlier — weight the bullpen more heavily for that team.
 - SHARP / LINE ACTION IS INFORMATIONAL ONLY. Report any sharp or line-movement read in lineNote / sharpSide / lineSharp for display, but DO NOT let public or sharp money move your run projections or probabilities. Project independently of the market.
 - The "situations" array must ONLY contain these exact lowercase values: revenge, travel, sharp, weather, rest, series, fade, mustwin, debut. DO NOT add any other values. DO NOT use situations to flag data availability issues. If data is missing just work with what you have.
+- fadeReason: WHENEVER you tag "fade", also populate fadeReason with the specific reason(s) that drove it, using ONLY these values: velo (starter velocity trending DOWN vs season), coldarm (starter recent ERA worse than season), contact (starter hard-hit >=42% or high barrel / low whiff), form (team 2-8 or worse in last 10). Multiple allowed. This is ANNOTATION ONLY — it does NOT change whether or how you fade, it only records why you faded. Leave it [] if you did not tag "fade" (or if the fade was for a reason outside this list).
 - USE ONLY 2026 SEASON STATS for all projections. IGNORE all prior year data entirely.
 - STATCAST IS CRITICAL: A pitcher with velocity DOWN trend is significantly worse than ERA suggests — fade. A pitcher with low barrel rate and high whiff rate is elite regardless of ERA — back. Hard hit rate above 42% means the pitcher is getting hit hard even if runs haven't scored yet.
 - LINEUP MATCHUPS OVERRIDE SEASON STATS: if the opposing lineup has OPS below .600 vs this pitcher with 25%+ K rate, project that team's runs 20-25% lower than season average. If lineup has OPS above .850 vs this pitcher, project 20-25% higher.
@@ -1356,6 +1357,7 @@ ANALYSIS INSTRUCTIONS — CRITICAL:
 Return ONLY this JSON (no markdown, no code fences). Return ONLY these fields — every EV, breakeven, win-probability, and juice table is recomputed downstream from your projections, so do NOT include them:
 {
   "situations": ["revenge","travel","sharp","weather","rest","series","fade","mustwin","debut"],
+  "fadeReason": [],
   "projAwayRuns": NUMBER,
   "projHomeRuns": NUMBER,
   "projTotal": NUMBER,
@@ -1464,6 +1466,7 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       situations: (analysis.situations||[])
         .filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase().trim()))
         .filter(s => !(weather?.weatherNeutralized && (s||'').toLowerCase().trim() === 'weather')),
+      fade_reason: (analysis.fadeReason||[]).filter(r => ['velo','coldarm','contact','form'].includes((r||'').toLowerCase().trim())).join(','),
       ml_verdict: analysis.ml,
       ml_ev: analysis.mlEV,
       rl_verdict: analysis.rl,
