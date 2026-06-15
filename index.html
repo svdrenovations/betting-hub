@@ -205,6 +205,8 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     <button class="filter-btn" onclick="setFilter('skip',this)">Skip games</button>
   </div>
 
+  <div class="filters" id="game-sit-filters" style="display:none"></div>
+
   <div class="best-plays" id="best-plays">
     <div class="bp-title">Top plays today</div>
     <div class="bp-grid" id="bp-grid"></div>
@@ -377,6 +379,7 @@ function getLocalDate() {
 }
 let currentDate = getLocalDate();
 let currentFilter = 'all';
+let gGameSit = [];  // selected situation tags for the games-page chip filter
 let gFilter = { result:[], market:[], ev:[], clv:[], sit:[], price:[], from:'', to:'' };
 function anyFilterActive(){ return gFilter.result.length || gFilter.market.length || gFilter.ev.length || gFilter.clv.length || gFilter.sit.length || gFilter.price.length || !!gFilter.from || !!gFilter.to; }
 function betPasses(b){
@@ -945,6 +948,7 @@ async function loadGames(forceRefresh = false) {
       document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-icon">⚾</div><div class="empty-title">No games found for ${fmtDateShort(currentDate)}</div><div class="empty-sub">Analysis runs automatically at 12pm and 5:30pm ET.<br>Check back then or use the date navigation to view another day.</div></div>`;
       document.getElementById('games-subtitle').textContent = `No games for ${fmtDateShort(currentDate)}`;
       document.getElementById('filters').style.display = 'none';
+      document.getElementById('game-sit-filters').style.display = 'none';
       document.getElementById('best-plays').classList.remove('show');
       return;
     }
@@ -957,6 +961,7 @@ async function loadGames(forceRefresh = false) {
       document.getElementById('last-updated').textContent = `Updated ${ago < 60 ? ago + 'm ago' : Math.round(ago/60) + 'h ago'}`;
     }
     document.getElementById('filters').style.display = 'flex';
+    document.getElementById('game-sit-filters').style.display = 'flex';
     renderGames();
     renderBestPlays();
   } catch(err) {
@@ -1334,12 +1339,38 @@ function gameCardHTML(g) {
   </div>`;
 }
 
+// A game's situation tags = its situations array plus expanded fade reasons (fade:coldarm, fade:form),
+// mirroring betSitTags so the games page filters on the same vocabulary as the tracker.
+function gameSitTags(g){
+  let arr = g.situations;
+  if (typeof arr === 'string') { try { arr = JSON.parse(arr); } catch(e) { arr = arr.split(','); } }
+  if (!Array.isArray(arr)) arr = [];
+  const base = arr.map(s => String(s).toLowerCase().trim()).filter(Boolean);
+  const fr = (g.fade_reason||'').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean);
+  return [...base, ...fr.map(r=>'fade:'+r)];
+}
+function gameSitFilterHTML(){
+  const KNOWN=['weather','fade','debut','fade:velo','fade:coldarm','fade:contact','fade:form'];
+  const derived=games.flatMap(gameSitTags);
+  const tags=[...new Set([...KNOWN, ...derived])];
+  const all=`<button class="filter-btn ${gGameSit.length===0?'on':''}" onclick="clearGameSit()">Any situation</button>`;
+  const chips=tags.map(t=>{
+    const lbl = t.startsWith('fade:') ? 'fade·'+t.slice(5) : t.charAt(0).toUpperCase()+t.slice(1);
+    return `<button class="filter-btn ${gGameSit.includes(t)?'on':''}" onclick="toggleGameSit('${t}')">${lbl}</button>`;
+  }).join('');
+  return all+chips;
+}
+function toggleGameSit(v){ const i=gGameSit.indexOf(v); if(i>=0) gGameSit.splice(i,1); else gGameSit.push(v); renderGames(); }
+function clearGameSit(){ gGameSit=[]; renderGames(); }
+
 function renderGames() {
   let filtered = games;
   if (currentFilter === 'edge') filtered = games.filter(g => getTopEdge(g) === 'high');
   if (currentFilter === 'sit') filtered = games.filter(g => g.situations && g.situations.length > 0);
   if (currentFilter === 'sharp') filtered = games.filter(g => g.line_sharp);
   if (currentFilter === 'skip') filtered = games.filter(g => g.analyzed && getTopEdge(g) === 'skip');
+  if (gGameSit.length) filtered = filtered.filter(g => { const t=gameSitTags(g); return gGameSit.some(v=>t.includes(v)); });
+  const sb = document.getElementById('game-sit-filters'); if (sb) sb.innerHTML = gameSitFilterHTML();
   if (!filtered.length) {
     document.getElementById('games-container').innerHTML = `<div class="empty-state"><div class="empty-title">No games match this filter</div></div>`;
     return;
