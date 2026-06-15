@@ -25,6 +25,12 @@ const PREFERRED_BOOKS = ['draftkings','fanduel','betmgm','caesars','betrivers','
 const STALE_MIN = 30;
 // ────────────────────────────────────────────────────────────────────────────
 
+// Once a game is analyzed, the heartbeat re-snapshots its closing line only inside this many
+// minutes before first pitch (each tick re-captures; the last pre-pitch one becomes the close).
+// Outside this window an already-analyzed game costs nothing — no odds pull. Tune vs cadence:
+// a game analyzed closer to pitch than this still gets caught on the next tick before start.
+const REFRESH_WINDOW_MIN = 60;
+
 const { simulateGame } = require('./sim-data.js'); // Monte Carlo run sim (shadow mode)
 
 // Standard deviation of MLB game total runs, used to convert a projected total
@@ -1756,6 +1762,36 @@ async function settlePendingBets() {
 // PATCHes the odds columns on existing game rows — no Claude calls, no re-analysis, so
 // the day's verdicts are untouched. Games already underway are skipped, so each game's
 // row keeps the last line seen before its first pitch ≈ the true close.
+// Capture ONE game's per-book closing snapshot (and refresh its line columns). Shared by the
+// standalone closing run and the unified heartbeat. Returns 'updated' | 'inplay' | 'started' | 'error'.
+async function snapshotGameClose(g, f5Map, f5Raw, today, now) {
+  const minutesSinceStart = (now - new Date(g.commence_time)) / 60000;
+  if (minutesSinceStart > 5) return 'started'; // already underway — its last refresh holds the close
+  const lines = parseOddsData(g, { commenceTime: g.commence_time, now });
+  const awayML = parseFloat(lines.awayML), homeML = parseFloat(lines.homeML);
+  if (!isNaN(awayML) && !isNaN(homeML) && (Math.abs(awayML) > 600 || Math.abs(homeML) > 600)) return 'inplay'; // backstop
+  // If every book's only price was in-play (all skipped) we have no real close — don't overwrite
+  // the good earlier line with garbage. Keep whatever the last clean pull stored.
+  if (!lines.awayML) { console.log(`  ⊘ ${g.away_team} @ ${g.home_team} — no pre-game line (all books in-play), keeping prior close`); return 'inplay'; }
+  const f5 = f5Map[g.id] || null;
+  const closing_lines = buildClosingLines(g, f5Raw[g.id] || null, g.commence_time); // per-book CLV basis
+  const payload = {
+    away_ml: lines.awayML, home_ml: lines.homeML, total: lines.total,
+    over_odds: lines.overOdds, under_odds: lines.underOdds,
+    away_rl: lines.awayRL, home_rl: lines.homeRL,
+    away_rl_odds: lines.awayRLOdds, home_rl_odds: lines.homeRLOdds,
+    f5_away_ml: f5?.f5AwayML || null, f5_home_ml: f5?.f5HomeML || null,
+    f5_total: f5?.f5Total || null, f5_over_odds: f5?.f5OverOdds || null, f5_under_odds: f5?.f5UnderOdds || null,
+    closing_lines
+  };
+  const url = `${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&away_team=eq.${encodeURIComponent(g.away_team)}&home_team=eq.${encodeURIComponent(g.home_team)}`;
+  try {
+    const res = await fetch(url, { method:'PATCH', headers:{ 'Content-Type':'application/json','apikey':SUPABASE_SERVICE_KEY,'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}`,'Prefer':'return=minimal' }, body: JSON.stringify(payload) });
+    if (res.ok) { console.log(`  ✓ Close refreshed: ${g.away_team} @ ${g.home_team} | ML ${lines.awayML}/${lines.homeML} | ${lines.total} | ${lines.bookUsed||'?'} (${lines.lineAgeMin!=null?lines.lineAgeMin+'m old':'age?'})${lines.stale?' ⚠STALE':''} | ${Object.keys(closing_lines).length} books snapshotted`); return 'updated'; }
+    console.error(`  ✗ ${g.away_team} @ ${g.home_team}: ${await res.text()}`); return 'error';
+  } catch(e) { console.error(`  ✗ ${g.away_team} @ ${g.home_team}:`, e.message); return 'error'; }
+}
+
 async function refreshClosingOdds() {
   console.log('\n=== Closing-line refresh ===');
   console.log(`${new Date().toLocaleString('en-US',{timeZone:'America/New_York'})} ET\n`);
@@ -1766,38 +1802,9 @@ async function refreshClosingOdds() {
   const now = new Date();
   let updated = 0;
   for (const g of games) {
-    const gameEtDate = new Date(g.commence_time).toLocaleDateString('en-CA', {timeZone:'America/New_York'});
-    if (gameEtDate !== today) continue;
-    const minutesSinceStart = (now - new Date(g.commence_time)) / 60000;
-    if (minutesSinceStart > 5) continue; // already started — its last refresh holds the close
-    const lines = parseOddsData(g, { commenceTime: g.commence_time, now });
-    const awayML = parseFloat(lines.awayML), homeML = parseFloat(lines.homeML);
-    if (!isNaN(awayML) && !isNaN(homeML) && (Math.abs(awayML) > 600 || Math.abs(homeML) > 600)) continue; // backstop: live/in-game pricing
-    // If every book's only price was in-play (all skipped) we have no real close — don't
-    // overwrite the good earlier line with garbage. Keep whatever the last clean pull stored.
-    if (!lines.awayML) { console.log(`  ⊘ ${g.away_team} @ ${g.home_team} — no pre-game line (all books in-play), keeping prior close`); continue; }
-    const f5 = f5Map[g.id] || null;
-    // Per-book pre-game snapshot — this is what book-gated CLV resolves against.
-    const closing_lines = buildClosingLines(g, f5Raw[g.id] || null, g.commence_time);
-    const payload = {
-      away_ml: lines.awayML, home_ml: lines.homeML, total: lines.total,
-      over_odds: lines.overOdds, under_odds: lines.underOdds,
-      away_rl: lines.awayRL, home_rl: lines.homeRL,
-      away_rl_odds: lines.awayRLOdds, home_rl_odds: lines.homeRLOdds,
-      f5_away_ml: f5?.f5AwayML || null, f5_home_ml: f5?.f5HomeML || null,
-      f5_total: f5?.f5Total || null, f5_over_odds: f5?.f5OverOdds || null, f5_under_odds: f5?.f5UnderOdds || null,
-      closing_lines
-    };
-    const url = `${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&away_team=eq.${encodeURIComponent(g.away_team)}&home_team=eq.${encodeURIComponent(g.home_team)}`;
-    try {
-      const res = await fetch(url, {
-        method: 'PATCH',
-        headers: { 'Content-Type':'application/json', 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}`, 'Prefer':'return=minimal' },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) { updated++; console.log(`  ✓ Close refreshed: ${g.away_team} @ ${g.home_team} | ML ${lines.awayML}/${lines.homeML} | ${lines.total} | ${lines.bookUsed||'?'} (${lines.lineAgeMin!=null?lines.lineAgeMin+'m old':'age?'})${lines.stale?' ⚠STALE':''} | ${Object.keys(closing_lines).length} books snapshotted`); }
-      else console.error(`  ✗ ${g.away_team} @ ${g.home_team}: ${await res.text()}`);
-    } catch(e) { console.error(`  ✗ ${g.away_team} @ ${g.home_team}:`, e.message); }
+    if (new Date(g.commence_time).toLocaleDateString('en-CA', {timeZone:'America/New_York'}) !== today) continue;
+    const st = await snapshotGameClose(g, f5Map, f5Raw, today, now);
+    if (st === 'updated') updated++;
     await new Promise(r => setTimeout(r, 300));
   }
   console.log(`\n✅ Closing refresh done — ${updated} games updated`);
@@ -1805,30 +1812,34 @@ async function refreshClosingOdds() {
   await computeClvFromBooks();  // book-gated CLV: fills closing line + CLV for any book-tagged bet
 }
 
-// FREE readiness pre-check (MLB Stats only — no Odds API credits). Returns how many of today's
-// games are READY to analyze right now: both probable pitchers posted AND both starting lineups
-// official, excluding ones already analyzed. One schedule call hydrates probables + lineups
-// together. Lets a tick decide whether it should spend Odds API credits at all. Returns -1 if the
-// schedule can't be read (caller then proceeds rather than silently skipping a real slate).
+// FREE readiness pre-check (MLB Stats only — no Odds API credits). Returns { ready, refresh }:
+//   ready   = games to ANALYZE now (both probables posted + both lineups official, not yet done)
+//   refresh = already-analyzed games inside the closing window before first pitch (need a snapshot)
+// One schedule call hydrates probables + lineups together. Lets a tick decide whether to spend any
+// Odds API credits at all. {-1,-1} means the schedule couldn't be read -> caller proceeds anyway.
 async function countReadyGames(today, doneSet) {
   try {
     const res = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${today}&gameType=R&hydrate=probablePitcher,lineups,team`);
-    if (!res.ok) return -1;
+    if (!res.ok) return { ready: -1, refresh: -1 };
     const data = await res.json();
     const games = data.dates?.[0]?.games || [];
     const now = Date.now();
-    let ready = 0, waiting = 0, started = 0;
+    let ready = 0, refresh = 0, waiting = 0, started = 0;
     for (const g of games) {
       const away = g.teams?.away?.team?.name || '', home = g.teams?.home?.team?.name || '';
-      if (doneSet.has(`${away}@${home}`)) continue;                                   // already analyzed
-      if ((now - new Date(g.gameDate).getTime()) / 60000 > 5) { started++; continue; } // underway/finished
+      const minsToStart = (new Date(g.gameDate).getTime() - now) / 60000;
+      if (minsToStart < -5) { started++; continue; }                     // underway/finished
+      if (doneSet.has(`${away}@${home}`)) {                              // already analyzed
+        if (minsToStart <= REFRESH_WINDOW_MIN) refresh++;                // needs a close snapshot now
+        continue;
+      }
       const probOk = !!(g.teams?.away?.probablePitcher?.id && g.teams?.home?.probablePitcher?.id);
       const lineupOk = (g.lineups?.awayPlayers?.length >= 9) && (g.lineups?.homePlayers?.length >= 9);
       if (probOk && lineupOk) ready++; else waiting++;
     }
-    console.log(`Readiness pre-check (free): ${ready} ready, ${waiting} waiting on pitchers/lineups, ${doneSet.size} done, ${started} started.`);
-    return ready;
-  } catch(e) { console.log('  readiness pre-check error:', e.message); return -1; }
+    console.log(`Readiness pre-check (free): ${ready} ready, ${refresh} need close-refresh, ${waiting} waiting, ${doneSet.size} done, ${started} started.`);
+    return { ready, refresh };
+  } catch(e) { console.log('  readiness pre-check error:', e.message); return { ready: -1, refresh: -1 }; }
 }
 
 async function main() {
@@ -1852,21 +1863,22 @@ async function main() {
     if (doneSet.size) console.log(`Already analyzed on confirmed lineups: ${doneSet.size} — will skip those.`);
   } catch(e) { /* if this read fails, worst case we re-analyze a game; not fatal */ }
 
-  // OPTIMIZATION — spend Odds API credits only when something is actually ready to analyze. A free
-  // MLB Stats pass counts games with pitchers + lineups confirmed that aren't already done. If
-  // that's zero, this tick does NOT pull odds — it just settles/CLVs and exits. So on a day with a
-  // lone 1pm game and the rest at 7pm, once the 1pm is analyzed the afternoon ticks cost ~nothing
-  // until the evening lineups post. (-1 means the schedule couldn't be read -> proceed anyway.)
-  const readyCount = await countReadyGames(today, doneSet);
-  if (readyCount === 0) {
-    console.log('No new games are ready (waiting on pitchers/lineups) — skipping the Odds API pull this tick.');
+  // OPTIMIZATION — spend Odds API credits only when there's work this tick. The free MLB Stats
+  // pass returns how many games need ANALYSIS (ready) and how many need a CLOSE snapshot (refresh,
+  // i.e. already analyzed and inside the window before first pitch). If both are zero, this tick
+  // pulls no odds — it just settles/CLVs and exits. So on a day with a lone 1pm game and the rest
+  // at 7pm, once the 1pm is analyzed AND its close captured, the afternoon ticks cost ~nothing
+  // until the evening lineups post. ({-1,-1} means the schedule couldn't be read -> proceed.)
+  const { ready, refresh } = await countReadyGames(today, doneSet);
+  if (ready === 0 && refresh === 0) {
+    console.log('Nothing to analyze and no closes to snapshot — skipping the Odds API pull this tick.');
     await settlePendingBets();
     await computeClvFromBooks();
-    console.log('✅ Tick done — nothing to analyze.');
+    console.log('✅ Tick done — nothing to do.');
     return;
   }
 
-  const [games, f5Map, probables] = await Promise.all([fetchOddsAPI(), fetchF5Lines(), fetchProbablePitchers(today)]);
+  const [games, f5Map, f5Raw, probables] = await Promise.all([fetchOddsAPI(), fetchF5Lines(), fetchF5Raw(), fetchProbablePitchers(today)]);
   const pitcherMap = probables.pitcherMap;
   const venueMap = probables.venueMap;
   const now = new Date();
@@ -1899,8 +1911,17 @@ async function main() {
 
   for (const game of todayGames) {
     try {
+      // Already analyzed -> CLOSE-REFRESH branch. Snapshot its per-book close once inside the
+      // window before first pitch (each tick re-captures; the last pre-pitch one is the close).
+      // Outside the window it's a free no-op — no odds work for that game.
       if (doneSet.has(`${game.away_team}@${game.home_team}`)) {
-        console.log(`  ⏭  ${game.away_team} @ ${game.home_team} — already analyzed (confirmed pitchers + lineups), skipping`);
+        const minsToStart = (new Date(game.commence_time) - now) / 60000;
+        if (minsToStart > REFRESH_WINDOW_MIN) {
+          console.log(`  ⏭  ${game.away_team} @ ${game.home_team} — analyzed; close-refresh window not open yet (${Math.round(minsToStart)}m to first pitch)`);
+        } else {
+          await snapshotGameClose(game, f5Map, f5Raw, today, now);
+          await new Promise(r => setTimeout(r, 300));
+        }
         continue;
       }
       const lines = parseOddsData(game, { commenceTime: game.commence_time });
