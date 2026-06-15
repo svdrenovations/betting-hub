@@ -1805,6 +1805,32 @@ async function refreshClosingOdds() {
   await computeClvFromBooks();  // book-gated CLV: fills closing line + CLV for any book-tagged bet
 }
 
+// FREE readiness pre-check (MLB Stats only — no Odds API credits). Returns how many of today's
+// games are READY to analyze right now: both probable pitchers posted AND both starting lineups
+// official, excluding ones already analyzed. One schedule call hydrates probables + lineups
+// together. Lets a tick decide whether it should spend Odds API credits at all. Returns -1 if the
+// schedule can't be read (caller then proceeds rather than silently skipping a real slate).
+async function countReadyGames(today, doneSet) {
+  try {
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${today}&gameType=R&hydrate=probablePitcher,lineups,team`);
+    if (!res.ok) return -1;
+    const data = await res.json();
+    const games = data.dates?.[0]?.games || [];
+    const now = Date.now();
+    let ready = 0, waiting = 0, started = 0;
+    for (const g of games) {
+      const away = g.teams?.away?.team?.name || '', home = g.teams?.home?.team?.name || '';
+      if (doneSet.has(`${away}@${home}`)) continue;                                   // already analyzed
+      if ((now - new Date(g.gameDate).getTime()) / 60000 > 5) { started++; continue; } // underway/finished
+      const probOk = !!(g.teams?.away?.probablePitcher?.id && g.teams?.home?.probablePitcher?.id);
+      const lineupOk = (g.lineups?.awayPlayers?.length >= 9) && (g.lineups?.homePlayers?.length >= 9);
+      if (probOk && lineupOk) ready++; else waiting++;
+    }
+    console.log(`Readiness pre-check (free): ${ready} ready, ${waiting} waiting on pitchers/lineups, ${doneSet.size} done, ${started} started.`);
+    return ready;
+  } catch(e) { console.log('  readiness pre-check error:', e.message); return -1; }
+}
+
 async function main() {
   if (RUN_TYPE === 'closing') { await refreshClosingOdds(); return; }
   console.log(`\n=== MLB Analysis: ${RUN_TYPE} ===`);
@@ -1814,6 +1840,32 @@ async function main() {
   const etDate = new Date().toLocaleDateString('en-US', {timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'});
   const [etMonth, etDay, etYear] = etDate.split('/');
   const today = etYear + '-' + etMonth + '-' + etDay;
+
+  // Idempotency set first (free Supabase read): which games are already analyzed on confirmed
+  // pitchers + lineups. Used by both the readiness pre-check and the per-game skip in the loop.
+  const doneSet = new Set();
+  try {
+    const dRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&select=away_team,home_team,pitcher_status,lineup_status`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }});
+    if (dRes.ok) for (const r of await dRes.json()) {
+      if (r.pitcher_status === 'confirmed' && r.lineup_status === 'confirmed') doneSet.add(`${r.away_team}@${r.home_team}`);
+    }
+    if (doneSet.size) console.log(`Already analyzed on confirmed lineups: ${doneSet.size} — will skip those.`);
+  } catch(e) { /* if this read fails, worst case we re-analyze a game; not fatal */ }
+
+  // OPTIMIZATION — spend Odds API credits only when something is actually ready to analyze. A free
+  // MLB Stats pass counts games with pitchers + lineups confirmed that aren't already done. If
+  // that's zero, this tick does NOT pull odds — it just settles/CLVs and exits. So on a day with a
+  // lone 1pm game and the rest at 7pm, once the 1pm is analyzed the afternoon ticks cost ~nothing
+  // until the evening lineups post. (-1 means the schedule couldn't be read -> proceed anyway.)
+  const readyCount = await countReadyGames(today, doneSet);
+  if (readyCount === 0) {
+    console.log('No new games are ready (waiting on pitchers/lineups) — skipping the Odds API pull this tick.');
+    await settlePendingBets();
+    await computeClvFromBooks();
+    console.log('✅ Tick done — nothing to analyze.');
+    return;
+  }
+
   const [games, f5Map, probables] = await Promise.all([fetchOddsAPI(), fetchF5Lines(), fetchProbablePitchers(today)]);
   const pitcherMap = probables.pitcherMap;
   const venueMap = probables.venueMap;
@@ -1844,19 +1896,6 @@ async function main() {
     return true;
   });
   console.log(`Today: ${todayGames.length} games\n`);
-
-  // Idempotency: a frequent cron fires all day, but each game should be analyzed exactly
-  // ONCE — the moment its probable pitchers and starting lineups are both confirmed. Pull the
-  // games already finished on confirmed pitchers+lineups and skip them on later ticks (so we
-  // never burn an LLM call redoing them, and never overwrite a verdict you've already bet).
-  const doneSet = new Set();
-  try {
-    const dRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&select=away_team,home_team,pitcher_status,lineup_status`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }});
-    if (dRes.ok) for (const r of await dRes.json()) {
-      if (r.pitcher_status === 'confirmed' && r.lineup_status === 'confirmed') doneSet.add(`${r.away_team}@${r.home_team}`);
-    }
-    if (doneSet.size) console.log(`Already analyzed on confirmed lineups: ${doneSet.size} — will skip those.\n`);
-  } catch(e) { /* if this read fails, worst case we re-analyze a game; not fatal */ }
 
   for (const game of todayGames) {
     try {
