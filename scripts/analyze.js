@@ -1757,6 +1757,75 @@ async function settlePendingBets() {
   }
 }
 
+// ── GAME-LEVEL FINAL SCORES (for the magnitude / projection-accuracy test) ───
+// Independent of betting. Writes away_final/home_final/actual_total onto EVERY mlb_games row
+// that has finished but isn't scored yet — including weather-neutral games and whole slates we
+// never bet (e.g. a scrapped day). That makes every analyzed game a data point for comparing
+// proj_total (and sim_away_runs+sim_home_runs) against what actually happened. One schedule
+// call per distinct unscored date keeps API use tiny. Idempotent: actual_total stays null until
+// a game is Final and scored once, so re-runs are cheap no-ops. On first run after deploy it
+// backfills the existing history in one pass.
+async function settleGameScores() {
+  console.log('\nCapturing final scores into mlb_games...');
+  try {
+    const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // YYYY-MM-DD
+    // Only games that have already happened (don't try to score the future) and aren't scored yet.
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/mlb_games?actual_total=is.null&game_date=lte.${todayET}&select=id,game_date,away_team,home_team&order=game_date.desc`,
+      { headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } }
+    );
+    if (!res.ok) { console.log('  (could not read unscored games — is the actual_total column added?)'); return; }
+    const rows = await res.json();
+    if (!rows.length) { console.log('  No unscored finished games.'); return; }
+
+    // Group by date so we hit the schedule API once per day, not once per game.
+    const byDate = {};
+    for (const r of rows) (byDate[r.game_date] ||= []).push(r);
+
+    let scored = 0;
+    for (const date of Object.keys(byDate)) {
+      let games = [];
+      try {
+        const sres = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${date}&gameType=R&hydrate=linescore`);
+        if (!sres.ok) continue;
+        const sdata = await sres.json();
+        games = sdata.dates?.[0]?.games || [];
+      } catch { continue; }
+
+      for (const row of byDate[date]) {
+        // Same fuzzy last-word team match the bet settler uses, sourced from the game row.
+        const awayName = row.away_team || '';
+        const homeName = row.home_team || '';
+        const game = games.find(g => {
+          const awayTeam = g.teams?.away?.team?.name || '';
+          const homeTeam = g.teams?.home?.team?.name || '';
+          return (awayTeam.includes(awayName.split(' ').pop()) || awayName.includes(awayTeam.split(' ').pop())) &&
+                 (homeTeam.includes(homeName.split(' ').pop()) || homeName.includes(homeTeam.split(' ').pop()));
+        });
+        if (!game || game.status?.abstractGameState !== 'Final') continue;  // skip not-yet-final; scored on a later tick
+        const a = game.teams?.away?.score, h = game.teams?.home?.score;
+        if (a === undefined || h === undefined) continue;
+
+        const up = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?id=eq.${row.id}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_SERVICE_KEY,
+            'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({ away_final: a, home_final: h, actual_total: a + h })
+        });
+        if (up.ok) { scored++; console.log(`  ✓ Scored: ${awayName} @ ${homeName} (${date}) — ${a}-${h}, total ${a + h}`); }
+        await new Promise(r => setTimeout(r, 250));
+      }
+    }
+    console.log(`  Final-score capture done — ${scored} game(s) scored.`);
+  } catch (e) {
+    console.error('  Game-score capture error:', e.message);
+  }
+}
+
 // ── CLOSING-LINE REFRESH (lightweight) ───────────────────────────────────────
 // Runs ~5 min before each block of games (RUN_TYPE=closing). Only re-pulls odds and
 // PATCHes the odds columns on existing game rows — no Claude calls, no re-analysis, so
@@ -1809,6 +1878,7 @@ async function refreshClosingOdds() {
   }
   console.log(`\n✅ Closing refresh done — ${updated} games updated`);
   await settlePendingBets();    // settles finals (result + score only)
+  await settleGameScores();     // capture game-level finals into mlb_games (magnitude test)
   await computeClvFromBooks();  // book-gated CLV: fills closing line + CLV for any book-tagged bet
 }
 
@@ -1873,6 +1943,7 @@ async function main() {
   if (ready === 0 && refresh === 0) {
     console.log('Nothing to analyze and no closes to snapshot — skipping the Odds API pull this tick.');
     await settlePendingBets();
+    await settleGameScores();
     await computeClvFromBooks();
     console.log('✅ Tick done — nothing to do.');
     return;
@@ -2068,6 +2139,7 @@ async function main() {
 
   console.log(`\n✅ Done — ${todayGames.length} games`);
   await settlePendingBets();
+  await settleGameScores();
   await computeClvFromBooks();  // pick up CLV for any bet whose book was entered since last run
 }
 
