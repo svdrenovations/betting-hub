@@ -978,7 +978,7 @@ function getTopEdge(g) {
   return 'skip';
 }
 
-function sitFlagHTML(sits) {
+function sitFlagHTML(sits, fadeReason) {
   if (!sits || sits.length === 0) return '<span class="sit-flag sf-none">no situation flags</span>';
   const map = {
     revenge:['sf-revenge','revenge spot'],travel:['sf-travel','travel fatigue'],
@@ -990,12 +990,15 @@ function sitFlagHTML(sits) {
     tbd_pitchers:['sf-rest','pitchers TBD'],extreme_line:['sf-sharp','extreme line'],
     line_movement:['sf-sharp','line move'],hot_team:['sf-series','hot team'],cold_team:['sf-fade','cold team']
   };
+  const fr = fadeReason ? String(fadeReason).trim() : '';
   const validFlags = (sits||[]).filter(f => f && typeof f === 'string' && f.length < 40);
   if (!validFlags.length) return '<span class="sit-flag sf-none">no situation flags</span>';
   return validFlags.map(f => {
     const key = f.toLowerCase().replace(/[^a-z_]/g,'');
     const info = map[key] || ['sf-none', f.toLowerCase().replace(/_/g,' ').substring(0,20)];
-    return `<span class="sit-flag ${info[0]}">${info[1]}</span>`;
+    let label = info[1];
+    if (key === 'fade' && fr) label += ' · ' + fr.replace(/,/g, ', ');
+    return `<span class="sit-flag ${info[0]}">${label}</span>`;
   }).join('');
 }
 
@@ -1318,7 +1321,7 @@ function gameCardHTML(g) {
       </div>
     </div>
     <div class="card-body">
-      <div class="sit-flags">${pitcherMarkerHTML(g)}${lineupMarkerHTML(g)}${sitFlagHTML(g.situations)}</div>
+      <div class="sit-flags">${pitcherMarkerHTML(g)}${lineupMarkerHTML(g)}${sitFlagHTML(g.situations, g.fade_reason)}</div>
       ${weatherHTML(g)}
       ${oddsTableHTML(g)}
       ${marketsHTML}
