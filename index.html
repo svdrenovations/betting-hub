@@ -472,6 +472,8 @@ const TRACKER_COLS = [
   { key:'ev',         label:'EV%',        w:58, t:'num'  },
   { key:'confidence', label:'Conf',       w:52, t:'rank' },
   { key:'situations', label:'Situation',  w:0,  t:'str'  },
+  { key:'model_pred', label:'Model',      w:64, t:'num'  },
+  { key:'sim_pred',   label:'Sim',        w:64, t:'num'  },
   { key:'score',      label:'Score',      w:50, t:'num'  },
   { key:'clv',        label:'CLV',        w:56, t:'num'  },
   { key:'result',     label:'Result',     w:0,  t:'rank' }
@@ -485,6 +487,8 @@ function sortVal(b, col){
     case 'ev':       return parseFloat(b.ev);
     case 'clv':      return parseFloat(b.clv);
     case 'score':    return (b.awayScore!=null && b.homeScore!=null) ? (Number(b.awayScore)+Number(b.homeScore)) : null;
+    case 'model_pred': return (b.modelAwayRuns!=null && b.modelHomeRuns!=null) ? (Number(b.modelAwayRuns)+Number(b.modelHomeRuns)) : null;
+    case 'sim_pred':   return (b.simAwayRuns!=null && b.simHomeRuns!=null) ? (Number(b.simAwayRuns)+Number(b.simHomeRuns)) : null;
     case 'confidence': return ({LOW:1,MEDIUM:2,HIGH:3})[(b.confidence||'').toUpperCase()] ?? null;
     case 'result':   return ({win:1,loss:2,push:3,pending:4})[b.result] ?? null;
     default:         return (b[col]==null || b[col]==='') ? null : String(b[col]).toLowerCase();
@@ -744,6 +748,24 @@ async function loadBetsFromSupabase() {
       closingLine: b.closing_line,
       clv: b.clv
     }));
+    // Join model + sim run projections from mlb_games so the tracker can show them next to the result.
+    try {
+      const pres = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?select=game_date,away_team,home_team,proj_away_runs,proj_home_runs,sim_away_runs,sim_home_runs`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      if (pres.ok) {
+        const pdata = await pres.json();
+        const pmap = {};
+        pdata.forEach(g => { pmap[`${g.game_date}||${(g.away_team||'').trim()} @ ${(g.home_team||'').trim()}`] = g; });
+        bets.forEach(b => {
+          const g = pmap[`${b.date}||${(b.matchup||'').replace('↗','').trim()}`];
+          if (g) {
+            b.modelAwayRuns = g.proj_away_runs; b.modelHomeRuns = g.proj_home_runs;
+            b.simAwayRuns = g.sim_away_runs;   b.simHomeRuns = g.sim_home_runs;
+          }
+        });
+      }
+    } catch(e) { console.error('projection join error:', e); }
     updateNavRecord();
     // Migrate any existing localStorage bets to Supabase
     const local = JSON.parse(localStorage.getItem('mlb_bets_v2') || '[]');
@@ -964,14 +986,15 @@ function sitFlagHTML(sits) {
   }).join('');
 }
 
-function marketCell(label, verdict, ev, isBest, line, projTotal, breakeven, gId) {
+function marketCell(label, verdict, ev, isBest, line, projTotal, breakeven, gId, logged) {
   const v = verdict || 'SKIP';
   const cls = v.startsWith('BET') ? 'mv-bet' : v.includes('LEAN') ? 'mv-lean' : v.includes('OVER') ? 'mv-over' : v.includes('UNDER') ? 'mv-under' : 'mv-skip';
   const evHtml = ev != null && ev !== 0 ? `<div class="ev-val ${ev >= 0 ? 'ev-pos' : 'ev-neg'}">${ev >= 0 ? '+' : ''}${parseFloat(ev).toFixed(1)}% EV</div>` : '';
   const lineHtml = line != null && projTotal != null && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--muted);font-family:DM Mono,monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>` : '';
   const breakHtml = breakeven && v !== 'SKIP' ? `<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>` : '';
   const clickable = v !== 'SKIP' && ev > 0 ? `style="cursor:pointer" onclick="quickLog('${gId}','${label}','${v}','${line||''}','${breakeven||''}')"` : '';
-  return `<div class="market-cell${isBest ? ' best' : ''}" ${clickable}><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}</div>`;
+  const check = logged ? ` <span style="color:var(--green);font-weight:700" title="Logged: ${String(logged).replace(/"/g,'&quot;')}">✓</span>` : '';
+  return `<div class="market-cell${isBest ? ' best' : ''}${logged ? ' logged' : ''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}</div>`;
 }
 
 function edgeBadge(g) {
@@ -1216,18 +1239,40 @@ function projCompareHTML(g) {
     </div>`;
 }
 
+function betMarketKey(type) {
+  const t = (type || '').toLowerCase();
+  if (t.includes('f5')) return 'F5';          // check F5 first — "F5 moneyline" also contains "moneyline"
+  if (t.includes('moneyline')) return 'ML';
+  if (t.includes('run line')) return 'RL';
+  if (t.includes('total')) return 'TOTAL';
+  return null;
+}
+function loggedMarketsForGame(g) {
+  const key = `${g.game_date}||${(g.away_team || '').trim()} @ ${(g.home_team || '').trim()}`;
+  const map = {};
+  bets.forEach(b => {
+    if (`${b.date}||${(b.matchup || '').replace('↗','').trim()}` !== key) return;
+    const m = betMarketKey(b.type);
+    if (!m) return;
+    const desc = `${b.type}${b.odds ? ' ' + b.odds : ''}${b.result && b.result !== 'pending' ? ' · ' + b.result : ''}`;
+    map[m] = map[m] ? map[m] + ' | ' + desc : desc;
+  });
+  return map;
+}
+
 function gameCardHTML(g) {
   const edge = getTopEdge(g);
   const edgeCls = edge === 'high' ? 'edge-high' : edge === 'med' ? 'edge-med' : '';
   const time = g.commence_time ? new Date(g.commence_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/New_York'}) + ' ET' : 'TBD';
   const isExpanded = expanded[g.id];
+  const logged = loggedMarketsForGame(g);
 
   const marketsHTML = g.analyzed
     ? `<div class="markets">
-        ${marketCell('ML', g.ml_verdict, g.ml_ev, g.best_market === 'ml', null, null, g.ml_breakeven, g.id)}
-        ${marketCell('RL', g.rl_verdict, g.rl_ev, g.best_market === 'rl', null, null, g.rl_breakeven, g.id)}
-        ${marketCell('TOTAL', g.total_verdict, g.total_ev, g.best_market === 'total', g.total_line, g.proj_total, g.total_breakeven, g.id)}
-        ${marketCell('F5', g.f5_verdict, g.f5_ev, g.best_market === 'f5', g.f5_line, g.f5_proj_total, g.f5_breakeven, g.id)}
+        ${marketCell('ML', g.ml_verdict, g.ml_ev, g.best_market === 'ml', null, null, g.ml_breakeven, g.id, logged.ML)}
+        ${marketCell('RL', g.rl_verdict, g.rl_ev, g.best_market === 'rl', null, null, g.rl_breakeven, g.id, logged.RL)}
+        ${marketCell('TOTAL', g.total_verdict, g.total_ev, g.best_market === 'total', g.total_line, g.proj_total, g.total_breakeven, g.id, logged.TOTAL)}
+        ${marketCell('F5', g.f5_verdict, g.f5_ev, g.best_market === 'f5', g.f5_line, g.f5_proj_total, g.f5_breakeven, g.id, logged.F5)}
       </div>`
     : `<div class="markets" style="opacity:.3">${['ML','RL','TOTAL','F5'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
 
@@ -1480,6 +1525,7 @@ async function saveBet() {
   document.getElementById('log-max-juice').value = '';
   document.getElementById('log-book').value = '';
   if (document.getElementById('page-tracker').classList.contains('on')) renderTracker();
+  renderGames();   // refresh game cards so the logged-market checkmark shows right away
 }
 
 async function setResult(id, r) {
@@ -1505,6 +1551,7 @@ async function deleteBet(id) {
   bets.splice(i, 1);
   await deleteBetFromSupabase(id);
   renderTracker();
+  renderGames();   // clear the logged-market checkmark on the game card
   updateNavRecord();
 }
 
@@ -1525,6 +1572,13 @@ function renderTracker() {
     const btns = ['win','loss','push','pending'].map(r => `<button onclick="setResult(${b.id},'${r}')" class="${r}-btn ${b.result===r?'on':''}">${r}</button>`).join('');
     const ev = b.ev!=null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
     return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px"><a href="?game=${encodeURIComponent(b.matchup)}&date=${encodeURIComponent(b.date)}" target="_blank" rel="noopener" style="color:var(--green);text-decoration:none" title="Open this game's analysis in a new tab">${b.matchup} <span style="color:var(--muted);font-size:10px">↗</span></a></td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td>
+      <td class="mono" style="font-size:11px;color:var(--muted)">${b.modelAwayRuns!=null && b.modelHomeRuns!=null ? b.modelAwayRuns+'-'+b.modelHomeRuns : '—'}</td>
+      <td class="mono" style="font-size:11px">${(() => {
+        const ma=b.modelAwayRuns, mh=b.modelHomeRuns, sa=b.simAwayRuns, sh=b.simHomeRuns;
+        if (sa==null || sh==null) return '<span style="color:var(--muted)">—</span>';
+        const inv = (ma!=null && mh!=null) && ((ma>mh) !== (sa>sh));   // model & sim pick different winners
+        return `<span style="color:${inv?'var(--amber)':'var(--muted)'}"${inv?' title="Sim disagrees with the model on the winner"':''}>${sa}-${sh}${inv?' ⇄':''}</span>`;
+      })()}</td>
       <td style="font-size:11px;color:var(--muted)">${b.awayScore !== undefined && b.homeScore !== undefined && b.result !== 'pending' ? b.awayScore+'-'+b.homeScore : '—'}</td>
       <td class="mono" style="font-size:11px">${(() => {
         if (b.clv != null) {
@@ -1912,6 +1966,8 @@ function exportCSV() {
     ['situations',   b => b.situations],
     ['result',       b => b.result],
     ['final_score',  b => (b.awayScore != null && b.homeScore != null) ? `${b.awayScore}-${b.homeScore}` : ''],
+    ['model_pred',   b => (b.modelAwayRuns != null && b.modelHomeRuns != null) ? `${b.modelAwayRuns}-${b.modelHomeRuns}` : ''],
+    ['sim_pred',     b => (b.simAwayRuns != null && b.simHomeRuns != null) ? `${b.simAwayRuns}-${b.simHomeRuns}` : ''],
     ['book',         b => b.book],
     ['clv_pct',      b => (b.clv != null && b.clv !== '') ? b.clv : ''],
     ['closing_odds', b => (b.closingOdds != null && b.closingOdds !== '') ? b.closingOdds : ''],
@@ -1932,6 +1988,7 @@ function exportCSV() {
 document.getElementById('date-display').textContent = fmtDate(currentDate);
 loadBetsFromSupabase().then(() => {
   updateNavRecord();
+  renderGames();   // bets may finish after the first card render — refresh so logged checkmarks appear
 });
 if (new URLSearchParams(location.search).get('game')) {
   openDeepLinkGame();
