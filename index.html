@@ -50,6 +50,8 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .game-card:hover{border-color:var(--border2)}
 .game-card.edge-high{border-color:var(--green);box-shadow:0 0 0 1px var(--green-bg)}
 .game-card.edge-med{border-color:var(--amber)}
+.dl-highlight{animation:dlflash 1.3s ease-out 2}
+@keyframes dlflash{0%,100%{box-shadow:0 0 0 2px var(--green)}50%{box-shadow:0 0 0 2px transparent}}
 .card-header{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start}
 .card-matchup{font-size:15px;font-weight:600;letter-spacing:-.2px}
 .card-meta{font-size:11px;color:var(--muted);font-family:DM Mono,monospace;margin-top:3px}
@@ -375,8 +377,8 @@ function getLocalDate() {
 }
 let currentDate = getLocalDate();
 let currentFilter = 'all';
-let gFilter = { result:[], market:[], ev:[], clv:[], from:'', to:'' };
-function anyFilterActive(){ return gFilter.result.length || gFilter.market.length || gFilter.ev.length || gFilter.clv.length || !!gFilter.from || !!gFilter.to; }
+let gFilter = { result:[], market:[], ev:[], clv:[], sit:[], price:[], from:'', to:'' };
+function anyFilterActive(){ return gFilter.result.length || gFilter.market.length || gFilter.ev.length || gFilter.clv.length || gFilter.sit.length || gFilter.price.length || !!gFilter.from || !!gFilter.to; }
 function betPasses(b){
   const g=gFilter, t=(b.type||'').toLowerCase();
   // Within a group the selections are OR'd; across groups they're AND'd. Empty group = no constraint.
@@ -398,10 +400,26 @@ function betPasses(b){
     if(!ok) return false;
   }
   if(g.clv.length){
-    const c = b.clv!=null ? parseFloat(b.clv) : null;
+    const c = (b.clv!=null && b.clv!=='') ? parseFloat(b.clv) : null;
     const ok = g.clv.some(v =>
-      v==='beat' ? (c!=null && c>0) :
-      v==='miss' ? (c!=null && c<0) : false);
+      v==='s'    ? (c!=null && c>=2) :
+      v==='b'    ? (c!=null && c>0 && c<2) :
+      v==='m'    ? (c!=null && c<0) :
+      v==='none' ? (c==null) : false);
+    if(!ok) return false;
+  }
+  if(g.sit.length){
+    // situations is a comma-joined tag list (e.g. "weather,fade"); match if it carries any selected tag.
+    const tags = (b.situations||'').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean);
+    if(!g.sit.some(v => tags.includes(v))) return false;
+  }
+  if(g.price.length){
+    const a = parseFloat(b.odds);
+    const ok = !isNaN(a) && g.price.some(v =>
+      v==='chalk'  ? (a<=-150) :
+      v==='fav'    ? (a<0 && a>-150) :
+      v==='dog'    ? (a>0 && a<150) :
+      v==='bigdog' ? (a>=150) : false);
     if(!ok) return false;
   }
   if(g.from && b.date && String(b.date) < g.from) return false;
@@ -418,10 +436,18 @@ function filterBarHTML(){
     const vals=opts.map(([v,lbl])=>`<button class="filter-btn ${sel.includes(v)?'on':''}" onclick="toggleG('${key}','${v}')">${lbl}</button>`).join('');
     return all+vals;
   };
+  // Situation chips: a known baseline (so the row always shows) unioned with any tags found
+  // live in the data, so new tags appear automatically.
+  const KNOWN_SITS=['weather','fade','debut'];
+  const derivedSits=bets.flatMap(b=>(b.situations||'').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean));
+  const sitTags=[...new Set([...KNOWN_SITS, ...derivedSits])];
+  const sitOpts=sitTags.map(t=>[t, t.charAt(0).toUpperCase()+t.slice(1)]);
   return `<div class="tracker-filters">${grp('result','All',[['pending','Pending'],['win','Won'],['loss','Lost']])}</div>`
     + `<div class="tracker-filters">${grp('market','All mkts',[['moneyline','ML'],['total','Total'],['rl','RL'],['f5','F5']])}</div>`
+    + `<div class="tracker-filters">${grp('sit','Any situation',sitOpts)}</div>`
+    + `<div class="tracker-filters">${grp('price','Any price',[['chalk','Heavy fav ≤-150'],['fav','Fav -150 to 0'],['dog','Dog 0 to +150'],['bigdog','Big dog +150+']])}</div>`
     + `<div class="tracker-filters">${grp('ev','Any EV',[['lo','.1% - 2.4%'],['mid','2.5% - 5.9%'],['hi','6%+']])}`
-    + grp('clv','Any CLV',[['beat','Beat close'],['miss','Missed']])
+    + grp('clv','Any CLV',[['s','CLV +2%+'],['b','CLV 0 to +2%'],['m','CLV <0'],['none','No CLV']])
     + `<span class="filter-datelbl">from</span><input type="date" class="filter-date" value="${g.from||''}" onchange="setG('from',this.value)" title="From date (inclusive). Set From = To for a single day.">`
     + `<span class="filter-datelbl">to</span><input type="date" class="filter-date" value="${g.to||''}" onchange="setG('to',this.value)" title="To date (inclusive)">`
     + ((g.from||g.to)?`<button class="filter-btn" onclick="clearDates()">clear dates</button>`:'')
@@ -805,9 +831,42 @@ function goPage(name, btn) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('on'));
   document.getElementById('page-' + name).classList.add('on');
-  btn.classList.add('on');
+  if (!btn) btn = [...document.querySelectorAll('.nav-tab')].find(b => (b.getAttribute('onclick')||'').includes(`'${name}'`));
+  if (btn) btn.classList.add('on');
   if (name === 'tracker') renderTracker();
   if (name === 'stats') renderStats();
+}
+
+// Deep-link: ?game=<Away @ Home>&date=YYYY-MM-DD opens that game's analysis in the Games view,
+// already expanded, and scrolls to it. Used by the Tracker (click a bet -> new tab to its game).
+async function openDeepLinkGame() {
+  const params = new URLSearchParams(location.search);
+  const matchup = params.get('game');
+  if (!matchup) return false;
+  const dateStr = params.get('date');
+  goPage('games');
+  if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const [y,m,d] = dateStr.split('-').map(Number);
+    currentDate = new Date(y, m-1, d);
+    document.getElementById('date-display').textContent = fmtDate(currentDate);
+  }
+  await loadGames();
+  const norm = s => (s||'').trim().toLowerCase();
+  const g = games.find(x => norm(`${x.away_team} @ ${x.home_team}`) === norm(matchup));
+  if (g) {
+    expanded[g.id] = true;          // open the notes (Situation read / Key factors / Best play / Risks)
+    renderGames();
+    const el = document.getElementById('card-' + g.id);
+    if (el) {
+      el.scrollIntoView({behavior:'smooth', block:'center'});
+      el.classList.add('dl-highlight');
+      setTimeout(() => el.classList.remove('dl-highlight'), 2600);
+    }
+  } else {
+    const sub = document.getElementById('games-subtitle');
+    if (sub) sub.textContent = `Couldn't find that game's analysis for ${dateStr||'that date'} — it may not have been analyzed.`;
+  }
+  return true;
 }
 
 async function triggerAnalysis() {
@@ -1465,7 +1524,7 @@ function renderTracker() {
   </tr></thead><tbody>${sortBets(filtered).map(b => {
     const btns = ['win','loss','push','pending'].map(r => `<button onclick="setResult(${b.id},'${r}')" class="${r}-btn ${b.result===r?'on':''}">${r}</button>`).join('');
     const ev = b.ev!=null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
-    return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px">${b.matchup}</td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td>
+    return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px"><a href="?game=${encodeURIComponent(b.matchup)}&date=${encodeURIComponent(b.date)}" target="_blank" rel="noopener" style="color:var(--green);text-decoration:none" title="Open this game's analysis in a new tab">${b.matchup} <span style="color:var(--muted);font-size:10px">↗</span></a></td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td>
       <td style="font-size:11px;color:var(--muted)">${b.awayScore !== undefined && b.homeScore !== undefined && b.result !== 'pending' ? b.awayScore+'-'+b.homeScore : '—'}</td>
       <td class="mono" style="font-size:11px">${(() => {
         if (b.clv != null) {
@@ -1853,7 +1912,11 @@ document.getElementById('date-display').textContent = fmtDate(currentDate);
 loadBetsFromSupabase().then(() => {
   updateNavRecord();
 });
-loadGames();
+if (new URLSearchParams(location.search).get('game')) {
+  openDeepLinkGame();
+} else {
+  loadGames();
+}
 </script>
 
 <div class="container" style="padding-top:0">
