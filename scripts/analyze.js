@@ -463,6 +463,9 @@ async function fetchWeather(homeTeam, gameTime, venue) {
       const rainy = /rain|storm|snow|drizzle/.test(desc);
       roofOpenProb = (!rainy && temp >= 68 && temp <= 95) ? 0.7 : 0.2;
     }
+    // If a retractable roof is likely CLOSED, the game plays effectively indoors: outside
+    // wind/rain never reach the field, so weather is not a real factor (don't tag it "weather").
+    const roofClosed = !!(park.dome && pf.retractable && roofOpenProb <= 0.3);
     // Effective wind = raw wind x how much THIS park plays the wind x roof-open chance.
     const effWind = Math.round(windSpeed * (pf.windFactor || 1) * roofOpenProb);
 
@@ -509,6 +512,7 @@ async function fetchWeather(homeTeam, gameTime, venue) {
     // Upgrade wind impact for strong winds
     if (effWind >= 18 && windImpact === 'over') windImpact = 'significant over';
     if (effWind >= 18 && windImpact === 'under') windImpact = 'significant under';
+    if (roofClosed) windImpact = 'neutral';   // closed roof -> no wind effect regardless of the outside reading
 
     // Flag significant weather
     const flags = [];
@@ -535,6 +539,7 @@ async function fetchWeather(homeTeam, gameTime, venue) {
       windFactor: pf.windFactor,
       retractable: !!(park.dome && pf.retractable),
       roofOpenProb,
+      weatherNeutralized: roofClosed,
       flags,
       summary: `${temp}°F, ${desc}, wind ${windSpeed}mph ${windCard} (${windArrow} ${fieldWindDir})${flags.length ? ' — ' + flags.join(', ') : ''}`
     };
@@ -1221,6 +1226,7 @@ async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, hom
 
   const weatherInfo = weather
     ? weather.dome ? 'Indoor dome — weather not a factor'
+    : weather.weatherNeutralized ? `Retractable roof likely CLOSED (~${Math.round((weather.roofOpenProb ?? 0.2)*100)}% open) — treat as INDOOR: weather is NOT a factor and you must NOT tag this game "weather". (Outside conditions, for reference only: ${weather.summary})`
     : `${weather.summary}${weather.flags?.length ? '\nWeather flags: ' + weather.flags.join(', ') : ''}`
     : 'Weather data unavailable';
 
@@ -1455,7 +1461,9 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
     Object.assign(row, {
       analyzed: true,
       analyzed_at: new Date().toISOString(),
-      situations: (analysis.situations||[]).filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase().trim())),
+      situations: (analysis.situations||[])
+        .filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase().trim()))
+        .filter(s => !(weather?.weatherNeutralized && (s||'').toLowerCase().trim() === 'weather')),
       ml_verdict: analysis.ml,
       ml_ev: analysis.mlEV,
       rl_verdict: analysis.rl,
@@ -1491,7 +1499,7 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       line_sharp: analysis.lineSharp,
       sharp_side: analysis.sharpSide,
       line_note: analysis.lineNote,
-      weather_impact: analysis.weatherImpact,
+      weather_impact: (weather?.weatherNeutralized ? 'none' : analysis.weatherImpact),
       pitcher_edge: analysis.pitcherEdge,
       situation_text: analysis.situation,
       factors_text: analysis.factors,
