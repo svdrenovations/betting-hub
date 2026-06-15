@@ -1,0 +1,21 @@
+name: Backfill fade reasons (one-off)
+
+# Run manually from the Actions tab → "Backfill fade reasons (one-off)" → Run workflow.
+# Safe to re-run: it only fills fade_reason on past fade games that don't have one yet.
+on:
+  workflow_dispatch:
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run fade backfill
+        run: node scripts/backfill-fade-reason.js
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
