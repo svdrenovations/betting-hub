@@ -7,6 +7,24 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY;
 const RUN_TYPE = process.env.RUN_TYPE || '11am';
 
+// ── LINE FEED INTEGRITY ────────────────────────────────────────────────────
+// Bookmaker priority for picking which book's price we read. The OLD code took
+// the first book in the API's array (effectively random, and NOT the book you
+// bet at) — that's why a pulled line could read -104 while real DraftKings was
+// +108. Pinning to ONE book does two things: (1) the pulled price matches what
+// you actually see in your app, and (2) the bet price and the closing price come
+// from the SAME book, which is the only way CLV is apples-to-apples.
+//   >>> PUT THE BOOK YOU ACTUALLY BET AT FIRST. <<<  Everything after it is a
+//   fallback used only when your book has no usable PRE-GAME line for a game.
+const PREFERRED_BOOKS = ['draftkings','fanduel','betmgm','caesars','betrivers','pointsbetus','williamhill_us'];
+
+// A pre-game line whose book hasn't updated in this many minutes gets FLAGGED as
+// stale (still usable, but you'll see it in the log). The hard reject is in-play,
+// handled separately: any book whose last_update is AFTER first pitch is a live
+// price, not a closing line, and is skipped entirely.
+const STALE_MIN = 30;
+// ────────────────────────────────────────────────────────────────────────────
+
 const { simulateGame } = require('./sim-data.js'); // Monte Carlo run sim (shadow mode)
 
 // Standard deviation of MLB game total runs, used to convert a projected total
@@ -1103,15 +1121,34 @@ async function fetchActionNetwork(awayTeam, homeTeam, gameDate) {
   } catch(e) { return null; }
 }
 
-function parseOddsData(game) {
+function parseOddsData(game, opts = {}) {
   let awayML=null,homeML=null,total=null,overOdds=null,underOdds=null,awayRL=null,homeRL=null,awayRLOdds=null,homeRLOdds=null;
-  for (const bm of (game.bookmakers||[])) {
+  // Feed-integrity context
+  const commence = opts.commenceTime ? new Date(opts.commenceTime)
+                 : (game.commence_time ? new Date(game.commence_time) : null);
+  const now = opts.now ? new Date(opts.now) : new Date();
+  let bookUsed = null, lastUpdate = null, inPlaySkipped = false;
+
+  // Try books in PREFERRED_BOOKS order; unlisted books keep their feed order after.
+  const books = [...(game.bookmakers||[])].sort((a,b) => {
+    const ia = PREFERRED_BOOKS.indexOf(a.key); const ib = PREFERRED_BOOKS.indexOf(b.key);
+    return (ia<0?999:ia) - (ib<0?999:ib);
+  });
+
+  for (const bm of books) {
+    // IN-PLAY GUARD: a book whose last_update is AFTER first pitch is quoting a
+    // live/in-game price, not a pre-game or closing line. Skip it (fall through to
+    // the next book) — this is the precise fix for the "said it was live" -104/+108 bug.
+    const lu = bm.last_update ? new Date(bm.last_update) : null;
+    if (commence && lu && lu.getTime() > commence.getTime()) { inPlaySkipped = true; continue; }
+
     for (const mkt of (bm.markets||[])) {
       if (mkt.key==='h2h'&&!awayML) {
         for (const o of mkt.outcomes) {
           if (o.name===game.away_team) awayML=o.price>0?`+${o.price}`:`${o.price}`;
           if (o.name===game.home_team) homeML=o.price>0?`+${o.price}`:`${o.price}`;
         }
+        if (awayML && !bookUsed) { bookUsed = bm.title || bm.key; lastUpdate = lu ? lu.toISOString() : null; }
       }
       if (mkt.key==='totals') {
         const over=mkt.outcomes.find(o=>o.name==='Over');
@@ -1156,7 +1193,10 @@ function parseOddsData(game) {
       [awayRLOdds, homeRLOdds] = [homeRLOdds, awayRLOdds];
     }
   }
-  return {awayML,homeML,total,overOdds,underOdds,awayRL,homeRL,awayRLOdds,homeRLOdds};
+  const lineAgeMin = lastUpdate ? Math.round((now - new Date(lastUpdate)) / 60000) : null;
+  const stale = lineAgeMin != null && lineAgeMin > STALE_MIN;
+  return {awayML,homeML,total,overOdds,underOdds,awayRL,homeRL,awayRLOdds,homeRLOdds,
+          bookUsed, lastUpdate, lineAgeMin, stale, inPlaySkipped};
 }
 
 function validateTotal(oddsTotal, anTotal) {
@@ -1483,6 +1523,123 @@ function closingForBet(typeRaw, g){
   return { odds:null, line:null };
 }
 
+// ── PER-BOOK CLOSING SNAPSHOT + BOOK-GATED CLV ───────────────────────────────
+// CLV is only meaningful when the closing price comes from the SAME book you bet
+// at. So at close we snapshot EVERY pre-game book into mlb_games.closing_lines, and
+// a bet's CLV is resolved against closing_lines[<the book you recorded>]. No book on
+// the bet -> no CLV (by design: it won't populate until you record where you bet).
+const _fmtAm = (p) => (p == null ? null : (p > 0 ? `+${p}` : `${p}`));
+
+// Map the book dropdown's friendly name to an Odds-API key. Title-matching (below)
+// catches most; this handles the few where the name and the feed title differ.
+const BOOK_ALIASES = {
+  dk:'draftkings', fd:'fanduel', mgm:'betmgm', czr:'caesars', wh:'williamhill_us',
+  williamhill:'williamhill_us', caesars:'williamhill_us', br:'betrivers',
+  pb:'pointsbetus', pointsbet:'pointsbetus', espn:'espnbet', hardrock:'hardrockbet',
+};
+function normalizeBook(s){ return (s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+function resolveBookKey(userBook, closingLines){
+  if(!userBook || !closingLines) return null;
+  const n = normalizeBook(userBook), alias = BOOK_ALIASES[n] || n;
+  for (const k of Object.keys(closingLines)){
+    const nk = normalizeBook(k), nt = normalizeBook(closingLines[k]?.title);
+    if (nk === n || nk === alias || nt === n || nt === alias) return k;
+  }
+  return null;
+}
+
+// MLB run-line favorite invariant on one per-book record (favorite must hold -1.5).
+function rlInvariant(rec){
+  const aProb = americanToProb(rec.away_ml), hProb = americanToProb(rec.home_ml);
+  const aRLpt = parseFloat(rec.away_rl), hRLpt = parseFloat(rec.home_rl);
+  if (aProb != null && hProb != null && aProb !== hProb && !isNaN(aRLpt) && !isNaN(hRLpt) && (aRLpt < 0) !== (hRLpt < 0)) {
+    if ((aProb > hProb) !== (aRLpt < 0)) {
+      [rec.away_rl, rec.home_rl] = [rec.home_rl, rec.away_rl];
+      [rec.away_rl_odds, rec.home_rl_odds] = [rec.home_rl_odds, rec.away_rl_odds];
+    }
+  }
+}
+
+// Build the per-book pre-game snapshot for one game (+ optional raw F5 game object).
+// In-play books (last_update after first pitch) are skipped — same guard as the line feed.
+function buildClosingLines(game, f5game, commence){
+  const out = {};
+  const commenceT = commence ? new Date(commence) : null;
+  const inPlay = (bm) => { const lu = bm.last_update ? new Date(bm.last_update) : null; return commenceT && lu && lu.getTime() > commenceT.getTime(); };
+  const rec = (bm) => out[bm.key] || (out[bm.key] = { title: bm.title || bm.key, last_update: bm.last_update || null });
+  for (const bm of (game.bookmakers||[])) {
+    if (inPlay(bm)) continue;
+    const r = rec(bm);
+    for (const mkt of (bm.markets||[])) {
+      if (mkt.key==='h2h') for (const o of mkt.outcomes){ if(o.name===game.away_team) r.away_ml=_fmtAm(o.price); if(o.name===game.home_team) r.home_ml=_fmtAm(o.price); }
+      else if (mkt.key==='totals'){ const ov=mkt.outcomes.find(o=>o.name==='Over'), un=mkt.outcomes.find(o=>o.name==='Under'); if(ov && parseFloat(ov.point)>=6.5 && parseFloat(ov.point)<=13.5){ r.total=String(ov.point); r.over_odds=_fmtAm(ov.price); r.under_odds=un?_fmtAm(un.price):null; } }
+      else if (mkt.key==='spreads') for (const o of mkt.outcomes){ if(o.name===game.away_team){ r.away_rl=_fmtAm(o.point); r.away_rl_odds=_fmtAm(o.price);} if(o.name===game.home_team){ r.home_rl=_fmtAm(o.point); r.home_rl_odds=_fmtAm(o.price);} }
+    }
+  }
+  if (f5game) for (const bm of (f5game.bookmakers||[])) {
+    if (inPlay(bm)) continue;
+    const r = rec(bm);
+    for (const mkt of (bm.markets||[])) {
+      if (mkt.key==='h2h_h1') for (const o of mkt.outcomes){ if(o.name===f5game.away_team) r.f5_away_ml=_fmtAm(o.price); if(o.name===f5game.home_team) r.f5_home_ml=_fmtAm(o.price); }
+      else if (mkt.key==='totals_h1'){ const ov=mkt.outcomes.find(o=>o.name==='Over'), un=mkt.outcomes.find(o=>o.name==='Under'); if(ov){ r.f5_total=String(ov.point); r.f5_over_odds=_fmtAm(ov.price); r.f5_under_odds=un?_fmtAm(un.price):null; } }
+    }
+  }
+  for (const k in out) rlInvariant(out[k]);
+  return out;
+}
+
+// Raw F5 fetch (keeps per-book detail, unlike fetchF5Lines which collapses to one book).
+async function fetchF5Raw(){
+  try{
+    const url = `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${ODDS_API_KEY}&regions=us&markets=h2h_h1,totals_h1&oddsFormat=american&dateFormat=iso`;
+    const res = await fetch(url); if(!res.ok) return {};
+    const data = await res.json(); const map = {}; for (const g of data) map[g.id] = g; return map;
+  }catch(e){ return {}; }
+}
+
+// Book-gated CLV pass. For every bet that has a book recorded but no CLV yet, resolve the
+// closing price from that game's per-book snapshot on the bet's exact side, and store it.
+// Runs at close (CLV posts the moment the line is captured) AND on every run (so a book
+// you enter later gets picked up). Pending OR settled — CLV no longer waits for game end.
+async function computeClvFromBooks(){
+  try{
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?clv=is.null&book=not.is.null&order=game_date.desc&limit=400`, {
+      headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
+    });
+    if(!res.ok){ console.error(`  CLV pass query failed: ${res.status}`); return; }
+    const bets = await res.json();
+    if(!bets.length){ console.log('  CLV pass: every book-tagged bet already has CLV.'); return; }
+    console.log(`\nComputing book-matched CLV for ${bets.length} bets...`);
+    const cache = new Map(); let filled=0, noSnap=0, noBook=0, noOdds=0;
+    for (const bet of bets){
+      try{
+        if(!bet.book || !String(bet.book).trim()){ noBook++; continue; }
+        const aw=(bet.matchup||'').split(' @ ')[0]||'', hm=(bet.matchup||'').split(' @ ')[1]||'';
+        if(!cache.has(bet.game_date)){
+          const gRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=away_team,home_team,closing_lines`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }});
+          cache.set(bet.game_date, gRes.ok ? await gRes.json() : []);
+        }
+        const rows = cache.get(bet.game_date)||[];
+        const g = rows.find(r=>{ const at=r.away_team||'',ht=r.home_team||''; return (at.includes(aw.split(' ').pop())||aw.includes(at.split(' ').pop())) && (ht.includes(hm.split(' ').pop())||hm.includes(ht.split(' ').pop())); });
+        if(!g || !g.closing_lines){ noSnap++; continue; }                 // close not snapshotted yet -> leave null
+        const key = resolveBookKey(bet.book, g.closing_lines);
+        if(!key){ noBook++; continue; }                                   // book not in snapshot (e.g. a prediction market) -> honest null
+        const c = closingForBet(bet.bet_type, g.closing_lines[key]);
+        const pc = americanToProb(c.odds), pb = americanToProb(bet.odds);
+        if(pc==null || pb==null){ noOdds++; continue; }
+        const clv = +(((pc-pb)*100).toFixed(1));
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
+          method:'PATCH', headers:{ 'Content-Type':'application/json','apikey':SUPABASE_SERVICE_KEY,'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}`,'Prefer':'return=minimal' },
+          body: JSON.stringify({ closing_odds: c.odds||null, closing_line:(c.line!=null&&c.line!=='')?String(c.line):null, clv })
+        });
+        if(r.ok){ filled++; console.log(`  ✓ CLV ${clv>=0?'+':''}${clv}% — ${bet.matchup} @ ${g.closing_lines[key].title||key} (closed ${c.odds||'?'})`); }
+        await new Promise(rr=>setTimeout(rr,150));
+      }catch(e){ /* skip this bet */ }
+    }
+    console.log(`  CLV pass done — filled ${filled}, no snapshot ${noSnap}, book missing/unmatched ${noBook}, no odds ${noOdds}`);
+  }catch(e){ console.error('CLV pass error:', e.message); }
+}
+
 async function settlePendingBets() {
   console.log('\nChecking pending bets for settlement...');
   try {
@@ -1497,7 +1654,6 @@ async function settlePendingBets() {
     const bets = await res.json();
     if (!bets.length) { console.log('  No pending bets to settle'); return; }
     console.log(`  Found ${bets.length} pending bets`);
-    const closingCache = new Map(); // game_date -> stored game rows (closing-ish odds)
 
     for (const bet of bets) {
       try {
@@ -1562,31 +1718,9 @@ async function settlePendingBets() {
 
         if (result === 'pending') continue;
 
-        // Capture closing line + CLV (best-effort — never blocks settlement)
-        let closing_odds=null, closing_line=null, clv=null;
-        try {
-          if (!closingCache.has(bet.game_date)) {
-            const gRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=away_team,home_team,away_ml,home_ml,total,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,f5_away_ml,f5_home_ml,f5_total,f5_over_odds,f5_under_odds`, {
-              headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
-            });
-            closingCache.set(bet.game_date, gRes.ok ? await gRes.json() : []);
-          }
-          const rows = closingCache.get(bet.game_date) || [];
-          const gmatch = rows.find(r => {
-            const at=r.away_team||'', ht=r.home_team||'';
-            return (at.includes(awayName.split(' ').pop()) || awayName.includes(at.split(' ').pop())) &&
-                   (ht.includes((homeName||'').split(' ').pop()) || (homeName||'').includes(ht.split(' ').pop()));
-          });
-          if (gmatch) {
-            const c = closingForBet(bet.bet_type, gmatch);
-            closing_odds = c.odds || null;
-            closing_line = (c.line != null && c.line !== '') ? String(c.line) : null;
-            const pc = americanToProb(c.odds), pb = americanToProb(bet.odds);
-            if (pc != null && pb != null) clv = +(((pc - pb) * 100).toFixed(1));
-          }
-        } catch (e) { /* CLV is best-effort */ }
-
-        // Update bet in Supabase
+        // Settle the result/score only. CLV is computed separately and book-gated by
+        // computeClvFromBooks() (it needs the book you bet at + the per-book close), so we
+        // deliberately do NOT touch closing_odds/closing_line/clv here.
         const updateRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
           method: 'PATCH',
           headers: {
@@ -1599,16 +1733,12 @@ async function settlePendingBets() {
             result,
             away_score: awayScore,
             home_score: homeScore,
-            closing_odds,
-            closing_line,
-            clv,
             settled_at: new Date().toISOString()
           })
         });
 
         if (updateRes.ok) {
-          const clvTag = clv != null ? ` · CLV ${clv>=0?'+':''}${clv}%` : '';
-          console.log(`  ✓ Settled: ${bet.matchup} — ${result.toUpperCase()} (${awayScore}-${homeScore})${clvTag}`);
+          console.log(`  ✓ Settled: ${bet.matchup} — ${result.toUpperCase()} (${awayScore}-${homeScore})`);
         }
 
         await new Promise(r => setTimeout(r, 500));
@@ -1619,57 +1749,6 @@ async function settlePendingBets() {
   } catch(e) {
     console.error('Settlement error:', e.message);
   }
-  await backfillClv();
-}
-
-// One-time/ongoing backfill: settled bets that predate CLV capture (or whose game row
-// had no odds when they settled) have clv = null. Recompute it from the game's stored
-// closing-ish odds. Idempotent — once clv is set, the bet drops out of the query.
-async function backfillClv() {
-  try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?result=in.(win,loss,push)&clv=is.null&order=game_date.desc&limit=300`, {
-      headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
-    });
-    if (!res.ok) { console.error(`  Backfill query failed: ${res.status} ${await res.text()}`); return; }
-    const bets = await res.json();
-    if (!bets.length) { console.log('  Backfill: no settled bets are missing CLV.'); return; }
-    console.log(`\nBackfilling CLV for ${bets.length} settled bets missing it...`);
-    const cache = new Map();
-    let filled = 0, noGame = 0, noOdds = 0, failed = 0;
-    for (const bet of bets) {
-      try {
-        const matchup = bet.matchup || '';
-        const awayName = matchup.split(' @ ')[0] || '';
-        const homeName = matchup.split(' @ ')[1] || '';
-        if (!cache.has(bet.game_date)) {
-          const gRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=away_team,home_team,away_ml,home_ml,total,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,f5_away_ml,f5_home_ml,f5_total,f5_over_odds,f5_under_odds`, {
-            headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
-          });
-          cache.set(bet.game_date, gRes.ok ? await gRes.json() : []);
-        }
-        const rows = cache.get(bet.game_date) || [];
-        const g = rows.find(r => {
-          const at=r.away_team||'', ht=r.home_team||'';
-          return (at.includes(awayName.split(' ').pop()) || awayName.includes(at.split(' ').pop())) &&
-                 (ht.includes(homeName.split(' ').pop()) || homeName.includes(ht.split(' ').pop()));
-        });
-        if (!g) { noGame++; continue; }
-        const c = closingForBet(bet.bet_type, g);
-        const pc = americanToProb(c.odds), pb = americanToProb(bet.odds);
-        if (pc == null || pb == null) { noOdds++; continue; }
-        const clv = +(((pc - pb) * 100).toFixed(1));
-        const r = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type':'application/json', 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}`, 'Prefer':'return=minimal' },
-          body: JSON.stringify({ closing_odds: c.odds || null, closing_line: (c.line!=null&&c.line!=='')?String(c.line):null, clv })
-        });
-        if (r.ok) { filled++; console.log(`  ✓ CLV backfilled: ${bet.matchup} — ${clv>=0?'+':''}${clv}%`); }
-        else { failed++; if (failed <= 2) console.error(`  ✗ PATCH failed for ${bet.matchup}: ${r.status} ${await r.text()}`); }
-        await new Promise(rr => setTimeout(rr, 200));
-      } catch(e) { /* skip this bet */ }
-    }
-    console.log(`  Backfill done — filled ${filled}, no game row ${noGame}, no usable odds ${noOdds}, write failures ${failed}`);
-  } catch(e) { console.error('Backfill error:', e.message); }
 }
 
 // ── CLOSING-LINE REFRESH (lightweight) ───────────────────────────────────────
@@ -1683,7 +1762,7 @@ async function refreshClosingOdds() {
   const etDate = new Date().toLocaleDateString('en-US', {timeZone:'America/New_York', year:'numeric', month:'2-digit', day:'2-digit'});
   const [etMonth, etDay, etYear] = etDate.split('/');
   const today = etYear + '-' + etMonth + '-' + etDay;
-  const [games, f5Map] = await Promise.all([fetchOddsAPI(), fetchF5Lines()]);
+  const [games, f5Map, f5Raw] = await Promise.all([fetchOddsAPI(), fetchF5Lines(), fetchF5Raw()]);
   const now = new Date();
   let updated = 0;
   for (const g of games) {
@@ -1691,17 +1770,23 @@ async function refreshClosingOdds() {
     if (gameEtDate !== today) continue;
     const minutesSinceStart = (now - new Date(g.commence_time)) / 60000;
     if (minutesSinceStart > 5) continue; // already started — its last refresh holds the close
-    const lines = parseOddsData(g);
+    const lines = parseOddsData(g, { commenceTime: g.commence_time, now });
     const awayML = parseFloat(lines.awayML), homeML = parseFloat(lines.homeML);
-    if (!isNaN(awayML) && !isNaN(homeML) && (Math.abs(awayML) > 600 || Math.abs(homeML) > 600)) continue; // live/in-game pricing
+    if (!isNaN(awayML) && !isNaN(homeML) && (Math.abs(awayML) > 600 || Math.abs(homeML) > 600)) continue; // backstop: live/in-game pricing
+    // If every book's only price was in-play (all skipped) we have no real close — don't
+    // overwrite the good earlier line with garbage. Keep whatever the last clean pull stored.
+    if (!lines.awayML) { console.log(`  ⊘ ${g.away_team} @ ${g.home_team} — no pre-game line (all books in-play), keeping prior close`); continue; }
     const f5 = f5Map[g.id] || null;
+    // Per-book pre-game snapshot — this is what book-gated CLV resolves against.
+    const closing_lines = buildClosingLines(g, f5Raw[g.id] || null, g.commence_time);
     const payload = {
       away_ml: lines.awayML, home_ml: lines.homeML, total: lines.total,
       over_odds: lines.overOdds, under_odds: lines.underOdds,
       away_rl: lines.awayRL, home_rl: lines.homeRL,
       away_rl_odds: lines.awayRLOdds, home_rl_odds: lines.homeRLOdds,
       f5_away_ml: f5?.f5AwayML || null, f5_home_ml: f5?.f5HomeML || null,
-      f5_total: f5?.f5Total || null, f5_over_odds: f5?.f5OverOdds || null, f5_under_odds: f5?.f5UnderOdds || null
+      f5_total: f5?.f5Total || null, f5_over_odds: f5?.f5OverOdds || null, f5_under_odds: f5?.f5UnderOdds || null,
+      closing_lines
     };
     const url = `${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&away_team=eq.${encodeURIComponent(g.away_team)}&home_team=eq.${encodeURIComponent(g.home_team)}`;
     try {
@@ -1710,13 +1795,14 @@ async function refreshClosingOdds() {
         headers: { 'Content-Type':'application/json', 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}`, 'Prefer':'return=minimal' },
         body: JSON.stringify(payload)
       });
-      if (res.ok) { updated++; console.log(`  ✓ Close refreshed: ${g.away_team} @ ${g.home_team} | ML ${lines.awayML}/${lines.homeML} | ${lines.total}`); }
+      if (res.ok) { updated++; console.log(`  ✓ Close refreshed: ${g.away_team} @ ${g.home_team} | ML ${lines.awayML}/${lines.homeML} | ${lines.total} | ${lines.bookUsed||'?'} (${lines.lineAgeMin!=null?lines.lineAgeMin+'m old':'age?'})${lines.stale?' ⚠STALE':''} | ${Object.keys(closing_lines).length} books snapshotted`); }
       else console.error(`  ✗ ${g.away_team} @ ${g.home_team}: ${await res.text()}`);
     } catch(e) { console.error(`  ✗ ${g.away_team} @ ${g.home_team}:`, e.message); }
     await new Promise(r => setTimeout(r, 300));
   }
   console.log(`\n✅ Closing refresh done — ${updated} games updated`);
-  await settlePendingBets();
+  await settlePendingBets();    // settles finals (result + score only)
+  await computeClvFromBooks();  // book-gated CLV: fills closing line + CLV for any book-tagged bet
 }
 
 async function main() {
@@ -1746,7 +1832,7 @@ async function main() {
       return false;
     }
     // Skip games with extreme live lines (indicates in-game pricing)
-    const lines = parseOddsData(g);
+    const lines = parseOddsData(g, { commenceTime: g.commence_time, now });
     const awayML = parseFloat(lines.awayML);
     const homeML = parseFloat(lines.homeML);
     if (!isNaN(awayML) && !isNaN(homeML)) {
@@ -1761,7 +1847,8 @@ async function main() {
 
   for (const game of todayGames) {
     try {
-      const lines = parseOddsData(game);
+      const lines = parseOddsData(game, { commenceTime: game.commence_time });
+      if (lines.stale) console.log(`  ⚠ ${game.away_team} @ ${game.home_team} — line is ${lines.lineAgeMin}m old (${lines.bookUsed||'?'}), may be stale`);
 
       // Get team IDs for pitcher lookup
       const [awayTeamId, homeTeamId] = await Promise.all([
@@ -1888,6 +1975,7 @@ async function main() {
 
   console.log(`\n✅ Done — ${todayGames.length} games`);
   await settlePendingBets();
+  await computeClvFromBooks();  // pick up CLV for any bet whose book was entered since last run
 }
 
 main();
