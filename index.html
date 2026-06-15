@@ -409,8 +409,8 @@ function betPasses(b){
     if(!ok) return false;
   }
   if(g.sit.length){
-    // situations is a comma-joined tag list (e.g. "weather,fade"); match if it carries any selected tag.
-    const tags = (b.situations||'').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean);
+    // situations is a comma-joined tag list (e.g. "weather,fade") plus expanded fade reasons (fade:coldarm).
+    const tags = betSitTags(b);
     if(!g.sit.some(v => tags.includes(v))) return false;
   }
   if(g.price.length){
@@ -426,6 +426,13 @@ function betPasses(b){
   if(g.to && b.date && String(b.date) > g.to) return false;
   return true;
 }
+// A bet's filterable/display situation tags = its situations plus expanded fade reasons
+// (fade_reason "coldarm,form" -> "fade:coldarm","fade:form") so each fade type is its own chip.
+function betSitTags(b){
+  const base = (b.situations||'').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean);
+  const fr = (b.fadeReason||'').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean);
+  return [...base, ...fr.map(r=>'fade:'+r)];
+}
 function filterBarHTML(){
   const g=gFilter;
   // Each group: an "all" button that clears the group, plus toggle buttons. Multiple
@@ -438,10 +445,10 @@ function filterBarHTML(){
   };
   // Situation chips: a known baseline (so the row always shows) unioned with any tags found
   // live in the data, so new tags appear automatically.
-  const KNOWN_SITS=['weather','fade','debut'];
-  const derivedSits=bets.flatMap(b=>(b.situations||'').toLowerCase().split(',').map(s=>s.trim()).filter(Boolean));
+  const KNOWN_SITS=['weather','fade','debut','fade:velo','fade:coldarm','fade:contact','fade:form'];
+  const derivedSits=bets.flatMap(b=>betSitTags(b));
   const sitTags=[...new Set([...KNOWN_SITS, ...derivedSits])];
-  const sitOpts=sitTags.map(t=>[t, t.charAt(0).toUpperCase()+t.slice(1)]);
+  const sitOpts=sitTags.map(t=>[t, t.startsWith('fade:') ? 'fade·'+t.slice(5) : t.charAt(0).toUpperCase()+t.slice(1)]);
   return `<div class="tracker-filters">${grp('result','All',[['pending','Pending'],['win','Won'],['loss','Lost']])}</div>`
     + `<div class="tracker-filters">${grp('market','All mkts',[['moneyline','ML'],['total','Total'],['rl','RL'],['f5','F5']])}</div>`
     + `<div class="tracker-filters">${grp('sit','Any situation',sitOpts)}</div>`
@@ -1572,7 +1579,7 @@ function renderTracker() {
   </tr></thead><tbody>${sortBets(filtered).map(b => {
     const btns = ['win','loss','push','pending'].map(r => `<button onclick="setResult(${b.id},'${r}')" class="${r}-btn ${b.result===r?'on':''}">${r}</button>`).join('');
     const ev = b.ev!=null ? `<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>` : '—';
-    return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px"><a href="?game=${encodeURIComponent(b.matchup)}&date=${encodeURIComponent(b.date)}" target="_blank" rel="noopener" style="color:var(--green);text-decoration:none" title="Open this game's analysis in a new tab">${b.matchup} <span style="color:var(--muted);font-size:10px">↗</span></a></td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}</td>
+    return `<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px"><a href="?game=${encodeURIComponent(b.matchup)}&date=${encodeURIComponent(b.date)}" target="_blank" rel="noopener" style="color:var(--green);text-decoration:none" title="Open this game's analysis in a new tab">${b.matchup} <span style="color:var(--muted);font-size:10px">↗</span></a></td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px;color:var(--muted)">${b.confidence||'—'}</td><td style="font-size:11px;color:var(--muted)">${b.situations||'—'}${b.fadeReason?` <span style="color:var(--amber)">· ${b.fadeReason}</span>`:''}</td>
       <td class="mono" style="font-size:11px;color:var(--muted)">${b.modelAwayRuns!=null && b.modelHomeRuns!=null ? b.modelAwayRuns+'-'+b.modelHomeRuns : '—'}</td>
       <td class="mono" style="font-size:11px">${(() => {
         const ma=b.modelAwayRuns, mh=b.modelHomeRuns, sa=b.simAwayRuns, sh=b.simHomeRuns;
