@@ -256,6 +256,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 <div class="container">
   <div class="topbar">
     <div class="topbar-left"><h2>Model vs Sim</h2><p>True W/L of each engine's recommended plays — graded on outcomes, independent of your bet log</p></div>
+    <button class="btn" onclick="sbExportCSV()">Export CSV</button>
   </div>
   <div id="scoreboard-container">
     <div class="empty-state"><div class="empty-title">Loading…</div></div>
@@ -923,7 +924,8 @@ function sbBuildPlays(games){
     const result=sbGrade(mk,side,g);
     const units = result==='win' ? sbProfit(odds) : result==='loss' ? -1 : 0;
     return { date:g.game_date, matchup:`${g.away_team} @ ${g.home_team}`, mk, lbl, source, side, strength,
-             ev:(ev==null||isNaN(ev))?null:ev, odds, line:sbLineLabel(mk,side,g), result, units, disagreed:!!disagreed };
+             ev:(ev==null||isNaN(ev))?null:ev, odds, line:sbLineLabel(mk,side,g), result, units, disagreed:!!disagreed,
+             final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'', actualTotal:g.actual_total??'' };
   };
   for(const g of games){
     for(const [mk,lbl] of SB_MKTS){
@@ -987,6 +989,32 @@ function sbSetSource(v){ sbFilter.source=v; renderScoreboard(); }
 function sbToggle(key,v){ const a=sbFilter[key]; const i=a.indexOf(v); if(i>=0)a.splice(i,1); else a.push(v); renderScoreboard(); }
 function sbClear(key){ sbFilter[key]=[]; renderScoreboard(); }
 function sbDate(which,v){ sbFilter[which]=v; renderScoreboard(); }
+function sbExportCSV(){
+  const plays=sbBuildPlays(sbGames||[]).filter(sbPasses);
+  if(!plays.length){ alert('No plays match the current filters.'); return; }
+  const cols=[
+    ['date',         x=>x.date],
+    ['matchup',      x=>x.matchup],
+    ['source',       x=>x.source],
+    ['market',       x=>x.lbl],
+    ['side',         x=>x.side.toLowerCase()],
+    ['strength',     x=>x.strength?x.strength.toLowerCase():''],
+    ['line',         x=>x.line],
+    ['odds',         x=>isNaN(x.odds)?'':x.odds],
+    ['ev_pct',       x=>x.ev!=null?x.ev:''],
+    ['result',       x=>x.result],
+    ['units',        x=>x.result==='pending'?'':x.units.toFixed(2)],
+    ['disagreed',    x=>x.disagreed?'yes':''],
+    ['final_score',  x=>x.final],
+    ['actual_total', x=>x.actualTotal]
+  ];
+  const esc=v=>`"${(v==null?'':v).toString().replace(/"/g,'""')}"`;
+  const csv=[cols.map(c=>c[0]).join(','), ...plays.map(x=>cols.map(c=>esc(c[1](x))).join(','))].join('\n');
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
+  a.download='model_vs_sim_plays_'+isoDate(new Date())+'.csv';
+  a.click();
+}
 
 function scoreboardHTML(){
   const all=sbBuildPlays(sbGames||[]);
