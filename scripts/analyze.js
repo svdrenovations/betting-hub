@@ -1497,6 +1497,12 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       proj_home_runs: analysis.projHomeRuns ?? null,
       sim_away_runs: analysis.simAwayRuns ?? null,
       sim_home_runs: analysis.simHomeRuns ?? null,
+      sim_ml_verdict: analysis.simMl ?? null,
+      sim_ml_ev: analysis.simMlEV ?? null,
+      sim_rl_verdict: analysis.simRl ?? null,
+      sim_rl_ev: analysis.simRlEV ?? null,
+      sim_total_verdict: analysis.simTotal ?? null,
+      sim_total_ev: analysis.simTotalEV ?? null,
       rl_away_prob: analysis.rlAwayProb ?? null,
       rl_home_prob: analysis.rlHomeProb ?? null,
       f5_verdict: analysis.f5,
@@ -2145,7 +2151,29 @@ async function main() {
           });
           analysis.simAwayRuns = +simProbs.meanAway.toFixed(2);
           analysis.simHomeRuns = +simProbs.meanHome.toFixed(2);
-          console.log(`  SIM ${game.away_team} ${analysis.simAwayRuns} - ${analysis.simHomeRuns} ${game.home_team} | LLM ${analysis.projAwayRuns ?? '?'} - ${analysis.projHomeRuns ?? '?'} (sim pAwayML ${(simProbs.pAwayML*100).toFixed(0)}%, pOver ${(simProbs.pOver*100).toFixed(0)}%)`);
+          // Sim PLAYS: run the sim's own probabilities through the SAME EV/verdict machinery
+          // the model uses (evPct/pickSide/verdictFor), so "the plays the sim likes" are
+          // computed and graded identically to the model's. SHADOW ONLY — these verdicts drive
+          // nothing; they exist purely for the model-vs-sim scoreboard.
+          const simMl = pickSide([
+            { ev: evPct(simProbs.pAwayML, lines.awayML), label: 'AWAY' },
+            { ev: evPct(simProbs.pHomeML, lines.homeML), label: 'HOME' }
+          ]);
+          analysis.simMl = simMl ? verdictFor(simMl.ev, simMl.label) : 'SKIP';
+          analysis.simMlEV = simMl ? simMl.ev : null;
+          const simRl = pickSide([
+            { ev: evPct(simProbs.pAwayRL, lines.awayRLOdds), label: 'AWAY' },
+            { ev: evPct(simProbs.pHomeRL, lines.homeRLOdds), label: 'HOME' }
+          ]);
+          analysis.simRl = simRl ? verdictFor(simRl.ev, simRl.label) : 'SKIP';
+          analysis.simRlEV = simRl ? simRl.ev : null;
+          const simTot = pickSide([
+            { ev: evPct(simProbs.pOver, lines.overOdds), label: 'OVER' },
+            { ev: evPct(simProbs.pUnder, lines.underOdds), label: 'UNDER' }
+          ]);
+          analysis.simTotal = simTot ? verdictFor(simTot.ev, simTot.label) : 'SKIP';
+          analysis.simTotalEV = simTot ? simTot.ev : null;
+          console.log(`  SIM ${game.away_team} ${analysis.simAwayRuns} - ${analysis.simHomeRuns} ${game.home_team} | LLM ${analysis.projAwayRuns ?? '?'} - ${analysis.projHomeRuns ?? '?'} (sim pAwayML ${(simProbs.pAwayML*100).toFixed(0)}%, pOver ${(simProbs.pOver*100).toFixed(0)}%) | sim plays ML:${analysis.simMl} RL:${analysis.simRl} TOT:${analysis.simTotal}`);
         }
       } catch (e) {
         console.log(`  sim shadow error: ${e.message}`);
