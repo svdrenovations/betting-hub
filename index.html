@@ -412,7 +412,8 @@ function betPasses(b){
     const ok = !isNaN(e) && g.ev.some(v =>
       v==='lo'  ? (e>=0.1&&e<2.5) :
       v==='mid' ? (e>=2.5&&e<6) :
-      v==='hi'  ? (e>=6) : false);
+      v==='hi'  ? (e>=6&&e<10) :
+      v==='top' ? (e>=10) : false);
     if(!ok) return false;
   }
   if(g.clv.length){
@@ -469,7 +470,7 @@ function filterBarHTML(){
     + `<div class="tracker-filters">${grp('market','All mkts',[['moneyline','ML'],['total','Total'],['rl','RL'],['f5','F5']])}</div>`
     + `<div class="tracker-filters">${grp('sit','Any situation',sitOpts)}</div>`
     + `<div class="tracker-filters">${grp('price','Any price',[['chalk','Heavy fav ≤-150'],['fav','Fav -150 to 0'],['dog','Dog 0 to +150'],['bigdog','Big dog +150+']])}</div>`
-    + `<div class="tracker-filters">${grp('ev','Any EV',[['lo','.1% - 2.4%'],['mid','2.5% - 5.9%'],['hi','6%+']])}`
+    + `<div class="tracker-filters">${grp('ev','Any EV',[['lo','.1% - 2.4%'],['mid','2.5% - 5.9%'],['hi','6% - 9.9%'],['top','10%+']])}`
     + grp('clv','Any CLV',[['s','CLV +2%+'],['b','CLV 0 to +2%'],['m','CLV <0'],['none','No CLV']])
     + `<span class="filter-datelbl">from</span><input type="date" class="filter-date" value="${g.from||''}" onchange="setG('from',this.value)" title="From date (inclusive). Set From = To for a single day.">`
     + `<span class="filter-datelbl">to</span><input type="date" class="filter-date" value="${g.to||''}" onchange="setG('to',this.value)" title="To date (inclusive)">`
@@ -958,8 +959,8 @@ function sbPasses(x){
     const ok=f.ev.some(b =>
       b==='neg'?(e!=null&&e<0) :
       b==='z'  ?(e!=null&&e>=0&&e<2) :
-      b==='a'  ?(e!=null&&e>=2&&e<5) :
-      b==='b'  ?(e!=null&&e>=5&&e<10) :
+      b==='a'  ?(e!=null&&e>=2&&e<6) :
+      b==='b'  ?(e!=null&&e>=6&&e<10) :
       b==='c'  ?(e!=null&&e>=10) : false);
     if(!ok) return false;
   }
@@ -1040,7 +1041,7 @@ function scoreboardHTML(){
     `<div class="tracker-filters">`+[['all','All'],['model','Model'],['sim','Sim'],['agreed','Agreed'],['disagreed','Disagreed']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+
     `<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+
     `<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+
-    `<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5%'],['b','5–10%'],['c','10%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+
+    `<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+
     `<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--muted)">From</span>${inp('from')}<span style="font-size:11px;color:var(--muted)">To</span>${inp('to')}</div>`;
 
   const statBox=(label,big,sub,color)=>`<div style="flex:1;min-width:150px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px">
