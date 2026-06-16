@@ -60,8 +60,11 @@ const SHADOW_STRENGTH = 0.35;
 // of model error; "LEAN" is a real-but-thin edge; below that is a pass. TUNE these as
 // CLV and settled-bet ROI come in: if "BET"-labeled plays aren't beating the close,
 // raise VERDICT_BET; if you're passing on profitable thin edges, lower VERDICT_LEAN.
-const VERDICT_BET = 5;   // EV% ≥ this → BET
-const VERDICT_LEAN = 2;  // EV% in [VERDICT_LEAN, VERDICT_BET) → LEAN; below → SKIP
+// Calibration (Jun 2026): plays below ~6% claimed EV realized a coin flip / net loss — the
+// model overstates EV at the low end — so the floor was raised from 2% to 6%. Above 6% the
+// realized rate was ~67%. Revisit once a probability calibration is fit on more settled plays.
+const VERDICT_BET = 10;  // EV% ≥ this → BET (high conviction)
+const VERDICT_LEAN = 6;  // EV% in [VERDICT_LEAN, VERDICT_BET) → LEAN; below 6% → SKIP (not flagged)
 
 // MLB park coordinates and orientation
 // homeplateFacing = compass direction home plate faces (degrees)
