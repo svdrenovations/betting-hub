@@ -168,6 +168,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     <button class="nav-tab on" onclick="goPage('games',this)">Games</button>
     <button class="nav-tab" onclick="goPage('tracker',this)">Tracker</button>
     <button class="nav-tab" onclick="goPage('stats',this)">Stats</button>
+    <button class="nav-tab" onclick="goPage('scoreboard',this)">Model vs Sim</button>
   </div>
   <div class="nav-record mono" id="nav-record">—</div>
 </nav>
@@ -247,6 +248,17 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
   </div>
   <div id="stats-content">
     <div class="empty-state"><div class="empty-title">No data yet</div><div class="empty-sub">Log and settle bets to see your stats.</div></div>
+  </div>
+</div>
+</div>
+
+<div class="page" id="page-scoreboard">
+<div class="container">
+  <div class="topbar">
+    <div class="topbar-left"><h2>Model vs Sim</h2><p>True W/L of each engine's recommended plays — graded on outcomes, independent of your bet log</p></div>
+  </div>
+  <div id="scoreboard-container">
+    <div class="empty-state"><div class="empty-title">Loading…</div></div>
   </div>
 </div>
 </div>
@@ -860,6 +872,128 @@ function isoDate(d) {
   return year + '-' + month + '-' + day;
 }
 
+// ── MODEL vs SIM SCOREBOARD ──────────────────────────────────────────────────
+// Grades each engine's RECOMMENDED plays (verdict = BET/LEAN) against actual outcomes
+// on ML/RL/Total. Reads mlb_games only — never the bet log — so your no-plays and
+// line-misses can't affect it. F5 omitted (no first-5 actuals captured).
+let sbGames = null;
+
+function sbParsePlay(verdict){
+  if(!verdict) return null;
+  const m = String(verdict).toUpperCase().trim().match(/^(BET|LEAN)\s+(AWAY|HOME|OVER|UNDER)$/);
+  return m ? { strength:m[1], side:m[2] } : null;
+}
+function sbGrade(market, side, g){
+  const a=g.away_final, h=g.home_final, tot=g.actual_total, line=parseFloat(g.total_line);
+  if(a==null||h==null) return null;
+  if(market==='ml')  return side==='AWAY' ? (a>h?'win':'loss') : (h>a?'win':'loss');
+  if(market==='rl'){ const margin=a-h; // away -1.5 / home +1.5
+    return side==='AWAY' ? (margin>=2?'win':'loss') : (margin<=1?'win':'loss'); }
+  if(market==='total'){
+    if(isNaN(line)||tot==null) return null;
+    if(tot===line) return 'push';
+    return side==='OVER' ? (tot>line?'win':'loss') : (tot<line?'win':'loss');
+  }
+  return null;
+}
+const SB_MKTS=[['ml','ML'],['rl','RL'],['total','Total']];
+function sbTally(games, prefix){
+  const t={ml:[0,0,0],rl:[0,0,0],total:[0,0,0],all:[0,0,0]};
+  for(const g of games) for(const [mk] of SB_MKTS){
+    const play=sbParsePlay(g[prefix+mk+'_verdict']); if(!play) continue;
+    const r=sbGrade(mk, play.side, g);
+    const i = r==='win'?0 : r==='loss'?1 : r==='push'?2 : -1; if(i<0) continue;
+    t[mk][i]++; t.all[i]++;
+  }
+  return t;
+}
+function sbRec(arr){ const [w,l,p]=arr; const n=w+l; return { txt:`${w}-${l}${p?` (${p}P)`:''}`, pct:(n?Math.round(100*w/n)+'%':'—'), n }; }
+function sbDisagreements(games){
+  const tot={model:[0,0,0],sim:[0,0,0]};
+  for(const g of games) for(const [mk] of SB_MKTS){
+    const mp=sbParsePlay(g[mk+'_verdict']), sp=sbParsePlay(g['sim_'+mk+'_verdict']);
+    if(!mp||!sp||mp.side===sp.side) continue;
+    const mr=sbGrade(mk,mp.side,g), sr=sbGrade(mk,sp.side,g);
+    if(mr==null||sr==null) continue;
+    const idx=r=>r==='win'?0:r==='loss'?1:2;
+    tot.model[idx(mr)]++; tot.sim[idx(sr)]++;
+  }
+  return tot;
+}
+
+async function renderScoreboard(){
+  const el=document.getElementById('scoreboard-container');
+  if(sbGames===null){
+    el.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
+    try{
+      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,ml_verdict,rl_verdict,total_verdict,sim_ml_verdict,sim_rl_verdict,sim_total_verdict';
+      const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?actual_total=not.is.null&analyzed=eq.true&select=${cols}&order=game_date.desc`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
+      if(!res.ok) throw new Error('Supabase '+res.status);
+      sbGames=await res.json();
+    }catch(e){ el.innerHTML=`<div class="empty-state"><div class="empty-title">Could not load</div><div class="empty-sub">${e.message}</div></div>`; return; }
+  }
+  el.innerHTML=scoreboardHTML(sbGames);
+}
+
+function scoreboardHTML(games){
+  const both = games.filter(g => g.sim_ml_verdict!=null || g.sim_rl_verdict!=null || g.sim_total_verdict!=null);
+  if(!both.length){
+    return `<div class="empty-state"><div class="empty-title">No graded games yet</div><div class="empty-sub">The sim only started running on current games. Once a slate with sim verdicts settles, this fills in.</div></div>`;
+  }
+  const m=sbTally(both,''), s=sbTally(both,'sim_');
+  const dis=sbDisagreements(both);
+  const thin = (m.all[0]+m.all[1] < 30);
+
+  const card = (title, t) => {
+    const all=sbRec(t.all);
+    const per = SB_MKTS.map(([mk,lbl])=>{ const r=sbRec(t[mk]); return `<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);padding:2px 0"><span>${lbl}</span><span class="mono">${r.txt} <span style="color:var(--text)">${r.pct}</span></span></div>`; }).join('');
+    return `<div style="flex:1;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:16px">
+      <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">${title}</div>
+      <div style="font-size:26px;font-weight:700;font-family:DM Mono,monospace">${all.txt}</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px">${all.pct} on ${all.n} graded plays</div>${per}
+    </div>`;
+  };
+  const dRec = arr=>{ const [w,l]=arr; const n=w+l; return `${w}-${l}${n?` · ${Math.round(100*w/n)}%`:''}`; };
+  const disCount = dis.model[0]+dis.model[1];
+  const banner = thin ? `<div style="background:var(--amber-bg);border:1px solid var(--amber-dim);color:var(--amber);border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:16px">⚠ Small sample (${m.all[0]+m.all[1]} model decisions). Treat these as noise until the overlap grows — don't read a winner into them yet.</div>` : '';
+
+  const cell = (verdict, mk, g) => {
+    const p=sbParsePlay(verdict); if(!p) return `<span style="color:var(--dim)">—</span>`;
+    const r=sbGrade(mk,p.side,g);
+    const c = r==='win'?'var(--green)' : r==='loss'?'var(--red)' : 'var(--muted)';
+    const tag = r==='win'?'W' : r==='loss'?'L' : r==='push'?'P' : '?';
+    return `<span style="color:${c}" title="${p.strength} ${p.side} ${mk.toUpperCase()}">${p.side.slice(0,4).toLowerCase()} <b>${tag}</b></span>`;
+  };
+  const rows = both.map(g=>`<tr>
+      <td class="mono" style="font-size:11px">${g.game_date}</td>
+      <td style="font-size:12px">${g.away_team} @ ${g.home_team}</td>
+      <td class="mono" style="font-size:11px">${g.away_final}-${g.home_final}</td>
+      <td style="border-left:1px solid var(--border)">${cell(g.ml_verdict,'ml',g)}</td>
+      <td>${cell(g.rl_verdict,'rl',g)}</td>
+      <td>${cell(g.total_verdict,'total',g)}</td>
+      <td style="border-left:1px solid var(--border)">${cell(g.sim_ml_verdict,'ml',g)}</td>
+      <td>${cell(g.sim_rl_verdict,'rl',g)}</td>
+      <td>${cell(g.sim_total_verdict,'total',g)}</td>
+    </tr>`).join('');
+
+  return `${banner}
+    <div style="display:flex;gap:14px;margin-bottom:20px">${card('Model',m)}${card('Sim',s)}</div>
+    <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:24px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px">Head-to-head: when they disagreed</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Same market, opposite sides — ${disCount} such plays. This is the inversion question: when the sim contradicts the model, who's right?</div>
+      <div style="display:flex;gap:28px">
+        <div><span style="font-size:11px;color:var(--muted)">MODEL</span><div class="mono" style="font-size:18px;font-weight:700">${dRec(dis.model)}</div></div>
+        <div><span style="font-size:11px;color:var(--muted)">SIM</span><div class="mono" style="font-size:18px;font-weight:700">${dRec(dis.sim)}</div></div>
+      </div>
+    </div>
+    <div style="font-size:13px;font-weight:600;margin-bottom:8px">Every graded game <span style="color:var(--muted);font-weight:400">— side each engine took + result (W/L/P); — = no play</span></div>
+    <div class="t-table-wrap"><table class="t-table"><thead><tr>
+      <th>Date</th><th>Matchup</th><th>Score</th>
+      <th style="border-left:1px solid var(--border)">M·ML</th><th>M·RL</th><th>M·Tot</th>
+      <th style="border-left:1px solid var(--border)">S·ML</th><th>S·RL</th><th>S·Tot</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
 function goPage(name, btn) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('on'));
@@ -868,6 +1002,7 @@ function goPage(name, btn) {
   if (btn) btn.classList.add('on');
   if (name === 'tracker') renderTracker();
   if (name === 'stats') renderStats();
+  if (name === 'scoreboard') renderScoreboard();
 }
 
 // Deep-link: ?game=<Away @ Home>&date=YYYY-MM-DD opens that game's analysis in the Games view,
