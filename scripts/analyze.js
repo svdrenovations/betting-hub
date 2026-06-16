@@ -332,6 +332,7 @@ function deriveNumbers(a, lines, f5Lines) {
   const proj = parseFloat(a.projTotal);
   const postedTotal = parseFloat(a.totalLine != null ? a.totalLine : lines.total);
   if (proj > 0 && !isNaN(postedTotal)) {
+    a.totalLine = postedTotal; // store the line the verdict was actually graded against (model may have omitted it)
     const pOver = totalsProbOver(postedTotal, proj);
     const side = pickSide([
       { ev: evPct(pOver, lines.overOdds), label: 'OVER', p: pOver, dir: 'Over' },
