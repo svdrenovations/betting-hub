@@ -872,53 +872,94 @@ function isoDate(d) {
   return year + '-' + month + '-' + day;
 }
 
-// ── MODEL vs SIM SCOREBOARD ──────────────────────────────────────────────────
-// Grades each engine's RECOMMENDED plays (verdict = BET/LEAN) against actual outcomes
-// on ML/RL/Total. Reads mlb_games only — never the bet log — so your no-plays and
-// line-misses can't affect it. F5 omitted (no first-5 actuals captured).
+// ── MODEL vs SIM: +EV PLAY LOG ───────────────────────────────────────────────
+// A flat log of every +EV play (BET/LEAN verdict) the model and the sim made, graded
+// against the line CAPTURED AT ANALYSIS TIME, 1 unit each. Reads mlb_games only — never
+// the bet log — so no-plays and line-misses don't enter. F5 omitted (no first-5 actuals).
 let sbGames = null;
+let sbFilter = { source:'all', result:[], market:[], ev:[], from:'', to:'' };
 
 function sbParsePlay(verdict){
   if(!verdict) return null;
   const m = String(verdict).toUpperCase().trim().match(/^(BET|LEAN)\s+(AWAY|HOME|OVER|UNDER)$/);
   return m ? { strength:m[1], side:m[2] } : null;
 }
-function sbGrade(market, side, g){
+function sbOddsFor(mk, side, g){
+  if(mk==='ml')    return parseFloat(side==='AWAY'?g.away_ml:g.home_ml);
+  if(mk==='rl')    return parseFloat(side==='AWAY'?g.away_rl_odds:g.home_rl_odds);
+  if(mk==='total') return parseFloat(side==='OVER'?g.over_odds:g.under_odds);
+  return NaN;
+}
+function sbProfit(odds){ if(isNaN(odds)) return 0; return odds>0 ? odds/100 : 100/Math.abs(odds); }
+function sbGrade(mk, side, g){
   const a=g.away_final, h=g.home_final, tot=g.actual_total, line=parseFloat(g.total_line);
-  if(a==null||h==null) return null;
-  if(market==='ml')  return side==='AWAY' ? (a>h?'win':'loss') : (h>a?'win':'loss');
-  if(market==='rl'){ const margin=a-h; // away -1.5 / home +1.5
-    return side==='AWAY' ? (margin>=2?'win':'loss') : (margin<=1?'win':'loss'); }
-  if(market==='total'){
-    if(isNaN(line)||tot==null) return null;
-    if(tot===line) return 'push';
-    return side==='OVER' ? (tot>line?'win':'loss') : (tot<line?'win':'loss');
-  }
-  return null;
+  if(a==null||h==null||tot==null) return 'pending';
+  if(mk==='ml')  return side==='AWAY' ? (a>h?'win':'loss') : (h>a?'win':'loss');
+  if(mk==='rl'){ const margin=a-h; return side==='AWAY' ? (margin>=2?'win':'loss') : (margin<=1?'win':'loss'); }
+  if(mk==='total'){ if(isNaN(line)) return 'pending'; if(tot===line) return 'push'; return side==='OVER'?(tot>line?'win':'loss'):(tot<line?'win':'loss'); }
+  return 'pending';
 }
 const SB_MKTS=[['ml','ML'],['rl','RL'],['total','Total']];
-function sbTally(games, prefix){
-  const t={ml:[0,0,0],rl:[0,0,0],total:[0,0,0],all:[0,0,0]};
-  for(const g of games) for(const [mk] of SB_MKTS){
-    const play=sbParsePlay(g[prefix+mk+'_verdict']); if(!play) continue;
-    const r=sbGrade(mk, play.side, g);
-    const i = r==='win'?0 : r==='loss'?1 : r==='push'?2 : -1; if(i<0) continue;
-    t[mk][i]++; t.all[i]++;
-  }
-  return t;
+
+function sbLineLabel(mk, side, g){
+  const odds=sbOddsFor(mk,side,g); const o=isNaN(odds)?'?':(odds>0?'+'+odds:String(odds));
+  if(mk==='ml') return o;
+  if(mk==='rl') return `${side==='AWAY'?'-1.5':'+1.5'} ${o}`;
+  return `${side==='OVER'?'O':'U'}${g.total_line??'?'} ${o}`;
 }
-function sbRec(arr){ const [w,l,p]=arr; const n=w+l; return { txt:`${w}-${l}${p?` (${p}P)`:''}`, pct:(n?Math.round(100*w/n)+'%':'—'), n }; }
-function sbDisagreements(games){
-  const tot={model:[0,0,0],sim:[0,0,0]};
-  for(const g of games) for(const [mk] of SB_MKTS){
-    const mp=sbParsePlay(g[mk+'_verdict']), sp=sbParsePlay(g['sim_'+mk+'_verdict']);
-    if(!mp||!sp||mp.side===sp.side) continue;
-    const mr=sbGrade(mk,mp.side,g), sr=sbGrade(mk,sp.side,g);
-    if(mr==null||sr==null) continue;
-    const idx=r=>r==='win'?0:r==='loss'?1:2;
-    tot.model[idx(mr)]++; tot.sim[idx(sr)]++;
+// Flatten games -> one entry per engine play, classified model / sim / agreed (+disagreed flag).
+function sbBuildPlays(games){
+  const out=[];
+  const mkRow=(g,mk,lbl,source,side,strength,ev,disagreed)=>{
+    const odds=sbOddsFor(mk,side,g);
+    const result=sbGrade(mk,side,g);
+    const units = result==='win' ? sbProfit(odds) : result==='loss' ? -1 : 0;
+    return { date:g.game_date, matchup:`${g.away_team} @ ${g.home_team}`, mk, lbl, source, side, strength,
+             ev:(ev==null||isNaN(ev))?null:ev, odds, line:sbLineLabel(mk,side,g), result, units, disagreed:!!disagreed };
+  };
+  for(const g of games){
+    for(const [mk,lbl] of SB_MKTS){
+      const mp=sbParsePlay(g[mk+'_verdict']), sp=sbParsePlay(g['sim_'+mk+'_verdict']);
+      const mev=parseFloat(g[mk+'_ev']), sev=parseFloat(g['sim_'+mk+'_ev']);
+      if(mp && sp && mp.side===sp.side){
+        out.push(mkRow(g,mk,lbl,'agreed',mp.side,mp.strength,mev,false)); // consensus counts once
+      } else {
+        const dis = !!(mp && sp && mp.side!==sp.side);
+        if(mp) out.push(mkRow(g,mk,lbl,'model',mp.side,mp.strength,mev,dis));
+        if(sp) out.push(mkRow(g,mk,lbl,'sim',  sp.side,sp.strength,sev,dis));
+      }
+    }
   }
-  return tot;
+  return out;
+}
+function sbPasses(x){
+  const f=sbFilter;
+  if(f.source==='model'     && !(x.source==='model'||x.source==='agreed')) return false;
+  if(f.source==='sim'       && !(x.source==='sim'||x.source==='agreed'))   return false;
+  if(f.source==='agreed'    && x.source!=='agreed') return false;
+  if(f.source==='disagreed' && !x.disagreed) return false;
+  if(f.result.length && !f.result.includes(x.result)) return false;
+  if(f.market.length && !f.market.includes(x.mk)) return false;
+  if(f.ev.length){
+    const e=x.ev;
+    const ok=f.ev.some(b => b==='a'?(e!=null&&e<5) : b==='b'?(e!=null&&e>=5&&e<10) : b==='c'?(e!=null&&e>=10) : false);
+    if(!ok) return false;
+  }
+  if(f.from && x.date < f.from) return false;
+  if(f.to && x.date > f.to) return false;
+  return true;
+}
+function sbStats(plays){
+  let w=0,l=0,p=0,pend=0,units=0,evs=0,evn=0;
+  for(const x of plays){
+    if(x.result==='win'){w++;units+=x.units;}
+    else if(x.result==='loss'){l++;units+=x.units;}
+    else if(x.result==='push') p++;
+    else pend++;
+    if(x.ev!=null){evs+=x.ev;evn++;}
+  }
+  const dec=w+l, settled=w+l+p;
+  return {w,l,p,pend,units, win:dec?Math.round(100*w/dec):null, roi:settled?(units/settled*100):null, ev:evn?(evs/evn):null, n:plays.length, settled};
 }
 
 async function renderScoreboard(){
@@ -926,74 +967,69 @@ async function renderScoreboard(){
   if(sbGames===null){
     el.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
     try{
-      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,ml_verdict,rl_verdict,total_verdict,sim_ml_verdict,sim_rl_verdict,sim_total_verdict';
-      const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?actual_total=not.is.null&analyzed=eq.true&select=${cols}&order=game_date.desc`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
+      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,away_ml,home_ml,over_odds,under_odds,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev';
+      const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?analyzed=eq.true&select=${cols}&order=game_date.desc&limit=2000`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
       if(!res.ok) throw new Error('Supabase '+res.status);
       sbGames=await res.json();
     }catch(e){ el.innerHTML=`<div class="empty-state"><div class="empty-title">Could not load</div><div class="empty-sub">${e.message}</div></div>`; return; }
   }
-  el.innerHTML=scoreboardHTML(sbGames);
+  el.innerHTML=scoreboardHTML();
 }
+function sbSetSource(v){ sbFilter.source=v; renderScoreboard(); }
+function sbToggle(key,v){ const a=sbFilter[key]; const i=a.indexOf(v); if(i>=0)a.splice(i,1); else a.push(v); renderScoreboard(); }
+function sbClear(key){ sbFilter[key]=[]; renderScoreboard(); }
+function sbDate(which,v){ sbFilter[which]=v; renderScoreboard(); }
 
-function scoreboardHTML(games){
-  const both = games.filter(g => g.sim_ml_verdict!=null || g.sim_rl_verdict!=null || g.sim_total_verdict!=null);
-  if(!both.length){
-    return `<div class="empty-state"><div class="empty-title">No graded games yet</div><div class="empty-sub">The sim only started running on current games. Once a slate with sim verdicts settles, this fills in.</div></div>`;
+function scoreboardHTML(){
+  const all=sbBuildPlays(sbGames||[]);
+  if(!all.length){
+    return `<div class="empty-state"><div class="empty-title">No +EV plays yet</div><div class="empty-sub">Once analyzed games carry BET/LEAN verdicts (and the sim runs alongside), they appear here.</div></div>`;
   }
-  const m=sbTally(both,''), s=sbTally(both,'sim_');
-  const dis=sbDisagreements(both);
-  const thin = (m.all[0]+m.all[1] < 30);
+  const plays=all.filter(sbPasses);
+  const st=sbStats(plays);
 
-  const card = (title, t) => {
-    const all=sbRec(t.all);
-    const per = SB_MKTS.map(([mk,lbl])=>{ const r=sbRec(t[mk]); return `<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);padding:2px 0"><span>${lbl}</span><span class="mono">${r.txt} <span style="color:var(--text)">${r.pct}</span></span></div>`; }).join('');
-    return `<div style="flex:1;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:16px">
-      <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">${title}</div>
-      <div style="font-size:26px;font-weight:700;font-family:DM Mono,monospace">${all.txt}</div>
-      <div style="font-size:13px;color:var(--muted);margin-bottom:10px">${all.pct} on ${all.n} graded plays</div>${per}
-    </div>`;
-  };
-  const dRec = arr=>{ const [w,l]=arr; const n=w+l; return `${w}-${l}${n?` · ${Math.round(100*w/n)}%`:''}`; };
-  const disCount = dis.model[0]+dis.model[1];
-  const banner = thin ? `<div style="background:var(--amber-bg);border:1px solid var(--amber-dim);color:var(--amber);border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:16px">⚠ Small sample (${m.all[0]+m.all[1]} model decisions). Treat these as noise until the overlap grows — don't read a winner into them yet.</div>` : '';
+  const srcBtn=(v,l)=>`<button class="filter-btn ${sbFilter.source===v?'on':''}" onclick="sbSetSource('${v}')">${l}</button>`;
+  const tog=(key,v,l)=>`<button class="filter-btn ${sbFilter[key].includes(v)?'on':''}" onclick="sbToggle('${key}','${v}')">${l}</button>`;
+  const anyBtn=(key,l)=>`<button class="filter-btn ${sbFilter[key].length===0?'on':''}" onclick="sbClear('${key}')">${l}</button>`;
+  const inp=(which)=>`<input type="date" value="${sbFilter[which]}" onchange="sbDate('${which}',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">`;
+  const filterBar=
+    `<div class="tracker-filters">`+[['all','All'],['model','Model'],['sim','Sim'],['agreed','Agreed'],['disagreed','Disagreed']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+
+    `<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+
+    `<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+
+    `<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['a','2–5%'],['b','5–10%'],['c','10%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+
+    `<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--muted)">From</span>${inp('from')}<span style="font-size:11px;color:var(--muted)">To</span>${inp('to')}</div>`;
 
-  const cell = (verdict, mk, g) => {
-    const p=sbParsePlay(verdict); if(!p) return `<span style="color:var(--dim)">—</span>`;
-    const r=sbGrade(mk,p.side,g);
-    const c = r==='win'?'var(--green)' : r==='loss'?'var(--red)' : 'var(--muted)';
-    const tag = r==='win'?'W' : r==='loss'?'L' : r==='push'?'P' : '?';
-    return `<span style="color:${c}" title="${p.strength} ${p.side} ${mk.toUpperCase()}">${p.side.slice(0,4).toLowerCase()} <b>${tag}</b></span>`;
-  };
-  const rows = both.map(g=>`<tr>
-      <td class="mono" style="font-size:11px">${g.game_date}</td>
-      <td style="font-size:12px">${g.away_team} @ ${g.home_team}</td>
-      <td class="mono" style="font-size:11px">${g.away_final}-${g.home_final}</td>
-      <td style="border-left:1px solid var(--border)">${cell(g.ml_verdict,'ml',g)}</td>
-      <td>${cell(g.rl_verdict,'rl',g)}</td>
-      <td>${cell(g.total_verdict,'total',g)}</td>
-      <td style="border-left:1px solid var(--border)">${cell(g.sim_ml_verdict,'ml',g)}</td>
-      <td>${cell(g.sim_rl_verdict,'rl',g)}</td>
-      <td>${cell(g.sim_total_verdict,'total',g)}</td>
-    </tr>`).join('');
+  const statBox=(label,big,sub,color)=>`<div style="flex:1;min-width:150px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px">
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</div>
+    <div style="font-size:24px;font-weight:700;font-family:DM Mono,monospace;${color?`color:${color}`:''}">${big}</div>
+    <div style="font-size:12px;color:var(--muted)">${sub}</div></div>`;
+  const u = (st.units>=0?'+':'')+st.units.toFixed(2);
+  const statsPanel=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px">
+    ${statBox('Record', `${st.w}-${st.l}${st.p?`-${st.p}`:''}`, st.win!=null?`${st.win}% win`:'no settled plays')}
+    ${statBox('Units · 1u/play', u+'u', st.roi!=null?`${st.roi>=0?'+':''}${st.roi.toFixed(1)}% ROI`:'—', st.units>0?'var(--green)':st.units<0?'var(--red)':'')}
+    ${statBox('Plays', String(st.n), `${st.settled} settled · ${st.pend} pending`)}
+    ${statBox('Avg EV', st.ev!=null?`+${st.ev.toFixed(1)}%`:'—', 'at analysis-time line')}
+  </div>`;
 
-  return `${banner}
-    <div style="display:flex;gap:14px;margin-bottom:20px">${card('Model',m)}${card('Sim',s)}</div>
-    <div style="background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:24px">
-      <div style="font-size:13px;font-weight:600;margin-bottom:4px">Head-to-head: when they disagreed</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Same market, opposite sides — ${disCount} such plays. This is the inversion question: when the sim contradicts the model, who's right?</div>
-      <div style="display:flex;gap:28px">
-        <div><span style="font-size:11px;color:var(--muted)">MODEL</span><div class="mono" style="font-size:18px;font-weight:700">${dRec(dis.model)}</div></div>
-        <div><span style="font-size:11px;color:var(--muted)">SIM</span><div class="mono" style="font-size:18px;font-weight:700">${dRec(dis.sim)}</div></div>
-      </div>
-    </div>
-    <div style="font-size:13px;font-weight:600;margin-bottom:8px">Every graded game <span style="color:var(--muted);font-weight:400">— side each engine took + result (W/L/P); — = no play</span></div>
-    <div class="t-table-wrap"><table class="t-table"><thead><tr>
-      <th>Date</th><th>Matchup</th><th>Score</th>
-      <th style="border-left:1px solid var(--border)">M·ML</th><th>M·RL</th><th>M·Tot</th>
-      <th style="border-left:1px solid var(--border)">S·ML</th><th>S·RL</th><th>S·Tot</th>
-    </tr></thead><tbody>${rows}</tbody></table></div>`;
+  const srcBadge=s=> s==='agreed'?'<span style="color:var(--green)">agreed</span>' : s==='model'?'<span style="color:var(--text)">model</span>' : '<span style="color:var(--amber)">sim</span>';
+  const resCell=x=>{ const c=x.result==='win'?'var(--green)':x.result==='loss'?'var(--red)':x.result==='push'?'var(--muted)':'var(--dim)'; const t=x.result==='win'?'W':x.result==='loss'?'L':x.result==='push'?'P':'·'; return `<span style="color:${c};font-weight:600">${t}</span>`; };
+  const uCell=x=>{ if(x.result==='pending')return '<span style="color:var(--dim)">—</span>'; const c=x.units>0?'var(--green)':x.units<0?'var(--red)':'var(--muted)'; return `<span class="mono" style="color:${c}">${x.units>0?'+':''}${x.units.toFixed(2)}</span>`; };
+  const rows=plays.map(x=>`<tr>
+    <td class="mono" style="font-size:11px">${x.date}</td>
+    <td style="font-size:12px">${x.matchup}</td>
+    <td style="font-size:11px">${srcBadge(x.source)}${x.disagreed?' <span style="color:var(--red);font-size:9px" title="model & sim took opposite sides">⇄</span>':''}</td>
+    <td style="font-size:11px">${x.lbl}</td>
+    <td class="mono" style="font-size:11px">${x.side.toLowerCase()}</td>
+    <td class="mono" style="font-size:11px">${x.line}</td>
+    <td class="mono" style="font-size:11px;color:var(--amber)">${x.ev!=null?`+${x.ev.toFixed(1)}%`:'—'}</td>
+    <td>${resCell(x)}</td>
+    <td>${uCell(x)}</td></tr>`).join('');
+  const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr>
+    <th>Date</th><th>Matchup</th><th>Source</th><th>Mkt</th><th>Side</th><th>Line</th><th>EV</th><th>Res</th><th>Units</th>
+    </tr></thead><tbody>${rows||`<tr><td colspan="9" style="color:var(--muted);padding:18px;text-align:center">No plays match these filters.</td></tr>`}</tbody></table></div>`;
+
+  return filterBar + statsPanel + table;
 }
-
 function goPage(name, btn) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('on'));
