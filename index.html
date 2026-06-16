@@ -1251,6 +1251,54 @@ function marketCell(label, verdict, ev, isBest, line, projTotal, breakeven, gId,
   return `<div class="market-cell${isBest ? ' best' : ''}${logged ? ' logged' : ''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}</div>`;
 }
 
+// ── Sim play row (Games card): mirrors the model row in violet ──
+// Projected runs shown inline beside each row label; total brightened as the headline.
+function projInline(a, h, isSim) {
+  if (a == null || h == null) return `<span style="margin-left:auto;color:var(--muted);font-size:10px;font-family:DM Mono,monospace">${isSim ? 'sim pending' : ''}</span>`;
+  const range = `${(+a).toFixed(1)}–${(+h).toFixed(1)}`;
+  const tot = (+a + +h).toFixed(1);
+  const rangeC = isSim ? '#bfb6ef' : '#cdd4dd';
+  const totC = isSim ? '#e4ddff' : '#f3f7fb';
+  return `<span style="margin-left:auto;font-family:DM Mono,monospace;font-size:11px;color:${rangeC}">${range} <span style="color:var(--muted)">tot</span> <span style="color:${totC};font-weight:500">${tot}</span></span>`;
+}
+function playRowLabel(text, isSim, projHtml) {
+  const dot = isSim ? 'var(--purple)' : 'var(--green)';
+  const txt = isSim ? 'var(--purple)' : 'var(--text)';
+  return `<div style="display:flex;align-items:center;gap:6px;font-size:11px;letter-spacing:.5px;margin:9px 0 5px;color:var(--muted)"><span style="width:7px;height:7px;border-radius:2px;background:${dot};display:inline-block"></span><span style="color:${txt}">${text}</span>${projHtml}</div>`;
+}
+// Derive the sim's max juice (worst price still ≥6% EV) from its EV at the posted price.
+// Back out the sim probability, then re-price to the 6% floor — same gate the model uses.
+function simMaxJuice(market, verdict, evPct, g) {
+  if (!verdict || evPct == null) return null;
+  const m = String(verdict).toUpperCase().match(/(BET|LEAN)\s+(AWAY|HOME|OVER|UNDER)/);
+  if (!m) return null;
+  const side = m[2];
+  let posted, totDir;
+  if (market === 'ML') posted = side === 'AWAY' ? g.away_ml : g.home_ml;
+  else if (market === 'RL') posted = side === 'AWAY' ? g.away_rl_odds : g.home_rl_odds;
+  else if (market === 'TOTAL') { posted = side === 'OVER' ? g.over_odds : g.under_odds; totDir = side === 'OVER' ? 'Over' : 'Under'; }
+  posted = parseFloat(posted);
+  if (isNaN(posted)) return null;
+  const b0 = posted > 0 ? posted / 100 : 100 / Math.abs(posted);
+  const p = (evPct / 100 + 1) / (b0 + 1);          // sim prob implied by its EV at the posted price
+  if (!(p > 0) || !(p < 1)) return null;
+  const t = 6 / 100;                                // 6% floor — matches analyze.js MAXJUICE_EV
+  const bNeed = (t + 1 - p) / p;
+  if (!(bNeed > 0)) return null;
+  const o = bNeed >= 1 ? Math.round(bNeed * 100) : Math.round(-100 / bNeed);
+  const price = o > 0 ? `+${o}` : `${o}`;
+  return market === 'TOTAL' ? `${totDir} ${g.total_line} @ ${price}` : price;
+}
+function simMarketCell(label, verdict, ev, breakeven) {
+  const v = verdict || '—';
+  const isPlay = !!verdict && (v.startsWith('BET') || v.includes('LEAN'));
+  const valColor = isPlay ? 'var(--purple)' : 'var(--muted)';
+  const border = isPlay ? 'border-color:var(--purple)' : '';
+  const evHtml = (ev != null && ev !== 0 && isPlay) ? `<div class="ev-val" style="color:var(--purple)">${ev >= 0 ? '+' : ''}${parseFloat(ev).toFixed(1)}% EV</div>` : '';
+  const breakHtml = (breakeven && isPlay) ? `<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>` : '';
+  return `<div class="market-cell" style="${border}"><div class="market-label">${label}</div><div class="market-val" style="color:${valColor};font-weight:600">${v}</div>${evHtml}${breakHtml}</div>`;
+}
+
 function edgeBadge(g) {
   if (!g.analyzed) return '';
   const e = getTopEdge(g);
@@ -1522,11 +1570,19 @@ function gameCardHTML(g) {
   const logged = loggedMarketsForGame(g);
 
   const marketsHTML = g.analyzed
-    ? `<div class="markets">
+    ? `${playRowLabel('MODEL', false, projInline(g.proj_away_runs, g.proj_home_runs, false))}
+      <div class="markets">
         ${marketCell('ML', g.ml_verdict, g.ml_ev, g.best_market === 'ml', null, null, g.ml_breakeven, g.id, logged.ML)}
         ${marketCell('RL', g.rl_verdict, g.rl_ev, g.best_market === 'rl', null, null, g.rl_breakeven, g.id, logged.RL)}
         ${marketCell('TOTAL', g.total_verdict, g.total_ev, g.best_market === 'total', g.total_line, g.proj_total, g.total_breakeven, g.id, logged.TOTAL)}
         ${marketCell('F5', g.f5_verdict, g.f5_ev, g.best_market === 'f5', g.f5_line, g.f5_proj_total, g.f5_breakeven, g.id, logged.F5)}
+      </div>
+      ${playRowLabel('SIM', true, projInline(g.sim_away_runs, g.sim_home_runs, true))}
+      <div class="markets">
+        ${simMarketCell('ML', g.sim_ml_verdict, g.sim_ml_ev, simMaxJuice('ML', g.sim_ml_verdict, g.sim_ml_ev, g))}
+        ${simMarketCell('RL', g.sim_rl_verdict, g.sim_rl_ev, simMaxJuice('RL', g.sim_rl_verdict, g.sim_rl_ev, g))}
+        ${simMarketCell('TOTAL', g.sim_total_verdict, g.sim_total_ev, simMaxJuice('TOTAL', g.sim_total_verdict, g.sim_total_ev, g))}
+        ${simMarketCell('F5', null, null, null)}
       </div>`
     : `<div class="markets" style="opacity:.3">${['ML','RL','TOTAL','F5'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
 
@@ -1563,7 +1619,6 @@ function gameCardHTML(g) {
       ${weatherHTML(g)}
       ${oddsTableHTML(g)}
       ${marketsHTML}
-      ${projCompareHTML(g)}
       ${statcastHTML(g)}
       ${juiceSensitivityHTML(g)}
       ${pitcherEdgeHTML(g)}
