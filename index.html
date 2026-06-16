@@ -927,16 +927,19 @@ function sbBuildPlays(games){
              ev:(ev==null||isNaN(ev))?null:ev, odds, line:sbLineLabel(mk,side,g), result, units, disagreed:!!disagreed,
              final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'', actualTotal:g.actual_total??'' };
   };
+  // A play whose EV reads negative isn't a +EV play (these come from the line drifting against a
+  // verdict after it was set) — exclude it so the log, stats, and export reflect real recommendations.
+  const neg = e => (e!=null && !isNaN(e) && e < 0);
   for(const g of games){
     for(const [mk,lbl] of SB_MKTS){
       const mp=sbParsePlay(g[mk+'_verdict']), sp=sbParsePlay(g['sim_'+mk+'_verdict']);
       const mev=parseFloat(g[mk+'_ev']), sev=parseFloat(g['sim_'+mk+'_ev']);
       if(mp && sp && mp.side===sp.side){
-        out.push(mkRow(g,mk,lbl,'agreed',mp.side,mp.strength,mev,false)); // consensus counts once
+        if(!neg(mev)) out.push(mkRow(g,mk,lbl,'agreed',mp.side,mp.strength,mev,false)); // consensus counts once
       } else {
         const dis = !!(mp && sp && mp.side!==sp.side);
-        if(mp) out.push(mkRow(g,mk,lbl,'model',mp.side,mp.strength,mev,dis));
-        if(sp) out.push(mkRow(g,mk,lbl,'sim',  sp.side,sp.strength,sev,dis));
+        if(mp && !neg(mev)) out.push(mkRow(g,mk,lbl,'model',mp.side,mp.strength,mev,dis));
+        if(sp && !neg(sev)) out.push(mkRow(g,mk,lbl,'sim',  sp.side,sp.strength,sev,dis));
       }
     }
   }
@@ -1037,7 +1040,7 @@ function scoreboardHTML(){
     `<div class="tracker-filters">`+[['all','All'],['model','Model'],['sim','Sim'],['agreed','Agreed'],['disagreed','Disagreed']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+
     `<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+
     `<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+
-    `<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['neg','<0%'],['z','0–2%'],['a','2–5%'],['b','5–10%'],['c','10%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+
+    `<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5%'],['b','5–10%'],['c','10%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+
     `<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--muted)">From</span>${inp('from')}<span style="font-size:11px;color:var(--muted)">To</span>${inp('to')}</div>`;
 
   const statBox=(label,big,sub,color)=>`<div style="flex:1;min-width:150px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px">
