@@ -1890,6 +1890,19 @@ async function snapshotGameClose(g, f5Map, f5Raw, today, now) {
     closing_lines
   };
   const url = `${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&away_team=eq.${encodeURIComponent(g.away_team)}&home_team=eq.${encodeURIComponent(g.home_team)}`;
+  // GUARD the CLV basis: a late pull near first pitch can return an empty or thinner per-book
+  // snapshot while a single stale book still yields a parseable ML (passing the guards above).
+  // Never replace a populated closing_lines with an emptier one, or we lose CLV for that game.
+  const newCount = closing_lines ? Object.keys(closing_lines).length : 0;
+  try {
+    const exRes = await fetch(`${url}&select=closing_lines`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` } });
+    if (exRes.ok) {
+      const ex = (await exRes.json())[0];
+      const exCount = ex && ex.closing_lines ? Object.keys(ex.closing_lines).length : 0;
+      if (exCount > newCount) { delete payload.closing_lines; console.log(`  ↩ ${g.away_team} @ ${g.home_team} — keeping prior ${exCount}-book close (new pull had ${newCount})`); }
+    }
+  } catch(e){ /* if we can't check, fall through to the empty-guard below */ }
+  if (newCount === 0) delete payload.closing_lines; // never write an empty snapshot over anything
   try {
     const res = await fetch(url, { method:'PATCH', headers:{ 'Content-Type':'application/json','apikey':SUPABASE_SERVICE_KEY,'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}`,'Prefer':'return=minimal' }, body: JSON.stringify(payload) });
     if (res.ok) { console.log(`  ✓ Close refreshed: ${g.away_team} @ ${g.home_team} | ML ${lines.awayML}/${lines.homeML} | ${lines.total} | ${lines.bookUsed||'?'} (${lines.lineAgeMin!=null?lines.lineAgeMin+'m old':'age?'})${lines.stale?' ⚠STALE':''} | ${Object.keys(closing_lines).length} books snapshotted`); return 'updated'; }
