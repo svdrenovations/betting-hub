@@ -65,6 +65,9 @@ const SHADOW_STRENGTH = 0.35;
 // realized rate was ~67%. Revisit once a probability calibration is fit on more settled plays.
 const VERDICT_BET = 10;  // EV% ≥ this → BET (high conviction)
 const VERDICT_LEAN = 6;  // EV% in [VERDICT_LEAN, VERDICT_BET) → LEAN; below 6% → SKIP (not flagged)
+// Max-juice floor: the worst price a play's "max:" will show. Tied to the play gate so the
+// line-shopping range never drops you below a flagged bet — shop down only while EV stays ≥ 6%.
+const MAXJUICE_EV = VERDICT_LEAN;
 
 // MLB park coordinates and orientation
 // homeplateFacing = compass direction home plate faces (degrees)
@@ -247,10 +250,15 @@ function evPct(p, odds) {
   return +((p * b - (1 - p)) * 100).toFixed(1);
 }
 
-// Breakeven American odds for probability p — the WORST price still +EV.
-function breakevenOdds(p) {
+// Max-juice American odds for probability p — the WORST price at which EV still clears the
+// MAXJUICE_EV gate (6%), not 0%. This is the line-shopping floor shown as "max:" on each play.
+// Pass targetEvPct to override (e.g. 0 for the true mathematical breakeven).
+function breakevenOdds(p, targetEvPct) {
   if (!(p > 0) || !(p < 1)) return null;
-  const o = p > 0.5 ? -(p / (1 - p)) * 100 : ((1 - p) / p) * 100;
+  const t = (targetEvPct == null ? MAXJUICE_EV : targetEvPct) / 100;  // EV% → fraction
+  const b = (t + 1 - p) / p;          // net decimal payout needed so that EV = target
+  if (!(b > 0)) return null;          // p so high no finite price reaches the target
+  const o = b >= 1 ? b * 100 : -100 / b;
   const r = Math.round(o);
   return r > 0 ? `+${r}` : `${r}`;
 }
@@ -279,7 +287,7 @@ function buildJuiceTable(proj, direction, steps) {
       ev: evPct(p, -110)
     });
   }
-  return { description: 'max juice at each line where the bet stays +EV (derived from projection)', lines };
+  return { description: 'max juice at each line where the bet still clears the 6% EV gate (derived from projection)', lines };
 }
 
 // Overwrite every EV / breakeven / juice field from probabilities + real odds.
