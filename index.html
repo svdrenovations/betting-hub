@@ -400,11 +400,24 @@ function betPasses(b){
   // Within a group the selections are OR'd; across groups they're AND'd. Empty group = no constraint.
   if(g.result.length && !g.result.includes(b.result)) return false;
   if(g.market.length){
+    const o=parseFloat(b.odds);
+    let ln=parseFloat(b.betLine); if(isNaN(ln)) ln=parseFloat(b.closingLine); // RL line: bet line, fall back to close
+    const isF5=t.includes('f5');
+    const isML=t.includes('moneyline')&&!isF5;
+    const isRL=(t.includes('run line')||t.includes('rl '))&&!isF5;
+    const isTot=t.includes('total')&&!isF5;
+    const home=t.includes('home'), away=t.includes('away');
     const ok = g.market.some(v =>
-      v==='moneyline' ? t.includes('moneyline') :
-      v==='total'     ? t.includes('total') :
-      v==='rl'        ? (t.includes('run line')||t.includes('rl ')) :
-      v==='f5'        ? t.includes('f5') : false);
+      v==='ml_home_fav' ? (isML&&home&&o<0) :
+      v==='ml_home_dog' ? (isML&&home&&o>0) :
+      v==='ml_away_fav' ? (isML&&away&&o<0) :
+      v==='ml_away_dog' ? (isML&&away&&o>0) :
+      v==='rl_m15_home' ? (isRL&&home&&ln<0) :
+      v==='rl_m15_away' ? (isRL&&away&&ln<0) :
+      v==='rl_p15_home' ? (isRL&&home&&ln>0) :
+      v==='rl_p15_away' ? (isRL&&away&&ln>0) :
+      v==='total'       ? isTot :
+      v==='f5'          ? isF5 : false);
     if(!ok) return false;
   }
   if(g.ev.length){
@@ -467,7 +480,7 @@ function filterBarHTML(){
   const sitTags=[...new Set([...KNOWN_SITS, ...derivedSits])];
   const sitOpts=sitTags.map(t=>[t, t.startsWith('fade:') ? 'fade·'+t.slice(5) : t.charAt(0).toUpperCase()+t.slice(1)]);
   return `<div class="tracker-filters">${grp('result','All',[['pending','Pending'],['win','Won'],['loss','Lost']])}</div>`
-    + `<div class="tracker-filters">${grp('market','All mkts',[['moneyline','ML'],['total','Total'],['rl','RL'],['f5','F5']])}</div>`
+    + `<div class="tracker-filters">${grp('market','All mkts',[['ml_home_fav','ML home fav'],['ml_home_dog','ML home dog'],['ml_away_fav','ML away fav'],['ml_away_dog','ML away dog'],['rl_m15_home','RL -1.5 home'],['rl_m15_away','RL -1.5 away'],['rl_p15_home','RL +1.5 home'],['rl_p15_away','RL +1.5 away'],['total','Total'],['f5','F5']])}</div>`
     + `<div class="tracker-filters">${grp('sit','Any situation',sitOpts)}</div>`
     + `<div class="tracker-filters">${grp('price','Any price',[['chalk','Heavy fav ≤-150'],['fav','Fav -150 to 0'],['dog','Dog 0 to +150'],['bigdog','Big dog +150+']])}</div>`
     + `<div class="tracker-filters">${grp('ev','Any EV',[['lo','.1% - 2.4%'],['mid','2.5% - 5.9%'],['hi','6% - 9.9%'],['top','10%+']])}`
