@@ -906,11 +906,20 @@ function sbOddsFor(mk, side, g){
   return NaN;
 }
 function sbProfit(odds){ if(isNaN(odds)) return 0; return odds>0 ? odds/100 : 100/Math.abs(odds); }
+// Real run-line for a side: prefer the stored per-side line; if it's missing, the favorite (the
+// more negative ML) lays -1.5. Never assume away=-1.5/home=+1.5 — home teams are often the favorite.
+function sbRLLine(side, g){
+  let ln = parseFloat(side==='AWAY' ? g.away_rl : g.home_rl);
+  if(!isNaN(ln)) return ln;
+  const am=parseFloat(g.away_ml), hm=parseFloat(g.home_ml);
+  if(!isNaN(am)&&!isNaN(hm)){ const favAway=am<hm; return side==='AWAY' ? (favAway?-1.5:1.5) : (favAway?1.5:-1.5); }
+  return side==='AWAY' ? -1.5 : 1.5;
+}
 function sbGrade(mk, side, g){
   const a=g.away_final, h=g.home_final, tot=g.actual_total;
   if(a==null||h==null||tot==null) return 'pending';
   if(mk==='ml')  return side==='AWAY' ? (a>h?'win':'loss') : (h>a?'win':'loss');
-  if(mk==='rl'){ const margin=a-h; return side==='AWAY' ? (margin>=2?'win':'loss') : (margin<=1?'win':'loss'); }
+  if(mk==='rl'){ const ln=sbRLLine(side,g); const margin=side==='AWAY'?(a-h):(h-a); return (margin+ln)>0?'win':'loss'; }
   if(mk==='total'){ const line=sbTotalLine(g); if(isNaN(line)) return 'pending'; if(tot===line) return 'push'; return side==='OVER'?(tot>line?'win':'loss'):(tot<line?'win':'loss'); }
   return 'pending';
 }
@@ -927,7 +936,7 @@ function sbTotalLine(g){
 function sbLineLabel(mk, side, g){
   const odds=sbOddsFor(mk,side,g); const o=isNaN(odds)?'?':(odds>0?'+'+odds:String(odds));
   if(mk==='ml') return o;
-  if(mk==='rl') return `${side==='AWAY'?'-1.5':'+1.5'} ${o}`;
+  if(mk==='rl'){ const ln=sbRLLine(side,g); return `${ln>0?'+':''}${ln} ${o}`; }
   return `${side==='OVER'?'O':'U'}${(()=>{const t=sbTotalLine(g);return isNaN(t)?'?':t;})()} ${o}`;
 }
 // Flatten games -> one entry per engine play, classified model / sim / agreed (+disagreed flag).
@@ -999,7 +1008,7 @@ async function renderScoreboard(){
   if(sbGames===null){
     el.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
     try{
-      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev';
+      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev';
       const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?analyzed=eq.true&select=${cols}&order=game_date.desc&limit=2000`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
       if(!res.ok) throw new Error('Supabase '+res.status);
       sbGames=await res.json();
