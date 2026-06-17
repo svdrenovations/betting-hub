@@ -1711,6 +1711,23 @@ async function computeClvFromBooks(){
   }catch(e){ console.error('CLV pass error:', e.message); }
 }
 
+// Match a schedule game to these team names. On a doubleheader / resumed-suspension day more than
+// one schedule game carries the same teams; instead of taking the first hit (which graded 7:15
+// games off the 2pm resumed final), pick the one whose start time is closest to targetTimeMs (the
+// analyzed game's commence_time). Falls back to the sole/first match when there's no ambiguity.
+function pickScheduleGame(games, awayName, homeName, targetTimeMs) {
+  const matches = (games || []).filter(g => {
+    const at = g.teams?.away?.team?.name || '', ht = g.teams?.home?.team?.name || '';
+    return (at.includes(String(awayName).split(' ').pop()) || String(awayName).includes(at.split(' ').pop())) &&
+           (ht.includes(String(homeName).split(' ').pop()) || String(homeName).includes(ht.split(' ').pop()));
+  });
+  if (matches.length <= 1) return matches[0] || null;
+  if (targetTimeMs == null) return matches[0];
+  return matches.reduce((best, g) =>
+    Math.abs(new Date(g.gameDate).getTime() - targetTimeMs) < Math.abs(new Date(best.gameDate).getTime() - targetTimeMs) ? g : best
+  );
+}
+
 async function settlePendingBets() {
   console.log('\nChecking pending bets for settlement...');
   try {
@@ -1726,6 +1743,7 @@ async function settlePendingBets() {
     if (!bets.length) { console.log('  No pending bets to settle'); return; }
     console.log(`  Found ${bets.length} pending bets`);
 
+    const gameTimeCache = new Map(); // game_date -> [{away_team,home_team,commence_time}] for doubleheader disambiguation
     for (const bet of bets) {
       try {
         // Get final score from MLB Stats API
@@ -1741,12 +1759,19 @@ async function settlePendingBets() {
         const awayName = matchup.split(' @ ')[0];
         const homeName = matchup.split(' @ ')[1];
 
-        const game = games.find(g => {
-          const awayTeam = g.teams?.away?.team?.name || '';
-          const homeTeam = g.teams?.home?.team?.name || '';
-          return (awayTeam.includes(awayName.split(' ').pop()) || awayName.includes(awayTeam.split(' ').pop())) &&
-                 (homeTeam.includes(homeName?.split(' ').pop()) || homeName?.includes(homeTeam.split(' ').pop()));
+        // On a doubleheader day this matchup matches two schedule games; disambiguate by the
+        // analyzed game's start time (read once per date from mlb_games), then pick the closest.
+        if (!gameTimeCache.has(bet.game_date)) {
+          const gr = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=away_team,home_team,commence_time`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }});
+          gameTimeCache.set(bet.game_date, gr.ok ? await gr.json() : []);
+        }
+        const grow = (gameTimeCache.get(bet.game_date)||[]).find(r => {
+          const at=r.away_team||'', ht=r.home_team||'';
+          return (at.includes(awayName.split(' ').pop()) || awayName.includes(at.split(' ').pop())) &&
+                 (ht.includes(homeName?.split(' ').pop()) || homeName?.includes(ht.split(' ').pop()));
         });
+        const targetMs = grow?.commence_time ? new Date(grow.commence_time).getTime() : null;
+        const game = pickScheduleGame(games, awayName, homeName, targetMs);
 
         if (!game) continue;
         if (game.status?.abstractGameState !== 'Final') continue;
@@ -1836,7 +1861,7 @@ async function settleGameScores() {
     const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // YYYY-MM-DD
     // Only games that have already happened (don't try to score the future) and aren't scored yet.
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/mlb_games?actual_total=is.null&game_date=lte.${todayET}&select=id,game_date,away_team,home_team&order=game_date.desc`,
+      `${SUPABASE_URL}/rest/v1/mlb_games?actual_total=is.null&game_date=lte.${todayET}&select=id,game_date,away_team,home_team,commence_time&order=game_date.desc`,
       { headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } }
     );
     if (!res.ok) { console.log('  (could not read unscored games — is the actual_total column added?)'); return; }
@@ -1861,12 +1886,10 @@ async function settleGameScores() {
         // Same fuzzy last-word team match the bet settler uses, sourced from the game row.
         const awayName = row.away_team || '';
         const homeName = row.home_team || '';
-        const game = games.find(g => {
-          const awayTeam = g.teams?.away?.team?.name || '';
-          const homeTeam = g.teams?.home?.team?.name || '';
-          return (awayTeam.includes(awayName.split(' ').pop()) || awayName.includes(awayTeam.split(' ').pop())) &&
-                 (homeTeam.includes(homeName.split(' ').pop()) || homeName.includes(homeTeam.split(' ').pop()));
-        });
+        // Doubleheader-safe: pick the schedule game closest to this row's analyzed start time
+        // instead of the first team-name match (which graded 7:15 rows off the 2pm resumed final).
+        const targetMs = row.commence_time ? new Date(row.commence_time).getTime() : null;
+        const game = pickScheduleGame(games, awayName, homeName, targetMs);
         if (!game || game.status?.abstractGameState !== 'Final') continue;  // skip not-yet-final; scored on a later tick
         const a = game.teams?.away?.score, h = game.teams?.home?.score;
         if (a === undefined || h === undefined) continue;
