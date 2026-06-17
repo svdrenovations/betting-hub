@@ -18,6 +18,14 @@ const LEAGUE = { bb: 0.090, k: 0.225, s: 0.140, d: 0.045, t: 0.004, hr: 0.030 };
 LEAGUE.out = 1 - (LEAGUE.bb + LEAGUE.k + LEAGUE.s + LEAGUE.d + LEAGUE.t + LEAGUE.hr);
 const EVENTS = ['bb', 'k', 's', 'd', 't', 'hr', 'out'];
 
+// Home-field advantage. The engine is otherwise symmetric (no edge for the home team), so the
+// market — which prices in ~52-53% home win — rates every home side a few points higher, which
+// made the sim lean to the AWAY moneyline on nearly every game. This applies a small offensive
+// swing to each side (home +, away −): it shifts the run MARGIN toward home while leaving the
+// TOTAL ~unchanged. ~0.030 lands an even matchup near a 53% home win rate. CALIBRATE this against
+// your own realized home/away results — it's a tuning knob, not a fixed constant.
+const HOME_EDGE = 0.025;
+
 // Odds-ratio (log5) combination of a batter rate and a pitcher rate vs league baseline.
 // This is the standard way to merge "how often does THIS hitter do X" with "how often
 // does THIS pitcher allow X" into a matchup-specific rate.
@@ -38,6 +46,7 @@ function buildPAModel(batter, pitcher, ctx = {}) {
   const wxHR   = ctx.wxHR   ?? 1;   // weather HR multiplier (hot/wind out = >1)
   const umpK   = ctx.umpK   ?? 1;   // umpire zone -> K multiplier
   const umpBB  = ctx.umpBB  ?? 1;
+  const offMult = ctx.offMult ?? 1; // home-field offensive swing (home >1, away <1)
 
   const raw = {};
   for (const e of EVENTS) {
@@ -45,6 +54,7 @@ function buildPAModel(batter, pitcher, ctx = {}) {
     if (e === 'hr') v *= parkHR * wxHR;
     if (e === 'k')  v *= umpK;
     if (e === 'bb') v *= umpBB;
+    if (e !== 'k' && e !== 'out') v *= offMult; // scale scoring/on-base outcomes for HFA
     raw[e] = v;
   }
   const sum = EVENTS.reduce((a, e) => a + raw[e], 0);
@@ -135,12 +145,14 @@ function simGame(away, home, rng) {
 // Run N sims and derive every market probability from the one distribution.
 function simulate(matchup, N = 20000, rng = Math.random) {
   const ctx = matchup.ctx || {};
+  const homeCtx = { ...ctx, offMult: (ctx.offMult ?? 1) * (1 + HOME_EDGE) };
+  const awayCtx = { ...ctx, offMult: (ctx.offMult ?? 1) * (1 - HOME_EDGE) };
   const away = {
-    ...lineupModels(matchup.away.lineup, matchup.home.starter, matchup.home.pen, ctx),
+    ...lineupModels(matchup.away.lineup, matchup.home.starter, matchup.home.pen, awayCtx),
     starterInnings: matchup.home.starterInnings ?? 6,
   };
   const home = {
-    ...lineupModels(matchup.home.lineup, matchup.away.starter, matchup.away.pen, ctx),
+    ...lineupModels(matchup.home.lineup, matchup.away.starter, matchup.away.pen, homeCtx),
     starterInnings: matchup.away.starterInnings ?? 6,
   };
 
