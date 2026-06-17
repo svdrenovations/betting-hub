@@ -1650,46 +1650,64 @@ async function fetchF5Raw(){
   }catch(e){ return {}; }
 }
 
-// Book-gated CLV pass. For every bet that has a book recorded but no CLV yet, resolve the
-// closing price from that game's per-book snapshot on the bet's exact side, and store it.
-// Runs at close (CLV posts the moment the line is captured) AND on every run (so a book
-// you enter later gets picked up). Pending OR settled — CLV no longer waits for game end.
+// Book-gated CLV pass. For every bet with a recorded book, resolve the closing price from that
+// game's per-book snapshot on the bet's exact side. CLV is deliberately NOT write-once: while a
+// game is still PRE-PITCH we re-resolve it every run so the value tracks the latest snapshot and
+// the final pre-pitch pass (against the true close) wins. Once the game has STARTED the value is
+// frozen — the last pre-pitch number stands. This stops an early in-window snapshot (captured up to
+// REFRESH_WINDOW_MIN out, still near your entry) from locking a premature ~0% CLV that never
+// advances to the real close.
 async function computeClvFromBooks(){
   try{
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?clv=is.null&book=not.is.null&order=game_date.desc&limit=400`, {
+    // Candidates: any book-tagged bet still missing CLV (any date) PLUS every book-tagged bet from
+    // the last 2 days (so pre-pitch bets that already hold a provisional CLV get re-resolved toward
+    // close). Older, already-started bets keep their finalized value and are skipped in the loop.
+    const recentCutoff = new Date(Date.now() - 2*86400000).toLocaleDateString('en-CA',{timeZone:'America/New_York'});
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?book=not.is.null&or=(clv.is.null,game_date.gte.${recentCutoff})&order=game_date.desc&limit=400`, {
       headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
     });
     if(!res.ok){ console.error(`  CLV pass query failed: ${res.status}`); return; }
     const bets = await res.json();
-    if(!bets.length){ console.log('  CLV pass: every book-tagged bet already has CLV.'); return; }
-    console.log(`\nComputing book-matched CLV for ${bets.length} bets...`);
-    const cache = new Map(); let filled=0, noSnap=0, noBook=0, noOdds=0;
+    if(!bets.length){ console.log('  CLV pass: nothing to resolve.'); return; }
+    console.log(`\nResolving book-matched CLV for ${bets.length} candidate bets...`);
+    const cache = new Map(); let filled=0, refreshed=0, frozen=0, unchanged=0, noSnap=0, noBook=0, noOdds=0;
     for (const bet of bets){
       try{
         if(!bet.book || !String(bet.book).trim()){ noBook++; continue; }
         const aw=(bet.matchup||'').split(' @ ')[0]||'', hm=(bet.matchup||'').split(' @ ')[1]||'';
         if(!cache.has(bet.game_date)){
-          const gRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=away_team,home_team,closing_lines`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }});
+          const gRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=away_team,home_team,closing_lines,commence_time`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }});
           cache.set(bet.game_date, gRes.ok ? await gRes.json() : []);
         }
         const rows = cache.get(bet.game_date)||[];
         const g = rows.find(r=>{ const at=r.away_team||'',ht=r.home_team||''; return (at.includes(aw.split(' ').pop())||aw.includes(at.split(' ').pop())) && (ht.includes(hm.split(' ').pop())||hm.includes(ht.split(' ').pop())); });
         if(!g || !g.closing_lines){ noSnap++; continue; }                 // close not snapshotted yet -> leave null
+        // Freeze rule: re-resolve only while pre-pitch. Once the game has started the last pre-pitch
+        // value is final — only (re)fill a started game if it never got a CLV at all.
+        const notStarted = g.commence_time ? (Date.now() < new Date(g.commence_time).getTime()) : false;
+        const isFirstFill = (bet.clv == null);
+        if(!isFirstFill && !notStarted){ frozen++; continue; }            // already finalized -> leave it
         const key = resolveBookKey(bet.book, g.closing_lines);
         if(!key){ noBook++; continue; }                                   // book not in snapshot (e.g. a prediction market) -> honest null
         const c = closingForBet(bet.bet_type, g.closing_lines[key]);
         const pc = americanToProb(c.odds), pb = americanToProb(bet.odds);
         if(pc==null || pb==null){ noOdds++; continue; }
+        // No-op guard: if the resolved close is unchanged from what's stored, skip the write + sleep.
+        if(!isFirstFill && String(bet.closing_odds??'') === String(c.odds??'')){ unchanged++; continue; }
         const clv = +(((pc-pb)*100).toFixed(1));
         const r = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, {
           method:'PATCH', headers:{ 'Content-Type':'application/json','apikey':SUPABASE_SERVICE_KEY,'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}`,'Prefer':'return=minimal' },
           body: JSON.stringify({ closing_odds: c.odds||null, closing_line:(c.line!=null&&c.line!=='')?String(c.line):null, clv })
         });
-        if(r.ok){ filled++; console.log(`  ✓ CLV ${clv>=0?'+':''}${clv}% — ${bet.matchup} @ ${g.closing_lines[key].title||key} (closed ${c.odds||'?'})`); }
+        if(r.ok){
+          if(isFirstFill) filled++; else refreshed++;
+          const tag = !notStarted ? 'finalized' : (isFirstFill ? 'set' : '↻ updated');
+          console.log(`  ✓ CLV ${clv>=0?'+':''}${clv}% ${tag} — ${bet.matchup} @ ${g.closing_lines[key].title||key} (closed ${c.odds||'?'})`);
+        }
         await new Promise(rr=>setTimeout(rr,150));
       }catch(e){ /* skip this bet */ }
     }
-    console.log(`  CLV pass done — filled ${filled}, no snapshot ${noSnap}, book missing/unmatched ${noBook}, no odds ${noOdds}`);
+    console.log(`  CLV pass done — ${filled} set, ${refreshed} refreshed, ${unchanged} unchanged, ${frozen} frozen(started); no snapshot ${noSnap}, book missing ${noBook}, no odds ${noOdds}`);
   }catch(e){ console.error('CLV pass error:', e.message); }
 }
 
