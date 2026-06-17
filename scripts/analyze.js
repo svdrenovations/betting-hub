@@ -2186,9 +2186,20 @@ async function main() {
           ]);
           analysis.simMl = simMl ? verdictFor(simMl.ev, simMl.label) : 'SKIP';
           analysis.simMlEV = simMl ? simMl.ev : null;
+          // RL: map the sim's by-2 margin probs onto the ACTUAL run-line side. No more
+          // away=-1.5 assumption — away is the -1.5 favorite only when its run-line point is negative.
+          const aRLpt = parseFloat(lines.awayRL);
+          const awayIsFav = !isNaN(aRLpt) ? aRLpt < 0 : (parseFloat(lines.awayML) < parseFloat(lines.homeML));
+          let simPAwayRL, simPHomeRL;
+          if (simProbs.pAwayBy2 != null && simProbs.pHomeBy2 != null) {
+            simPAwayRL = awayIsFav ? simProbs.pAwayBy2 : (1 - simProbs.pHomeBy2);   // away covers its real line
+            simPHomeRL = awayIsFav ? (1 - simProbs.pAwayBy2) : simProbs.pHomeBy2;   // home covers its real line
+          } else {                                                                  // older engine fallback
+            simPAwayRL = simProbs.pAwayRL; simPHomeRL = simProbs.pHomeRL;
+          }
           const simRl = pickSide([
-            { ev: evPct(simProbs.pAwayRL, lines.awayRLOdds), label: 'AWAY' },
-            { ev: evPct(simProbs.pHomeRL, lines.homeRLOdds), label: 'HOME' }
+            { ev: evPct(simPAwayRL, lines.awayRLOdds), label: 'AWAY' },
+            { ev: evPct(simPHomeRL, lines.homeRLOdds), label: 'HOME' }
           ]);
           analysis.simRl = simRl ? verdictFor(simRl.ev, simRl.label) : 'SKIP';
           analysis.simRlEV = simRl ? simRl.ev : null;
