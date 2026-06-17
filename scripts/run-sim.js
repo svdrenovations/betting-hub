@@ -145,7 +145,7 @@ function simulate(matchup, N = 20000, rng = Math.random) {
   };
 
   const T = matchup.totalLine, F = matchup.f5Line; // e.g. 8.5, 4.5
-  let aWin = 0, tie = 0, aCoverRL = 0, aSum = 0, hSum = 0;
+  let aWin = 0, tie = 0, aCoverRL = 0, hCoverRL = 0, aSum = 0, hSum = 0;
   let over = 0, under = 0, push = 0;
   let f5Over = 0, f5Under = 0, f5AwayWin = 0, f5Tie = 0;
 
@@ -153,7 +153,8 @@ function simulate(matchup, N = 20000, rng = Math.random) {
     const g = simGame(away, home, rng);
     aSum += g.aR; hSum += g.hR;
     if (g.aR > g.hR) aWin++; else if (g.aR === g.hR) tie++;
-    if (g.aR - g.hR >= 2) aCoverRL++;                     // away -1.5
+    if (g.aR - g.hR >= 2) aCoverRL++;                     // away wins by 2+
+    if (g.hR - g.aR >= 2) hCoverRL++;                     // home wins by 2+
     const tot = g.aR + g.hR;
     if (T != null) { if (tot > T) over++; else if (tot < T) under++; else push++; }
     const f5 = g.aF5 + g.hF5;
@@ -167,8 +168,10 @@ function simulate(matchup, N = 20000, rng = Math.random) {
     meanTotal: +((aSum + hSum) / N).toFixed(2),
     pAwayML: p(aWin + tie / 2),            // ties split 50/50 (placeholder for extra innings)
     pHomeML: p((N - aWin - tie) + tie / 2),
-    pAwayRL: p(aCoverRL),                  // away -1.5
-    pHomeRL: 1 - p(aCoverRL),              // home +1.5 (no push at the 1.5 hook)
+    pAwayRL: p(aCoverRL),                  // legacy (assumes away -1.5) — use pAwayBy2/pHomeBy2 instead
+    pHomeRL: 1 - p(aCoverRL),              // legacy (assumes home +1.5)
+    pAwayBy2: p(aCoverRL),                 // P(away wins by 2+) — map to the real RL side downstream
+    pHomeBy2: p(hCoverRL),                 // P(home wins by 2+)
     pOver: p(over), pUnder: p(under), pTotalPush: p(push),
     pF5Over: p(f5Over), pF5Under: p(f5Under), pF5AwayML: p(f5AwayWin + f5Tie / 2),
   };
