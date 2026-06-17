@@ -681,10 +681,11 @@ async function fetchProbablePitchers(gameDate) {
     const res = await fetch(
       `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${gameDate}&gameType=R&hydrate=probablePitcher(note),team`
     );
-    if (!res.ok) return { pitcherMap: {}, venueMap: {} };
+    if (!res.ok) return { pitcherMap: {}, venueMap: {}, scheduleGames: [] };
     const data = await res.json();
     const pitcherMap = {};
     const venueMap = {};
+    const scheduleGames = [];   // one entry per real game — keeps gamePk + start time so doubleheaders don't collapse
     for (const date of (data.dates || [])) {
       for (const game of (date.games || [])) {
         const awayId = game.teams?.away?.team?.id;
@@ -693,29 +694,18 @@ async function fetchProbablePitchers(gameDate) {
         if (homeId) venueMap[`home_${homeId}`] = venueName; // actual park for this game (handles neutral sites)
         const awayPitcher = game.teams?.away?.probablePitcher;
         const homePitcher = game.teams?.home?.probablePitcher;
-        if (awayPitcher) pitcherMap[`away_${awayId}`] = {
-          id: awayPitcher.id,
-          name: awayPitcher.fullName,
-          note: awayPitcher.note || null,
-          vs: homeId,
-          gamePk: game.gamePk,
-          venue: venueName
-        };
-        if (homePitcher) pitcherMap[`home_${homeId}`] = {
-          id: homePitcher.id,
-          name: homePitcher.fullName,
-          note: homePitcher.note || null,
-          vs: awayId,
-          gamePk: game.gamePk,
-          venue: venueName
-        };
+        const awayP = awayPitcher ? { id: awayPitcher.id, name: awayPitcher.fullName, note: awayPitcher.note || null, vs: homeId, gamePk: game.gamePk, venue: venueName } : null;
+        const homeP = homePitcher ? { id: homePitcher.id, name: homePitcher.fullName, note: homePitcher.note || null, vs: awayId, gamePk: game.gamePk, venue: venueName } : null;
+        if (awayP) pitcherMap[`away_${awayId}`] = awayP;  // legacy team-id map (collapses on doubleheaders; kept as fallback)
+        if (homeP) pitcherMap[`home_${homeId}`] = homeP;
+        scheduleGames.push({ gamePk: game.gamePk, awayId, homeId, gameDate: game.gameDate, venue: venueName, awayPitcher: awayP, homePitcher: homeP });
       }
     }
     console.log(`Probable pitchers found: ${Object.keys(pitcherMap).length}`);
-    return { pitcherMap, venueMap };
+    return { pitcherMap, venueMap, scheduleGames };
   } catch(e) {
     console.log('Pitcher lookup failed:', e.message);
-    return { pitcherMap: {}, venueMap: {} };
+    return { pitcherMap: {}, venueMap: {}, scheduleGames: [] };
   }
 }
 
@@ -1412,9 +1402,10 @@ The projTotal and f5ProjTotal are the most important numbers you produce — the
   }
 }
 
-async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData, pitcherStatus) {
+async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData, pitcherStatus, gamePk) {
   const row = {
     id: game.id,
+    game_pk: gamePk || null,
     game_date: new Date(game.commence_time).toLocaleDateString('en-CA', {timeZone: 'America/New_York'}),
     away_team: game.away_team,
     home_team: game.home_team,
@@ -1941,7 +1932,11 @@ async function snapshotGameClose(g, f5Map, f5Raw, today, now) {
     f5_total: f5?.f5Total || null, f5_over_odds: f5?.f5OverOdds || null, f5_under_odds: f5?.f5UnderOdds || null,
     closing_lines
   };
-  const url = `${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&away_team=eq.${encodeURIComponent(g.away_team)}&home_team=eq.${encodeURIComponent(g.home_team)}`;
+  // Target the exact row by Odds-API event id (the row PK) so a doubleheader's two games don't
+  // overwrite each other's close. Fall back to team+date only if this game somehow has no id.
+  const url = g.id
+    ? `${SUPABASE_URL}/rest/v1/mlb_games?id=eq.${encodeURIComponent(g.id)}`
+    : `${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&away_team=eq.${encodeURIComponent(g.away_team)}&home_team=eq.${encodeURIComponent(g.home_team)}`;
   // GUARD the CLV basis: a late pull near first pitch can return an empty or thinner per-book
   // snapshot while a single stale book still yields a parseable ML (passing the guards above).
   // Never replace a populated closing_lines with an emptier one, or we lose CLV for that game.
@@ -2000,7 +1995,7 @@ async function countReadyGames(today, doneSet) {
       const away = g.teams?.away?.team?.name || '', home = g.teams?.home?.team?.name || '';
       const minsToStart = (new Date(g.gameDate).getTime() - now) / 60000;
       if (minsToStart < -5) { started++; continue; }                     // underway/finished
-      if (doneSet.has(`${away}@${home}`)) {                              // already analyzed
+      if (doneSet.has(`gp:${g.gamePk}`) || doneSet.has(`nm:${away}@${home}`)) {  // already analyzed (gamePk; name = legacy)
         if (minsToStart <= REFRESH_WINDOW_MIN) refresh++;                // needs a close snapshot now
         continue;
       }
@@ -2027,9 +2022,13 @@ async function main() {
   // pitchers + lineups. Used by both the readiness pre-check and the per-game skip in the loop.
   const doneSet = new Set();
   try {
-    const dRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&select=away_team,home_team,pitcher_status,lineup_status`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }});
+    const dRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&select=id,game_pk,away_team,home_team,pitcher_status,lineup_status`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }});
     if (dRes.ok) for (const r of await dRes.json()) {
-      if (r.pitcher_status === 'confirmed' && r.lineup_status === 'confirmed') doneSet.add(`${r.away_team}@${r.home_team}`);
+      if (r.pitcher_status === 'confirmed' && r.lineup_status === 'confirmed') {
+        if (r.id) doneSet.add(String(r.id));               // Odds-API event id = the row PK — per-game, doubleheader-safe (used by the main loop)
+        if (r.game_pk) doneSet.add(`gp:${r.game_pk}`);      // MLB gamePk — used by the schedule-side readiness pre-check
+        doneSet.add(`nm:${r.away_team}@${r.home_team}`);    // team-name fallback for legacy rows that predate game_pk
+      }
     }
     if (doneSet.size) console.log(`Already analyzed on confirmed lineups: ${doneSet.size} — will skip those.`);
   } catch(e) { /* if this read fails, worst case we re-analyze a game; not fatal */ }
@@ -2053,6 +2052,7 @@ async function main() {
   const [games, f5Map, f5Raw, probables] = await Promise.all([fetchOddsAPI(), fetchF5Lines(), fetchF5Raw(), fetchProbablePitchers(today)]);
   const pitcherMap = probables.pitcherMap;
   const venueMap = probables.venueMap;
+  const scheduleGames = probables.scheduleGames || [];
   const now = new Date();
   const todayGames = games.filter(g => {
     // Compare each game's date in ET (matches how game_date is stored on upsert).
@@ -2086,7 +2086,7 @@ async function main() {
       // Already analyzed -> CLOSE-REFRESH branch. Snapshot its per-book close once inside the
       // window before first pitch (each tick re-captures; the last pre-pitch one is the close).
       // Outside the window it's a free no-op — no odds work for that game.
-      if (doneSet.has(`${game.away_team}@${game.home_team}`)) {
+      if (doneSet.has(String(game.id))) {
         const minsToStart = (new Date(game.commence_time) - now) / 60000;
         if (minsToStart > REFRESH_WINDOW_MIN) {
           console.log(`  ⏭  ${game.away_team} @ ${game.home_team} — analyzed; close-refresh window not open yet (${Math.round(minsToStart)}m to first pitch)`);
@@ -2105,11 +2105,22 @@ async function main() {
         getTeamId(game.home_team)
       ]);
 
-      const awayPitcherInfo = awayTeamId ? pitcherMap[`away_${awayTeamId}`] : null;
-      const homePitcherInfo = homeTeamId ? pitcherMap[`home_${homeTeamId}`] : null;
+      // Resolve the exact schedule game for THIS Odds-API event (doubleheader-safe): match team ids,
+      // then — if more than one game (a doubleheader) — the closest start time. Falls back to the
+      // legacy team-id pitcher map when there's no schedule hit.
+      let sg = null;
+      const sgMatches = scheduleGames.filter(s => s.awayId === awayTeamId && s.homeId === homeTeamId);
+      if (sgMatches.length === 1) sg = sgMatches[0];
+      else if (sgMatches.length > 1) {
+        const t = new Date(game.commence_time).getTime();
+        sg = sgMatches.reduce((b, s) => Math.abs(new Date(s.gameDate).getTime() - t) < Math.abs(new Date(b.gameDate).getTime() - t) ? s : b);
+      }
+      const awayPitcherInfo = sg?.awayPitcher || (awayTeamId ? pitcherMap[`away_${awayTeamId}`] : null);
+      const homePitcherInfo = sg?.homePitcher || (homeTeamId ? pitcherMap[`home_${homeTeamId}`] : null);
+      const resolvedGamePk = sg?.gamePk || awayPitcherInfo?.gamePk || homePitcherInfo?.gamePk || null;
 
       // Actual venue for THIS game (handles neutral sites like the A's Las Vegas series).
-      const venueName = (homeTeamId && venueMap[`home_${homeTeamId}`]) || homePitcherInfo?.venue || awayPitcherInfo?.venue || null;
+      const venueName = sg?.venue || (homeTeamId && venueMap[`home_${homeTeamId}`]) || homePitcherInfo?.venue || awayPitcherInfo?.venue || null;
 
       // Confirm both probables come from the SAME real MLB game between these two teams.
       // If a probable's recorded opponent/gamePk doesn't line up, the team mapping is off.
@@ -2260,7 +2271,7 @@ async function main() {
       deriveRunModel(analysis, lines);
       deriveNumbers(analysis, lines, f5Lines);
 
-      await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, pitcherStatus);
+      await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, pitcherStatus, resolvedGamePk);
 
       const ap = awayPitcherInfo?.name || 'TBD';
       const hp = homePitcherInfo?.name || 'TBD';
