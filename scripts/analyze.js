@@ -69,6 +69,13 @@ const VERDICT_LEAN = 6;  // EV% in [VERDICT_LEAN, VERDICT_BET) → LEAN; below 6
 // line-shopping range never drops you below a flagged bet — shop down only while EV stays ≥ 6%.
 const MAXJUICE_EV = VERDICT_LEAN;
 
+// Sweep-spot fade (situational overlay — domain knowledge layered on the model's math). In a series
+// where one team has won every game so far, fade the team in position to complete the sweep when the
+// model's +EV play is on them; the side facing the sweep is motivated in a way the price misses.
+// Off from this date onward — late-season buyer/seller splits and motivation divergence break the
+// angle. It's a knob: tune the cutoff from how the flagged plays actually resolve.
+const SWEEP_FADE_UNTIL = '2026-08-01';
+
 // MLB park coordinates and orientation
 // homeplateFacing = compass direction home plate faces (degrees)
 // Wind blowing FROM opposite direction = blowing OUT to CF
@@ -310,7 +317,7 @@ function verdictFor(ev, sideLabel) {
 // Overwrite every EV / breakeven / juice / verdict field from probabilities + real
 // odds. The verdict is chosen by EV, not by the model's text, so "BET" always means
 // the math found real edge — and the strongest-priced side is the one taken.
-function deriveNumbers(a, lines, f5Lines) {
+function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr) {
   if (!a) return a;
 
   // Win probabilities from the run model (fall back to 50/50 if absent).
@@ -337,6 +344,22 @@ function deriveNumbers(a, lines, f5Lines) {
     ]);
     if (side) { a.rlEV = side.ev; a.rlBreakeven = breakevenOdds(side.p); a.rl = verdictFor(side.ev, side.label); }
     else { a.rl = 'SKIP'; }
+  }
+
+  // ── Sweep-spot fade ─────────────────────────────────────────────────────────
+  // If a team is in position to complete a series sweep and the model's +EV play is ON that team,
+  // stand down (ML/RL only — totals untouched). Records what the play would have been so the rule
+  // can be measured later. Seasonally gated off near the deadline.
+  if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
+    const faded = [];
+    for (const mkt of ['ml', 'rl']) {
+      const v = a[mkt];
+      if (typeof v === 'string' && v !== 'SKIP' && v.endsWith(` ${sweepSide}`)) {
+        faded.push(`${mkt.toUpperCase()} ${v}`);
+        a[mkt] = 'SKIP';
+      }
+    }
+    if (faded.length) a.sweepFade = `sweep fade (${sweepSide} in position to sweep) — stood down: ${faded.join(', ')}`;
   }
 
   // ── Full-game total ──
@@ -386,6 +409,7 @@ function deriveNumbers(a, lines, f5Lines) {
   const evByMarket = { ml: a.mlEV, rl: a.rlEV, total: a.totalEV, f5: a.f5EV };
   let bestMkt = null, bestEv = -Infinity;
   for (const k of ['ml','rl','total','f5']) {
+    if (a[k] === 'SKIP') continue;          // a faded or sub-threshold market can't be the best play
     const e = evByMarket[k];
     if (e != null && !isNaN(e) && e > bestEv) { bestEv = e; bestMkt = k; }
   }
@@ -698,7 +722,7 @@ async function fetchProbablePitchers(gameDate) {
         const homeP = homePitcher ? { id: homePitcher.id, name: homePitcher.fullName, note: homePitcher.note || null, vs: awayId, gamePk: game.gamePk, venue: venueName } : null;
         if (awayP) pitcherMap[`away_${awayId}`] = awayP;  // legacy team-id map (collapses on doubleheaders; kept as fallback)
         if (homeP) pitcherMap[`home_${homeId}`] = homeP;
-        scheduleGames.push({ gamePk: game.gamePk, awayId, homeId, gameDate: game.gameDate, venue: venueName, awayPitcher: awayP, homePitcher: homeP });
+        scheduleGames.push({ gamePk: game.gamePk, awayId, homeId, gameDate: game.gameDate, venue: venueName, awayPitcher: awayP, homePitcher: homeP, seriesGameNumber: game.seriesGameNumber, gamesInSeries: game.gamesInSeries });
       }
     }
     console.log(`Probable pitchers found: ${Object.keys(pitcherMap).length}`);
@@ -707,6 +731,40 @@ async function fetchProbablePitchers(gameDate) {
     console.log('Pitcher lookup failed:', e.message);
     return { pitcherMap: {}, venueMap: {}, scheduleGames: [] };
   }
+}
+
+// Series sweep-spot detector. Looks at the prior games of THIS series (the seriesGameNumber-1 most
+// recent head-to-head finals before today) and returns the side in position to sweep ('AWAY'|'HOME')
+// if one team has won every one of them, else null. Best-effort: any hiccup returns null = no fade.
+async function fetchSeriesSweepSide(awayId, homeId, dateStr, seriesGameNumber) {
+  const priorNeeded = (seriesGameNumber || 0) - 1;
+  if (priorNeeded < 2) return null;                       // need games 1 & 2 already played (this is game 3+)
+  try {
+    const start = new Date(new Date(dateStr + 'T12:00:00Z').getTime() - 8 * 86400000).toISOString().slice(0, 10);
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&startDate=${start}&endDate=${dateStr}&teamId=${awayId}&opponentId=${homeId}&gameType=R&hydrate=linescore`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const h2h = [];
+    for (const d of (data.dates || [])) for (const g of (d.games || [])) {
+      const aId = g.teams?.away?.team?.id, hId = g.teams?.home?.team?.id;
+      const pair = (aId === awayId && hId === homeId) || (aId === homeId && hId === awayId);
+      if (!pair) continue;
+      if (g.status?.abstractGameState !== 'Final') continue;
+      const od = g.officialDate || (g.gameDate || '').slice(0, 10);
+      if (!od || od >= dateStr) continue;                 // only games strictly before today
+      const aS = g.teams?.away?.score, hS = g.teams?.home?.score;
+      if (aS == null || hS == null) continue;
+      h2h.push({ date: od, winnerId: aS > hS ? aId : hId });
+    }
+    h2h.sort((x, y) => (x.date < y.date ? 1 : -1));        // most recent first
+    const series = h2h.slice(0, priorNeeded);             // the prior games of this series
+    if (series.length < priorNeeded) return null;         // couldn't confirm them all -> don't fade
+    const wins = {};
+    for (const g of series) wins[g.winnerId] = (wins[g.winnerId] || 0) + 1;
+    if (wins[awayId] === series.length) return 'AWAY';    // away has swept the series so far
+    if (wins[homeId] === series.length) return 'HOME';
+    return null;                                          // sweep already broken -> no fade
+  } catch (e) { return null; }
 }
 
 // Check if pitcher is making MLB debut
@@ -1492,6 +1550,7 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       ml_ev: analysis.mlEV,
       rl_verdict: analysis.rl,
       rl_ev: analysis.rlEV,
+      sweep_fade: analysis.sweepFade || null,
       total_verdict: analysis.total,
       total_ev: analysis.totalEV,
       total_line: analysis.totalLine,
@@ -2267,9 +2326,20 @@ async function main() {
         console.log(`  sim shadow error: ${e.message}`);
       }
 
+      // Series sweep-fade overlay: if this is game 3+ of a series and one team has swept it so far,
+      // flag the side in position to complete the sweep so the model stands down off its +EV play.
+      const _gd = new Date(game.commence_time).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+      let sweepSide = null;
+      const sgn = sg?.seriesGameNumber || 0;
+      if (sgn >= 3 && awayTeamId && homeTeamId) {
+        try { sweepSide = await fetchSeriesSweepSide(awayTeamId, homeTeamId, _gd, sgn); }
+        catch(e) { /* best-effort */ }
+        if (sweepSide) console.log(`  ⚑ sweep spot: ${sweepSide} in position to complete the sweep (series G${sgn}) — fading their +EV ML/RL`);
+      }
+
       // Derive ML/RL probabilities from the projected run margin, then all EV/breakeven/juice
       deriveRunModel(analysis, lines);
-      deriveNumbers(analysis, lines, f5Lines);
+      deriveNumbers(analysis, lines, f5Lines, sweepSide, _gd);
 
       await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, pitcherStatus, resolvedGamePk);
 
