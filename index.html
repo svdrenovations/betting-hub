@@ -892,7 +892,9 @@ function isoDate(d) {
 // against the line CAPTURED AT ANALYSIS TIME, 1 unit each. Reads mlb_games only — never
 // the bet log — so no-plays and line-misses don't enter. F5 omitted (no first-5 actuals).
 let sbGames = null;
+let sbExcluded = null; // Set of removed-play keys: "date|matchup|mk|side|source" (soft-deleted via mlb_excluded_plays)
 let sbFilter = { source:'all', result:[], market:[], ev:[], from:'', to:'' };
+function sbKey(date,matchup,mk,side,source){ return `${date}|${matchup}|${mk}|${side}|${source}`; }
 
 function sbParsePlay(verdict){
   if(!verdict) return null;
@@ -966,7 +968,9 @@ function sbBuildPlays(games){
       }
     }
   }
-  return out;
+  // Drop any plays the user has removed (soft-delete). One filter point here keeps the log,
+  // the stats panel, and the CSV export all consistent — they each build from sbBuildPlays.
+  return out.filter(x => !(sbExcluded && sbExcluded.has(sbKey(x.date,x.matchup,x.mk,x.side,x.source))));
 }
 function sbPasses(x){
   const f=sbFilter;
@@ -1014,6 +1018,12 @@ async function renderScoreboard(){
       sbGames=await res.json();
     }catch(e){ el.innerHTML=`<div class="empty-state"><div class="empty-title">Could not load</div><div class="empty-sub">${e.message}</div></div>`; return; }
   }
+  if(sbExcluded===null){
+    try{
+      const r=await fetch(`${SUPABASE_URL}/rest/v1/mlb_excluded_plays?select=game_date,matchup,market,side,source`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
+      sbExcluded=new Set((r.ok?await r.json():[]).map(e=>sbKey(e.game_date,e.matchup,e.market,e.side,e.source)));
+    }catch(e){ sbExcluded=new Set(); }   // table missing or unreachable -> just show everything
+  }
   el.innerHTML=scoreboardHTML();
 }
 function sbSetSource(v){ sbFilter.source=v; renderScoreboard(); }
@@ -1045,6 +1055,27 @@ function sbExportCSV(){
   a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
   a.download='model_vs_sim_plays_'+isoDate(new Date())+'.csv';
   a.click();
+}
+
+// Soft-delete a single play from the Model-vs-Sim log. Records the play's identity in
+// mlb_excluded_plays; sbBuildPlays then filters it out of the log, the stats panel, AND the CSV
+// export. The underlying game analysis in mlb_games is untouched, so this is fully reversible:
+// delete the play's row from mlb_excluded_plays to bring it back. Uses the same anon REST path
+// the bet log already uses.
+async function sbDeletePlay(keyEnc, labelEnc){
+  const key=decodeURIComponent(keyEnc), label=decodeURIComponent(labelEnc);
+  if(!confirm(`Remove this play from the Model vs Sim log?\n\n${label}\n\nIt will be hidden from the record, the stats, and the CSV export. The game's analysis is kept — you can restore it later by deleting its row from mlb_excluded_plays.`)) return;
+  const [game_date,matchup,market,side,source]=key.split('|');
+  try{
+    const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_excluded_plays`,{
+      method:'POST',
+      headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`,'Content-Type':'application/json','Prefer':'return=minimal'},
+      body:JSON.stringify({game_date,matchup,market,side,source})
+    });
+    if(!res.ok) throw new Error('Supabase '+res.status);
+    if(sbExcluded) sbExcluded.add(key);
+    renderScoreboard();
+  }catch(e){ alert('Could not remove play: '+e.message+'\n\n(If this says 404/PGRST, the mlb_excluded_plays table or its anon policies may not be set up yet.)'); }
 }
 
 function scoreboardHTML(){
@@ -1090,10 +1121,11 @@ function scoreboardHTML(){
     <td class="mono" style="font-size:11px">${x.line}</td>
     <td class="mono" style="font-size:11px;color:var(--amber)">${x.ev!=null?`+${x.ev.toFixed(1)}%`:'—'}</td>
     <td>${resCell(x)}</td>
-    <td>${uCell(x)}</td></tr>`).join('');
+    <td>${uCell(x)}</td>
+    <td style="text-align:center"><button title="Remove this play from the log" onclick="sbDeletePlay('${encodeURIComponent(sbKey(x.date,x.matchup,x.mk,x.side,x.source))}','${encodeURIComponent(x.date+' · '+x.matchup+' · '+x.source+' '+x.lbl+' '+x.side.toLowerCase())}')" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:5px;cursor:pointer;font-size:11px;line-height:1;padding:3px 7px">✕</button></td></tr>`).join('');
   const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr>
-    <th>Date</th><th>Matchup</th><th>Source</th><th>Mkt</th><th>Side</th><th>Line</th><th>EV</th><th>Res</th><th>Units</th>
-    </tr></thead><tbody>${rows||`<tr><td colspan="9" style="color:var(--muted);padding:18px;text-align:center">No plays match these filters.</td></tr>`}</tbody></table></div>`;
+    <th>Date</th><th>Matchup</th><th>Source</th><th>Mkt</th><th>Side</th><th>Line</th><th>EV</th><th>Res</th><th>Units</th><th></th>
+    </tr></thead><tbody>${rows||`<tr><td colspan="10" style="color:var(--muted);padding:18px;text-align:center">No plays match these filters.</td></tr>`}</tbody></table></div>`;
 
   return filterBar + statsPanel + table;
 }
