@@ -41,6 +41,14 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY;
 // set KALSHI_BASE. The discover command will surface a bad base immediately.
 const KALSHI_BASE = process.env.KALSHI_BASE || 'https://api.elections.kalshi.com/trade-api/v2';
 const MLB_SERIES  = 'KXMLBGAME';   // confirmed single-game MLB moneyline series
+// Candidate read bases — discovery tries each until one returns MLB markets, then reports the winner.
+const KALSHI_BASES = [...new Set([
+  KALSHI_BASE,
+  'https://api.elections.kalshi.com/trade-api/v2',
+  'https://api.kalshi.com/trade-api/v2',
+  'https://trading-api.kalshi.com/trade-api/v2',
+  'https://external-api.kalshi.com/trade-api/v2'
+])];
 const FEE_PER_CONTRACT = 0.02;     // Kalshi's $0.02/contract execution fee — used only in paper PnL
 const NOTIONAL = 100;              // contracts a 1u play would represent, for depth/PnL display only
 
@@ -109,6 +117,12 @@ async function kGet(path) {
   const res = await fetch(`${KALSHI_BASE}${path}`, { headers: { Accept: 'application/json' } });
   if (res.status === 429) { await sleep(1500); return kGet(path); }   // simple backoff
   if (!res.ok) throw new Error(`Kalshi GET ${path} -> ${res.status}`);
+  return res.json();
+}
+// same, against an explicit base (discovery tries several to find the one serving MLB markets)
+async function kGetBase(base, path) {
+  const res = await fetch(`${base}${path}`, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(String(res.status));
   return res.json();
 }
 
@@ -180,36 +194,47 @@ function matchMarket(play, markets) {
 
 // ---------- commands ----------
 async function cmdDiscover(date) {
-  console.log(`Kalshi MLB-family market discovery (${KALSHI_BASE}) — read-only\n`);
-  // Sweep open markets and keep anything in the MLB family (ticker starts KXMLB), grouped by
-  // series. This surfaces the run-line and total series — whatever Kalshi names them — alongside
-  // the moneyline series, instead of assuming we already know their tickers.
-  const bySeries = {};
-  let cursor = '', pages = 0;
-  do {
-    const data = await kGet(`/markets?status=open&limit=1000${cursor ? `&cursor=${cursor}` : ''}`);
-    for (const m of (data.markets || [])) {
-      const t = m.ticker || '';
-      if (!/^KXMLB/i.test(t)) continue;
-      const series = t.split('-')[0];
-      (bySeries[series] = bySeries[series] || []).push(m);
+  console.log('Kalshi discovery — read-only. Trying bases until one returns MLB markets.\n');
+  let workingBase = null, sample = null;
+  for (const base of KALSHI_BASES) {
+    for (const q of [`/markets?series_ticker=${MLB_SERIES}&status=open&limit=5`,
+                     `/markets?series_ticker=${MLB_SERIES}&limit=5`]) {
+      try {
+        const d = await kGetBase(base, q);
+        const ms = d.markets || [];
+        console.log(`  ${base}  "${q}"  -> ${ms.length} markets`);
+        if (ms.length && !workingBase) {
+          workingBase = base; sample = ms[0];
+          for (const m of ms.slice(0, 5))
+            console.log(`       ${m.ticker}  title="${m.title || ''}"  yes_sub="${m.yes_sub_title || ''}"  event=${m.event_ticker}  bid/ask=${m.yes_bid}/${m.yes_ask}`);
+        }
+      } catch (e) { console.log(`  ${base}  "${q}"  -> error ${e.message}`); }
     }
-    cursor = data.cursor || ''; pages++;
-  } while (cursor && pages < 25);
-
-  const series = Object.keys(bySeries).sort();
-  console.log(`MLB-family series found: ${series.join(', ') || '(none — confirm KALSHI_BASE / that the sweep reached MLB markets)'}\n`);
-  for (const s of series) {
-    const ms = bySeries[s];
-    console.log(`== ${s}  (${ms.length} open markets) ==`);
-    for (const m of ms.slice(0, 6)) {
-      console.log(`   ${m.ticker}`);
-      console.log(`     title="${m.title || ''}"  yes_sub="${m.yes_sub_title || ''}"`);
-      console.log(`     yes_bid=${m.yes_bid} yes_ask=${m.yes_ask} vol=${m.volume}`);
-    }
-    console.log('');
+    if (workingBase) break;
   }
-  console.log('Paste this back — the series names + title/yes_sub format tell me how to map run-line and total plays onto the right contracts.');
+  if (!workingBase) { console.log('\nNo base returned KXMLBGAME markets. Paste this whole log back and we adjust.'); return; }
+  console.log(`\nWORKING BASE: ${workingBase}`);
+
+  // A single game is an "event"; its nested markets include the moneyline, run line, and total.
+  // Dumping one event reveals the run-line and total series tickers + how each YES is framed.
+  if (sample && sample.event_ticker) {
+    for (const q of [`/events/${sample.event_ticker}?with_nested_markets=true`,
+                     `/events/${sample.event_ticker}`]) {
+      try {
+        const d = await kGetBase(workingBase, q);
+        const evMarkets = (d.event && d.event.markets) || d.markets || [];
+        if (!evMarkets.length) { console.log(`\n  "${q}" -> event found but no nested markets`); continue; }
+        console.log(`\nAll markets on game event ${sample.event_ticker} (ML + run line + total live here):`);
+        for (const m of evMarkets) {
+          const series = m.series_ticker || (m.ticker || '').split('-')[0];
+          console.log(`   series=${series}  ${m.ticker}`);
+          console.log(`      title="${m.title || ''}"  yes_sub="${m.yes_sub_title || ''}"  sub="${m.subtitle || ''}"  bid/ask=${m.yes_bid}/${m.yes_ask}`);
+        }
+        break;
+      } catch (e) { console.log(`\n  "${q}" -> error ${e.message}`); }
+    }
+  }
+  console.log('\nPaste all of this back — the series tickers + yes_sub wording tell me how to map run-line and total plays.');
 }
 
 async function cmdRun(date) {
