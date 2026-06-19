@@ -193,48 +193,60 @@ function matchMarket(play, markets) {
 }
 
 // ---------- commands ----------
-async function cmdDiscover(date) {
-  console.log('Kalshi discovery — read-only. Trying bases until one returns MLB markets.\n');
-  let workingBase = null, sample = null;
-  for (const base of KALSHI_BASES) {
-    for (const q of [`/markets?series_ticker=${MLB_SERIES}&status=open&limit=5`,
-                     `/markets?series_ticker=${MLB_SERIES}&limit=5`]) {
-      try {
-        const d = await kGetBase(base, q);
-        const ms = d.markets || [];
-        console.log(`  ${base}  "${q}"  -> ${ms.length} markets`);
-        if (ms.length && !workingBase) {
-          workingBase = base; sample = ms[0];
-          for (const m of ms.slice(0, 5))
-            console.log(`       ${m.ticker}  title="${m.title || ''}"  yes_sub="${m.yes_sub_title || ''}"  event=${m.event_ticker}  bid/ask=${m.yes_bid}/${m.yes_ask}`);
-        }
-      } catch (e) { console.log(`  ${base}  "${q}"  -> error ${e.message}`); }
-    }
-    if (workingBase) break;
-  }
-  if (!workingBase) { console.log('\nNo base returned KXMLBGAME markets. Paste this whole log back and we adjust.'); return; }
-  console.log(`\nWORKING BASE: ${workingBase}`);
+async function cmdDiscover(arg) {
+  const base = 'https://api.elections.kalshi.com/trade-api/v2';   // confirmed working
+  console.log('Kalshi MLB line discovery — read-only\n');
 
-  // A single game is an "event"; its nested markets include the moneyline, run line, and total.
-  // Dumping one event reveals the run-line and total series tickers + how each YES is framed.
-  if (sample && sample.event_ticker) {
-    for (const q of [`/events/${sample.event_ticker}?with_nested_markets=true`,
-                     `/events/${sample.event_ticker}`]) {
-      try {
-        const d = await kGetBase(workingBase, q);
-        const evMarkets = (d.event && d.event.markets) || d.markets || [];
-        if (!evMarkets.length) { console.log(`\n  "${q}" -> event found but no nested markets`); continue; }
-        console.log(`\nAll markets on game event ${sample.event_ticker} (ML + run line + total live here):`);
-        for (const m of evMarkets) {
-          const series = m.series_ticker || (m.ticker || '').split('-')[0];
-          console.log(`   series=${series}  ${m.ticker}`);
-          console.log(`      title="${m.title || ''}"  yes_sub="${m.yes_sub_title || ''}"  sub="${m.subtitle || ''}"  bid/ask=${m.yes_bid}/${m.yes_ask}`);
-        }
-        break;
-      } catch (e) { console.log(`\n  "${q}" -> error ${e.message}`); }
+  // today's event date token, e.g. "26JUN19" (Kalshi encodes it in the event ticker)
+  const P = new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', year:'2-digit', month:'short', day:'2-digit' }).formatToParts(new Date());
+  const token = `${P.find(p=>p.type==='year').value}${P.find(p=>p.type==='month').value.toUpperCase()}${P.find(p=>p.type==='day').value}`;
+  console.log(`today (ET) token: ${token}`);
+
+  // optional override: node kalshi-dryrun.js discover KXMLBGAME-26JUN192040PITCOL
+  let targetEvent = (arg && /^KXMLB/i.test(arg)) ? arg : null;
+  if (!targetEvent) {
+    const events = new Set();
+    let cursor = '', pages = 0;
+    do {
+      const d = await kGetBase(base, `/markets?series_ticker=KXMLBGAME&limit=200${cursor ? `&cursor=${cursor}` : ''}`);
+      for (const m of (d.markets || [])) if ((m.event_ticker || '').includes(token)) events.add(m.event_ticker);
+      cursor = d.cursor || ''; pages++;
+    } while (cursor && pages < 12 && !events.size);
+    targetEvent = [...events][0] || null;
+    console.log(`today's KXMLBGAME events found: ${events.size}`);
+    if (!targetEvent) {                       // fallback: just take the first event available
+      const d = await kGetBase(base, `/markets?series_ticker=KXMLBGAME&limit=1`);
+      targetEvent = ((d.markets || [])[0] || {}).event_ticker || null;
     }
   }
-  console.log('\nPaste all of this back — the series tickers + yes_sub wording tell me how to map run-line and total plays.');
+  if (!targetEvent) { console.log('No event to inspect — paste this back.'); return; }
+  console.log(`inspecting event: ${targetEvent}\n`);
+
+  const dump = (m) => `   series=${m.series_ticker || (m.ticker || '').split('-')[0]}  ${m.ticker}\n      title="${m.title || ''}"  yes_sub="${m.yes_sub_title || ''}"  sub="${m.subtitle || ''}"  bid/ask=${m.yes_bid}/${m.yes_ask}`;
+
+  // all markets nested under this game's event — for a same-day game this should include RL + total
+  let nested = [];
+  try {
+    const d = await kGetBase(base, `/events/${targetEvent}?with_nested_markets=true`);
+    nested = (d.event && d.event.markets) || d.markets || [];
+    console.log(`== ${nested.length} markets nested under ${targetEvent} ==`);
+    nested.forEach(m => console.log(dump(m)));
+  } catch (e) { console.log('event fetch error ' + e.message); }
+
+  // if still only the two winner markets, the run line / total are separate events — probe parallels
+  if (nested.length <= 2) {
+    const suffix = targetEvent.replace(/^KXMLBGAME/, '');
+    console.log('\n(only winner markets here — probing parallel events for run line / total)');
+    for (const p of ['KXMLBSPREAD','KXMLBRUNLINE','KXMLBRL','KXMLBGAMESPREAD','KXMLBGAMERUNLINE','KXMLBGAMERL','KXMLBMARGIN','KXMLBTOTAL','KXMLBTOTALRUNS','KXMLBGAMETOTAL','KXMLBRUNS','KXMLBGAMERUNS','KXMLBOU','KXMLBSCORE']) {
+      const et = p + suffix;
+      try {
+        const d = await kGetBase(base, `/events/${et}?with_nested_markets=true`);
+        const ms = (d.event && d.event.markets) || d.markets || [];
+        if (ms.length) { console.log(`   FOUND ${et} -> ${ms.length} markets`); ms.slice(0, 6).forEach(m => console.log(dump(m))); }
+      } catch (e) {}
+    }
+  }
+  console.log('\nPaste all of this back.');
 }
 
 async function cmdRun(date) {
