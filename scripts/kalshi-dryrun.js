@@ -40,15 +40,7 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY;
 // Public read base. If a request 404s/refuses, confirm the current base at docs.kalshi.com and
 // set KALSHI_BASE. The discover command will surface a bad base immediately.
 const KALSHI_BASE = process.env.KALSHI_BASE || 'https://api.elections.kalshi.com/trade-api/v2';
-const MLB_SERIES  = 'KXMLBGAME';   // confirmed single-game MLB moneyline series
-// Candidate read bases — discovery tries each until one returns MLB markets, then reports the winner.
-const KALSHI_BASES = [...new Set([
-  KALSHI_BASE,
-  'https://api.elections.kalshi.com/trade-api/v2',
-  'https://api.kalshi.com/trade-api/v2',
-  'https://trading-api.kalshi.com/trade-api/v2',
-  'https://external-api.kalshi.com/trade-api/v2'
-])];
+const MLB_SERIES  = 'KXMLBGAME';   // single-game MLB winner series (run line = KXMLBSPREAD, total = KXMLBTOTAL)
 const FEE_PER_CONTRACT = 0.02;     // Kalshi's $0.02/contract execution fee — used only in paper PnL
 const NOTIONAL = 100;              // contracts a 1u play would represent, for depth/PnL display only
 
@@ -126,73 +118,184 @@ async function kGetBase(base, path) {
   return res.json();
 }
 
-// pull all open single-game MLB markets (paginated)
-async function kalshiMlbMarkets() {
-  const out = [];
-  let cursor = '';
-  do {
-    const q = `?series_ticker=${MLB_SERIES}&status=open&limit=200${cursor ? `&cursor=${cursor}` : ''}`;
-    const data = await kGet(`/markets${q}`);
-    for (const m of (data.markets || [])) out.push(m);
-    cursor = data.cursor || '';
-  } while (cursor);
-  return out;
-}
 
-// ---------- model side: derive the slate's ML plays from mlb_games ----------
+// ---------- model side: load ML / RL / total plays from mlb_games ----------
 function parseVerdictSide(verdict) {
-  // ml_verdict looks like "BET away" / "LEAN home" / "SKIP" — return 'away'|'home'|null
   const m = String(verdict || '').toLowerCase().match(/\b(away|home)\b/);
   return m ? m[1] : null;
 }
-
-async function loadMlPlays(date) {
-  const cols = 'game_date,away_team,home_team,game_pk,ml_verdict,ml_ev,away_ml,home_ml,away_final,home_final,' +
-               'rl_verdict,total_verdict';
-  const games = await supaGet(`mlb_games?select=${cols}&game_date=eq.${date}`);
-  const plays = [];
-  let unsupported = 0;
-  for (const g of games) {
-    // count RL/total recommendations that have no Kalshi market, for coverage reporting
-    if (parseVerdictSide(g.rl_verdict)) unsupported++;
-    if (String(g.total_verdict || '').toLowerCase().match(/over|under/)) unsupported++;
-
-    const side = parseVerdictSide(g.ml_verdict);
-    if (!side) continue;
-    const team   = side === 'away' ? g.away_team : g.home_team;
-    const sbOdds = side === 'away' ? g.away_ml   : g.home_ml;
-    const dec    = americanToDecimal(sbOdds);
-    const ev     = parseFloat(g.ml_ev);
-    // model win prob implied by its EV at the sportsbook price:  EV% = p*dec - 1
-    const modelProb = (dec && !isNaN(ev)) ? Math.max(0, Math.min(1, (ev / 100 + 1) / dec)) : null;
-    plays.push({
-      date: g.game_date, matchup: `${g.away_team} @ ${g.home_team}`, game_pk: g.game_pk,
-      side, team, away_team: g.away_team, home_team: g.home_team,
-      sbOdds, modelProb, sbEv: isNaN(ev) ? null : ev,
-      away_final: g.away_final, home_final: g.home_final
-    });
-  }
-  return { plays, unsupported };
+function num(v) { const n = parseFloat(v); return isNaN(n) ? null : n; }
+function probFromEv(ev, americanOdds) {
+  const dec = americanToDecimal(americanOdds), e = num(ev);
+  return (dec && e != null) ? Math.max(0, Math.min(1, (e / 100 + 1) / dec)) : null;   // EV% = p*dec - 1
 }
 
-// pick the Kalshi market whose YES outcome = the model's team, for the right game
-function matchMarket(play, markets) {
-  // candidate markets mentioning BOTH teams in the game (so we pick the right game), then the
-  // one whose YES side text names the model's team.
-  const cands = markets.filter(m => {
-    const text = `${m.title || ''} ${m.yes_sub_title || ''} ${m.subtitle || ''} ${m.event_ticker || ''}`;
-    return teamsMatch(play.away_team, text) && teamsMatch(play.home_team, text);
-  });
-  for (const m of cands) {
-    const yesText = `${m.yes_sub_title || ''} ${m.title || ''}`;
-    if (teamsMatch(play.team, yesText)) return { market: m, yesIsTeam: true };
+async function loadPlays(date) {
+  const cols = ['game_date','away_team','home_team','game_pk',
+    'ml_verdict','ml_ev','away_ml','home_ml',
+    'rl_verdict','rl_ev','away_rl','home_rl','away_rl_odds','home_rl_odds',
+    'total_verdict','total_ev','total_line','over_odds','under_odds',
+    'away_final','home_final'].join(',');
+  const games = await supaGet(`mlb_games?select=${cols}&game_date=eq.${date}`);
+  const plays = [];
+  for (const g of games) {
+    const base = { date:g.game_date, matchup:`${g.away_team} @ ${g.home_team}`, game_pk:g.game_pk,
+                   away_team:g.away_team, home_team:g.home_team, away_final:g.away_final, home_final:g.home_final };
+    const ml = parseVerdictSide(g.ml_verdict);
+    if (ml) plays.push({ ...base, market:'ML', side:ml, team: ml==='away'?g.away_team:g.home_team,
+      line:null, sbEv:num(g.ml_ev), modelProb:probFromEv(g.ml_ev, ml==='away'?g.away_ml:g.home_ml) });
+    const rl = parseVerdictSide(g.rl_verdict);
+    if (rl) plays.push({ ...base, market:'RL', side:rl, team: rl==='away'?g.away_team:g.home_team,
+      line:num(rl==='away'?g.away_rl:g.home_rl), sbEv:num(g.rl_ev),
+      modelProb:probFromEv(g.rl_ev, rl==='away'?g.away_rl_odds:g.home_rl_odds) });
+    const tv = String(g.total_verdict||'').toLowerCase();
+    const ts = tv.includes('over')?'over':tv.includes('under')?'under':null;
+    if (ts) plays.push({ ...base, market:'total', side:ts, team:null, line:num(g.total_line),
+      sbEv:num(g.total_ev), modelProb:probFromEv(g.total_ev, ts==='over'?g.over_odds:g.under_odds) });
   }
-  // fall back: a market for this game where YES names the OTHER team -> we'd take NO
-  if (cands.length) return { market: cands[0], yesIsTeam: false };
+  return plays;
+}
+
+// ---------- map a play to its exact Kalshi contract ----------
+// Build {eventBase -> [{code, city}]} for the date's games from the winner series.
+async function buildEventMap(date) {
+  const d0 = new Date(date + 'T12:00:00-04:00');
+  const P = new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', year:'2-digit', month:'short', day:'2-digit' }).formatToParts(d0);
+  const token = `${P.find(p=>p.type==='year').value}${P.find(p=>p.type==='month').value.toUpperCase()}${P.find(p=>p.type==='day').value}`;
+  const evs = {};
+  let cursor = '', pages = 0;
+  do {
+    const d = await kGet(`/markets?series_ticker=KXMLBGAME&limit=200${cursor ? `&cursor=${cursor}` : ''}`);
+    for (const m of (d.markets || [])) {
+      const eb = m.event_ticker || '';
+      if (!eb.includes(token)) continue;
+      (evs[eb] = evs[eb] || []).push({ code: (m.ticker || '').split('-').pop(), city: m.yes_sub_title || '' });
+    }
+    cursor = d.cursor || ''; pages++;
+  } while (cursor && pages < 12);
+  return evs;
+}
+function resolveGame(play, evs) {
+  for (const [eb, teams] of Object.entries(evs)) {
+    if (teams.length < 2) continue;
+    const a = teams.find(t => teamsMatch(play.away_team, t.city));
+    const h = teams.find(t => teamsMatch(play.home_team, t.city));
+    if (a && h && a.code !== h.code) return { eventBase: eb, awayCode: a.code, homeCode: h.code };
+  }
   return null;
+}
+// Build the exact market ticker + which side to buy (yes/no).
+function resolveMarket(play, game) {
+  const eb = game.eventBase;
+  const myCode  = play.side === 'away' ? game.awayCode : game.homeCode;
+  const oppCode = play.side === 'away' ? game.homeCode : game.awayCode;
+  if (play.market === 'ML')  return { ticker: `${eb}-${myCode}`, action: 'yes' };
+  if (play.market === 'RL') {
+    const sp = eb.replace('KXMLBGAME', 'KXMLBSPREAD');
+    const N = Math.round(Math.abs(play.line) + 0.5);                 // 1.5 -> 2 ("wins by over 1.5")
+    return (play.line < 0)
+      ? { ticker: `${sp}-${myCode}${N}`,  action: 'yes' }            // favorite -1.5: team wins by over 1.5
+      : { ticker: `${sp}-${oppCode}${N}`, action: 'no'  };           // dog +1.5: NO on favorite covering
+  }
+  if (play.market === 'total') {
+    const tt = eb.replace('KXMLBGAME', 'KXMLBTOTAL');
+    const N = Math.round(play.line + 0.5);                           // 8.5 -> 9 ("Over 8.5")
+    return { ticker: `${tt}-${N}`, action: play.side === 'over' ? 'yes' : 'no' };
+  }
+  return null;
+}
+// Price (in cents) to BUY the side we want, from the live market object.
+async function fetchPrice(ticker, action) {
+  try {
+    const d = await kGet(`/markets/${ticker}`);
+    const m = d.market || d;
+    let cents = action === 'yes' ? num(m.yes_ask) : num(m.no_ask);
+    if (cents == null) {  // derive from the complementary bid if the ask isn't posted
+      if (action === 'yes' && num(m.no_bid)  != null) cents = 100 - num(m.no_bid);
+      if (action === 'no'  && num(m.yes_bid) != null) cents = 100 - num(m.yes_bid);
+    }
+    return { cents, volume: m.volume ?? null };
+  } catch (e) { return { cents: null, error: e.message }; }
+}
+
+// Resolve the whole slate to Kalshi markets + prices + EV-at-Kalshi (shared by test and run).
+async function resolveSlate(date) {
+  const plays = await loadPlays(date);
+  const evs = await buildEventMap(date);
+  const out = [];
+  for (const p of plays) {
+    const game = resolveGame(p, evs);
+    if (!game) { out.push({ ...p, status: 'no Kalshi event' }); continue; }
+    const mk = resolveMarket(p, game);
+    if (!mk) { out.push({ ...p, status: 'no mapping' }); continue; }
+    const pr = await fetchPrice(mk.ticker, mk.action);
+    let kImplied = null, kEv = null;
+    if (pr.cents != null && p.modelProb != null) { kImplied = pr.cents / 100; kEv = (p.modelProb * (100 / pr.cents) - 1) * 100; }
+    out.push({ ...p, kalshi_ticker: mk.ticker, action: mk.action, entry_cents: pr.cents,
+      kalshi_implied: kImplied != null ? +kImplied.toFixed(4) : null,
+      kalshi_ev: kEv != null ? +kEv.toFixed(2) : null, kalshi_volume: pr.volume ?? null,
+      status: pr.cents != null ? 'ok' : (pr.error ? 'price err' : 'no price yet') });
+  }
+  return out;
 }
 
 // ---------- commands ----------
+async function cmdRun(date) {
+  requireSupabase();
+  const res = await resolveSlate(date);
+  const rows = res.filter(r => r.status === 'ok').map(r => ({
+    game_date:r.date, matchup:r.matchup, game_pk:r.game_pk, market:r.market, side:r.side, team:r.team, line:r.line,
+    kalshi_ticker:r.kalshi_ticker, action:r.action, entry_cents:r.entry_cents, kalshi_implied:r.kalshi_implied,
+    model_prob: r.modelProb != null ? +r.modelProb.toFixed(4) : null, sb_ev:r.sbEv, kalshi_ev:r.kalshi_ev,
+    kalshi_volume:r.kalshi_volume, result:'pending', captured_at:new Date().toISOString()
+  }));
+  await supaUpsert('kalshi_paper', rows, 'game_date,matchup,market,side');
+  console.log(`${date}: logged ${rows.length} paper entries (of ${res.length} plays).`);
+  const skip = res.filter(r => r.status !== 'ok');
+  if (skip.length) console.log('not logged:\n  ' + skip.map(r => `${r.market} ${r.matchup} ${r.side} [${r.status}]`).join('\n  '));
+}
+
+// Same resolution as run, but writes NOTHING — just prints, so you can verify mapping + prices.
+async function cmdTest(date) {
+  requireSupabase();                 // reads mlb_games only
+  const res = await resolveSlate(date);
+  const ok = res.filter(r => r.status === 'ok');
+  console.log(`${date}: ${res.length} plays resolved, ${ok.length} priced (DRY READ — nothing written)\n`);
+  for (const r of res) {
+    const px = r.entry_cents != null ? `${Math.round(r.entry_cents)}c` : '--';
+    const ev = r.kalshi_ev != null ? `${r.kalshi_ev > 0 ? '+' : ''}${r.kalshi_ev}%` : '';
+    const desc = `${r.market.padEnd(5)} ${r.matchup}  ${r.side}${r.team ? ' ' + r.team : ''}${r.line != null ? ' ' + r.line : ''}`;
+    console.log(`  ${desc}\n        -> ${r.kalshi_ticker || ''}  ${r.action || ''} ${px} ${ev}  [${r.status}]`);
+  }
+  console.log('\nDry read only — nothing logged. If the tickers and prices look right, say so and I\'ll switch on logging.');
+}
+
+async function cmdSettle(date) {
+  requireSupabase();
+  const rows = await supaGet(`kalshi_paper?select=*&game_date=eq.${date}&result=eq.pending`);
+  if (!rows.length) { console.log(`Nothing pending to settle for ${date}.`); return; }
+  const games = await supaGet(`mlb_games?select=away_team,home_team,away_final,home_final&game_date=eq.${date}`);
+  const fin = {};
+  for (const g of games) if (g.away_final != null && g.home_final != null)
+    fin[`${g.away_team} @ ${g.home_team}`] = { a: g.away_final, h: g.home_final };
+
+  let done = 0;
+  for (const r of rows) {
+    const f = fin[r.matchup]; if (!f) continue;            // not final yet
+    let won;
+    if (r.market === 'ML')      won = ((f.a > f.h ? 'away' : 'home') === r.side);
+    else if (r.market === 'RL') won = (((r.side === 'away' ? f.a - f.h : f.h - f.a) + Number(r.line)) > 0);
+    else                        won = (r.side === 'over' ? (f.a + f.h > Number(r.line)) : (f.a + f.h < Number(r.line)));
+    const c = r.entry_cents / 100;
+    const pl = (won ? (1 - c) : -c) - FEE_PER_CONTRACT;
+    await supaPatch('kalshi_paper',
+      `game_date=eq.${date}&matchup=eq.${encodeURIComponent(r.matchup)}&market=eq.${r.market}&side=eq.${r.side}`,
+      { result: won ? 'win' : 'loss', paper_pl_per_contract: +pl.toFixed(4), settled_at: new Date().toISOString() });
+    done++;
+  }
+  console.log(`settled ${done} paper entries for ${date}.`);
+}
+
 async function cmdDiscover(arg) {
   const base = 'https://api.elections.kalshi.com/trade-api/v2';   // confirmed working
   console.log('Kalshi MLB line discovery — read-only\n');
@@ -249,78 +352,15 @@ async function cmdDiscover(arg) {
   console.log('\nPaste all of this back.');
 }
 
-async function cmdRun(date) {
-  requireSupabase();
-  const { plays, unsupported } = await loadMlPlays(date);
-  if (!plays.length) { console.log(`No ML plays for ${date}.`); return; }
-  const markets = await kalshiMlbMarkets();
-  console.log(`${date}: ${plays.length} ML plays | ${markets.length} open Kalshi MLB markets | ${unsupported} RL/Total plays unsupported on Kalshi`);
-
-  const rows = [];
-  let matched = 0, unmatched = [];
-  for (const p of plays) {
-    const hit = matchMarket(p, markets);
-    if (!hit) { unmatched.push(p.matchup + ' (' + p.team + ')'); continue; }
-    const m = hit.market;
-    // price to BACK the model's team:
-    //   YES is the team  -> buy YES at yes_ask
-    //   YES is the other -> back our team = buy NO = (100 - yes_bid_of_other)... use no_ask if present
-    let entryCents = hit.yesIsTeam ? Number(m.yes_ask) : Number(m.no_ask != null ? m.no_ask : (100 - m.yes_bid));
-    if (!entryCents || entryCents <= 0 || entryCents >= 100) { unmatched.push(p.matchup + ' (no price)'); continue; }
-    const kImplied = entryCents / 100;
-    const kDec = 100 / entryCents;
-    const kEv = (p.modelProb != null) ? (p.modelProb * kDec - 1) * 100 : null;
-    rows.push({
-      game_date: p.date, matchup: p.matchup, game_pk: p.game_pk, market: 'ML',
-      side: p.side, team: p.team, kalshi_ticker: m.ticker, kalshi_yes_is_team: hit.yesIsTeam,
-      entry_cents: entryCents, kalshi_implied: +kImplied.toFixed(4),
-      model_prob: p.modelProb != null ? +p.modelProb.toFixed(4) : null,
-      sb_ev: p.sbEv, kalshi_ev: kEv != null ? +kEv.toFixed(2) : null,
-      kalshi_volume: m.volume ?? null, result: 'pending', captured_at: new Date().toISOString()
-    });
-    matched++;
-  }
-  await supaUpsert('kalshi_paper', rows, 'game_date,matchup,side');
-  console.log(`logged ${matched} paper entries; unmatched: ${unmatched.length}`);
-  if (unmatched.length) console.log('  ' + unmatched.join('\n  '));
-  // quick read of where the model and Kalshi disagree most
-  rows.sort((a,b)=>(b.kalshi_ev??-99)-(a.kalshi_ev??-99));
-  console.log('\ntop model-vs-Kalshi edges (EV at Kalshi price):');
-  for (const r of rows.slice(0,8)) console.log(`  ${r.matchup}  ${r.team}  Kalshi ${Math.round(r.entry_cents)}c (${(r.kalshi_implied*100).toFixed(0)}%)  model ${(r.model_prob*100).toFixed(0)}%  EV ${r.kalshi_ev}%`);
-}
-
-async function cmdSettle(date) {
-  requireSupabase();
-  const rows = await supaGet(`kalshi_paper?select=*&game_date=eq.${date}&result=eq.pending`);
-  if (!rows.length) { console.log(`Nothing pending to settle for ${date}.`); return; }
-  const games = await supaGet(`mlb_games?select=away_team,home_team,away_final,home_final&game_date=eq.${date}`);
-  const fin = {};
-  for (const g of games) if (g.away_final != null && g.home_final != null)
-    fin[`${g.away_team} @ ${g.home_team}`] = (g.away_final > g.home_final) ? 'away' : 'home';
-
-  let done = 0;
-  for (const r of rows) {
-    const winSide = fin[r.matchup];
-    if (!winSide) continue;                 // game not final yet
-    const won = (winSide === r.side);
-    // paper PnL per contract at the entry price, minus the per-contract fee
-    const c = r.entry_cents / 100;
-    const pl = (won ? (1 - c) : -c) - FEE_PER_CONTRACT;
-    await supaPatch('kalshi_paper', `game_date=eq.${date}&matchup=eq.${encodeURIComponent(r.matchup)}&side=eq.${r.side}`,
-      { result: won ? 'win' : 'loss', paper_pl_per_contract: +pl.toFixed(4), settled_at: new Date().toISOString() });
-    done++;
-  }
-  console.log(`settled ${done} paper entries for ${date}.`);
-}
-
 // ---------- entry ----------
 (async () => {
-  const cmd  = (process.argv[2] || 'run').toLowerCase();
+  const cmd  = (process.argv[2] || 'test').toLowerCase();
   const date = process.argv[3] || etDateStr();
   try {
-    if (cmd === 'discover')      await cmdDiscover(date);
-    else if (cmd === 'run')      await cmdRun(date);
-    else if (cmd === 'settle')   await cmdSettle(date);
+    if (cmd === 'discover')    await cmdDiscover(date);
+    else if (cmd === 'test')   await cmdTest(date);
+    else if (cmd === 'run')    await cmdRun(date);
+    else if (cmd === 'settle') await cmdSettle(date);
     else { console.error(`unknown command "${cmd}"`); process.exit(1); }
   } catch (e) {
     console.error('error:', e.message);
