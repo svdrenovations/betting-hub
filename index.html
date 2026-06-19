@@ -895,6 +895,7 @@ let sbGames = null;
 let sbExcluded = null; // Set of removed-play keys: "date|matchup|mk|side|source" (soft-deleted via mlb_excluded_plays)
 let sbFilter = { source:'all', result:[], market:[], ev:[], from:'', to:'' };
 function sbKey(date,matchup,mk,side,source){ return `${date}|${matchup}|${mk}|${side}|${source}`; }
+const SIM_VALID_FROM = '2026-06-18'; // HFA fix went live this slate; earlier sim verdicts ran without home-field advantage and were away-biased, so the Sim record starts here. The model record is unaffected.
 
 function sbParsePlay(verdict){
   if(!verdict) return null;
@@ -957,8 +958,14 @@ function sbBuildPlays(games){
   const neg = e => (e!=null && !isNaN(e) && e < 0);
   for(const g of games){
     for(const [mk,lbl] of SB_MKTS){
-      const mp=sbParsePlay(g[mk+'_verdict']), sp=sbParsePlay(g['sim_'+mk+'_verdict']);
-      const mev=parseFloat(g[mk+'_ev']), sev=parseFloat(g['sim_'+mk+'_ev']);
+      const mp=sbParsePlay(g[mk+'_verdict']);
+      const mev=parseFloat(g[mk+'_ev']);
+      // Sim ran without home-field advantage before SIM_VALID_FROM, so its pre-fix verdicts were
+      // systematically away-biased. Treat the sim as absent for those games: pure-sim plays drop
+      // out, and any 'agreed' consensus falls through to a plain model play below. Model untouched.
+      const simValid = g.game_date >= SIM_VALID_FROM;
+      const sp  = simValid ? sbParsePlay(g['sim_'+mk+'_verdict']) : null;
+      const sev = simValid ? parseFloat(g['sim_'+mk+'_ev']) : NaN;
       if(mp && sp && mp.side===sp.side){
         if(!neg(mev)) out.push(mkRow(g,mk,lbl,'agreed',mp.side,mp.strength,mev,false)); // consensus counts once
       } else {
