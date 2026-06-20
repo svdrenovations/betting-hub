@@ -467,7 +467,8 @@ function evFromCents(p, cents) {
   return +(( p * (1 - c) / c - (1 - p)) * 100).toFixed(1);
 }
 const kalshiCache = {};
-const kalshiAccepted = new Set(); // tracks 'gameId-market' pairs that have been accepted
+const kalshiAccepted = new Set(); // tracks 'gameId-market' pairs accepted this session
+const kalshiAcceptedMatchups = new Set(); // tracks 'matchup|market' from kalshi_paper DB
 // Day-level cache: all markets for a given date, fetched once and shared across all games
 const kalshiDayCache = {};
 
@@ -632,34 +633,30 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
           const data = await res.json();
           const mkts = data.markets || [];
           if (!mkts.length) continue;
-          // Match by yes_sub_title e.g. "Over 8.5" or by ticker suffix
-          let bestDiff = 99, bestLine = null, bestMkt = null;
+          // All Kalshi total markets are OVER only (yes=over, no=under)
+          // Ticker suffix is integer run count: -9 = Over 8.5, -10 = Over 9.5
+          // For OVER plays: pick lowest line >= our DK line (better to cover lower)
+          // For UNDER plays: pick highest line <= our DK line (better to cover higher)
+          // On exact miss: pick closest, tie-break toward safer line
+          let bestMkt = null, bestLine = null, bestDiff = 99;
+          const isOver = v.includes('OVER');
           for (const mkt of mkts) {
             const sub = (mkt.yes_sub_title || '').toLowerCase();
-            const lineMatch = sub.match(/(over|under)\s+([\d.]+)/);
-            let kalshiLine = null;
-            if (lineMatch) {
-              kalshiLine = parseFloat(lineMatch[2]);
-            } else {
-              // Fallback: parse from ticker suffix
-              const numMatch = (mkt.ticker||'').match(/-(\d+)$/);
-              if (numMatch) {
-                const raw = parseInt(numMatch[1]);
-                kalshiLine = raw >= 40 ? raw/10 : raw; // 85→8.5, 13→13
-              }
-            }
+            const lineMatch = sub.match(/(over|under)[\s\w]+(\d+\.?\d*)/);
+            if (!lineMatch) continue;
+            const kalshiLine = parseFloat(lineMatch[2]);
             if (!kalshiLine || kalshiLine < 4 || kalshiLine > 30) continue;
             const diff = Math.abs(kalshiLine - totLine);
-            if (diff < bestDiff) { bestDiff=diff; bestLine=kalshiLine; bestMkt=mkt; }
+            // On tie: prefer lower line for OVER (easier), higher line for UNDER (easier)
+            const betterTie = bestLine != null && diff === bestDiff && (isOver ? kalshiLine < bestLine : kalshiLine > bestLine);
+            if (diff < bestDiff || betterTie) {
+              bestDiff = diff; bestLine = kalshiLine; bestMkt = mkt;
+            }
           }
           if (bestMkt) {
-            const yesIsOver = (bestMkt.yes_sub_title||'').toLowerCase().includes('over');
-            results.total_cents_yes = yesIsOver
-              ? parseFloat(bestMkt.yes_ask_dollars || bestMkt.last_price_dollars || 0) * 100
-              : parseFloat(bestMkt.no_ask_dollars || 0) * 100;
-            results.total_cents_no = yesIsOver
-              ? parseFloat(bestMkt.no_ask_dollars || 0) * 100
-              : parseFloat(bestMkt.yes_ask_dollars || bestMkt.last_price_dollars || 0) * 100;
+            // yes = over, no = under for all Kalshi total markets
+            results.total_cents_yes = parseFloat(bestMkt.yes_ask_dollars || bestMkt.last_price_dollars || 0) * 100;
+            results.total_cents_no  = parseFloat(bestMkt.no_ask_dollars || 0) * 100;
             results.total_ticker = bestMkt.ticker;
             results.total_line = bestLine;
             break;
@@ -784,26 +781,32 @@ function kalshiPanelHTML(g, bets) {
     maxC: kalshiMaxCents(prob(m))
   })));
 
-  return `<div class="kalshi-panel">
-    <div class="kalshi-header" onclick="toggleKalshiPanel('${gid}',this)">
-      <div class="kalshi-title"><span class="k-dot"></span>Kalshi comparison</div>
-      <span style="display:flex;align-items:center;gap:8px"><span style="font-size:10px;font-family:DM Mono,monospace;color:var(--text)" id="kts-${gid}">loading…</span><span style="font-size:11px;color:var(--text)">▾</span></span>
-    </div>
-    <div class="kalshi-body" id="kbody-${gid}">
-    ${rows}
-    </div>
-  </div>
-  <div id="kdata-${gid}" 
-    data-gid="${gid}"
-    data-away="${g.away_team.replace(/"/g,'&quot;')}"
-    data-home="${g.home_team.replace(/"/g,'&quot;')}"
-    data-date="${g.game_date}"
-    data-ct="${(g.commence_time||'').replace(/"/g,'&quot;')}"
-    data-total="${g.total||''}"
-    data-sits="${(g.situations||[]).join(',').replace(/"/g,'&quot;')}"
-    data-matchup="${(g.away_team+' @ '+g.home_team).replace(/"/g,'&quot;')}"
-    data-plays="${playsJson.replace(/"/g,'&quot;')}"
-  ></div>`
+  // Don't show Kalshi panel for games that have already started
+  const gameStarted = g.commence_time && new Date(g.commence_time) < new Date();
+  const _hClick = gameStarted ? '' : ('toggleKalshiPanel(\'' + gid + '\',this)');
+  const _dot = gameStarted ? 'var(--dim)' : 'var(--amber)';
+  const _ts = gameStarted ? 'closed' : 'loading…';
+  const _arr = gameStarted ? '' : '<span style="font-size:11px;color:var(--text)">▾</span>';
+  const _pStyle = gameStarted ? 'opacity:.5;pointer-events:none' : '';
+  const _hLabel = gameStarted ? 'Kalshi · in progress' : 'Kalshi comparison';
+  return '<div class="kalshi-panel" style="' + _pStyle + '">'
+    + '<div class="kalshi-header" onclick="' + _hClick + '">'
+    + '<div class="kalshi-title"><span class="k-dot" style="background:' + _dot + '"></span>' + _hLabel + '</div>'
+    + '<span style="display:flex;align-items:center;gap:8px"><span style="font-size:10px;font-family:DM Mono,monospace;color:var(--text)" id="kts-' + gid + '">' + _ts + '</span>' + _arr + '</span>'
+    + '</div>'
+    + '<div class="kalshi-body" id="kbody-' + gid + '">' + rows + '</div>'
+    + '<div id="kdata-' + gid + '"'
+    + ' data-gid="' + gid + '"'
+    + ' data-away="' + g.away_team.replace(/"/g,'&quot;') + '"'
+    + ' data-home="' + g.home_team.replace(/"/g,'&quot;') + '"'
+    + ' data-date="' + g.game_date + '"'
+    + ' data-ct="' + (g.commence_time||'').replace(/"/g,'&quot;') + '"'
+    + ' data-total="' + (g.total||'') + '"'
+    + ' data-sits="' + (g.situations||[]).join(',').replace(/"/g,'&quot;') + '"'
+    + ' data-matchup="' + (g.away_team+' @ '+g.home_team).replace(/"/g,'&quot;') + '"'
+    + ' data-plays="' + playsJson.replace(/"/g,'&quot;') + '"'
+    + ' style="display:none"></div>'
+    + '</div>';
 }
 
 function toggleKalshiPanel(gid, header) {
@@ -860,6 +863,7 @@ async function acceptKalshi(gameId, market, label, verdict, cents, kalshiEv, mod
     });
     if (res.ok) {
       kalshiAccepted.add(gameId + '-' + market);
+      kalshiAcceptedMatchups.add((matchup + '|' + market).toLowerCase());
       const btn = document.querySelector(`#kact-${gameId}-${market} button`);
       if (btn) { btn.textContent = 'Accepted ✓'; btn.style.borderColor='var(--green-dim)'; btn.style.background='var(--green-bg)'; btn.style.color='var(--green)'; btn.disabled=true; }
       // Refresh kalshi page if visible
@@ -1577,6 +1581,7 @@ function renderKalshi(){
     const sits=(b.situations||'').split(',').filter(Boolean).map(s=>`<span style="font-size:10px;padding:1px 5px;border-radius:3px;background:var(--s2);color:var(--text);margin-right:2px">${s.trim()}</span>`).join('');
     const btns=['win','loss','push','pending'].map(r=>`<button onclick="setKalshiResult(${b.id},'${r}')" style="padding:3px 7px;font-size:11px;border-radius:4px;border:1px solid var(--border);background:${b.result===r?(r==='win'?'var(--green-bg)':r==='loss'?'var(--red-bg)':r==='push'?'var(--blue-bg)':'var(--amber-bg)'):'none'};color:${b.result===r?(r==='win'?'var(--green)':r==='loss'?'var(--red)':r==='push'?'var(--blue)':'var(--amber)'):'var(--text)'};cursor:pointer;margin-right:2px;font-family:DM Mono,monospace">${r}</button>`).join('');
     return`<tr>
+      <td style="white-space:nowrap"><button onclick="deleteKalshiBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--text);font-size:17px;padding:2px 4px">×</button></td>
       <td class="mono" style="font-size:11px">${b.game_date}</td>
       <td style="font-size:12px">${b.matchup||'—'}</td>
       <td style="font-size:11px;font-family:DM Mono,monospace">${b.market||'—'} · ${b.side||'—'}</td>
@@ -1590,11 +1595,17 @@ function renderKalshi(){
       <td class="mono" style="color:${b.paper_pl_per_contract>0?'var(--green)':b.paper_pl_per_contract<0?'var(--red)':'var(--text)'}">${b.paper_pl_per_contract!=null?(b.paper_pl_per_contract>0?'+':'')+parseFloat(b.paper_pl_per_contract).toFixed(2):'—'}</td>
     </tr>`;
   }).join('');
-  el.innerHTML=`<div class="scroll-mirror" id="tmirror"><div class="scroll-mirror-inner" id="tmi"></div></div><div class="t-table-wrap" id="twrap"><table class="t-table"><thead><tr>
-    <th>Date</th><th>Matchup</th><th>Market</th><th>Situation</th>
+  el.innerHTML=`<div class="scroll-mirror" id="kmirror"><div class="scroll-mirror-inner" id="kmi"></div></div><div class="t-table-wrap" id="kwrap"><table class="t-table"><thead><tr>
+    <th style="width:32px"></th><th>Date</th><th>Matchup</th><th>Market</th><th>Situation</th>
     <th>Entry</th><th>Model %</th><th>Kalshi EV</th><th>SB EV</th>
     <th>Result</th><th>Status</th><th>P&L/contract</th>
   </tr></thead><tbody>${rows}</tbody></table></div>`;
+  setTimeout(()=>{
+    const tw=document.getElementById('kwrap');
+    const tm=document.getElementById('kmirror');
+    const ti=document.getElementById('kmi');
+    if(tw&&tm&&ti){ti.style.width=tw.scrollWidth+'px';tm.addEventListener('scroll',()=>{tw.scrollLeft=tm.scrollLeft;});tw.addEventListener('scroll',()=>{tm.scrollLeft=tw.scrollLeft;});}
+  },50);
 }
 
 async function setKalshiResult(id,result){
@@ -1602,6 +1613,16 @@ async function setKalshiResult(id,result){
     const res=await fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper?id=eq.${id}`,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`,'Prefer':'return=minimal'},body:JSON.stringify({result,settled_at:new Date().toISOString()})});
     if(res.ok){const b=kalshiBets.find(x=>x.id===id);if(b)b.result=result;renderKalshi();}
   }catch(e){console.error('setKalshiResult:',e);}
+}
+
+async function deleteKalshiBet(id){
+  const b=kalshiBets.find(x=>x.id===id);if(!b)return;
+  if(!confirm('Delete this Kalshi bet?\n\n'+b.matchup+' — '+b.market+'\n\nThis cannot be undone.'))return;
+  try{
+    const res=await fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper?id=eq.${id}`,{method:'DELETE',headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}});
+    if(res.ok){kalshiBets=kalshiBets.filter(x=>x.id!==id);renderKalshi();}
+    else alert('Could not delete: '+res.status);
+  }catch(e){console.error('deleteKalshiBet:',e);}
 }
 
 function exportKalshiCSV(){
@@ -1968,7 +1989,8 @@ function triggerAllKalshiFetches() {
         if (kequiv) kequiv.textContent = cents != null ? '≈ ' + equiv + ' equiv' : '—';
         const kact = document.getElementById('kact-' + gid + '-' + m.key);
         if (kact) {
-          if (kalshiAccepted.has(gid + '-' + m.key)) {
+          const matchupKey = (matchup + '|' + m.key).toLowerCase();
+          if (kalshiAccepted.has(gid + '-' + m.key) || kalshiAcceptedMatchups.has(matchupKey)) {
             kact.innerHTML = '<button class="k-accept" disabled style="border-color:var(--green-dim);background:var(--green-bg);color:var(--green);opacity:.7">Accepted ✓</button>';
           } else if (cents == null || !aboveGate) {
             kact.innerHTML = '<div class="no-edge-label">' + (cents == null ? 'no market' : 'no Kalshi edge') + '</div>';
@@ -2009,9 +2031,10 @@ function triggerAllKalshiFetches() {
 // ── INIT ──────────────────────────────────────────────────────────────────────
 document.getElementById('date-display').textContent=fmtDate(currentDate);
 // Pre-populate kalshiAccepted from Supabase so accepted plays stay grayed out across reloads
-fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper?select=game_pk,market&result=eq.pending`,{headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}})
+fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper?select=matchup,market,game_date`,{headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}})
   .then(r=>r.ok?r.json():[]).then(rows=>{
-    rows.forEach(r=>{if(r.game_pk&&r.market)kalshiAccepted.add(r.game_pk+'-'+r.market.toLowerCase());});
+    // Store as matchup+market keys; matched against gid in triggerAllKalshiFetches
+    rows.forEach(r=>{if(r.matchup&&r.market)kalshiAcceptedMatchups.add((r.matchup+'|'+r.market).toLowerCase());});
   }).catch(()=>{});
 loadBetsFromSupabase().then(()=>{updateNavRecord();renderGames();});
 if(new URLSearchParams(location.search).get('game')){openDeepLinkGame();}else{loadGames();}
