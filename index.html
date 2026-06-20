@@ -467,6 +467,108 @@ function evFromCents(p, cents) {
   return +(( p * (1 - c) / c - (1 - p)) * 100).toFixed(1);
 }
 const kalshiCache = {};
+const orderbookCache = {};
+
+async function fetchOrderbook(ticker) {
+  if (!ticker) return null;
+  if (orderbookCache[ticker] && Date.now() - orderbookCache[ticker].ts < 60000) return orderbookCache[ticker].data;
+  try {
+    const res = await fetch(`${KALSHI_PROXY}?path=/markets/${encodeURIComponent(ticker)}/orderbook`, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const ob = data.orderbook_fp || {};
+    // yes_dollars: [[cents, size_dollars], ...] sorted best to worst
+    // For yes (over/away): lower cents = better price for buyer
+    // Aggregate cumulative size at each price level
+    const yesLevels = (ob.yes_dollars || []).sort((a,b) => a[0]-b[0]); // ascending = best ask first
+    let cumSize = 0;
+    const depths = [];
+    for (const [price, size] of yesLevels) {
+      cumSize += size;
+      depths.push({ cents: price, cumSize: Math.round(cumSize) });
+    }
+    const result = { depths, topSize: depths[0]?.cumSize || 0 };
+    orderbookCache[ticker] = { ts: Date.now(), data: result };
+    return result;
+  } catch(e) { return null; }
+}
+
+function fmtSize(dollars) {
+  if (!dollars) return '—';
+  if (dollars >= 1000000) return '$' + (dollars/1000000).toFixed(1) + 'M';
+  if (dollars >= 1000) return '$' + Math.round(dollars/1000) + 'k';
+  return '$' + dollars;
+}
+
+async function loadDepth(gid, marketKey) {
+  const btn = document.getElementById('kdepth-btn-' + gid + '-' + marketKey);
+  const depthDiv = document.getElementById('kdepth-' + gid + '-' + marketKey);
+  const tableDiv = document.getElementById('kdepth-table-' + gid + '-' + marketKey);
+  if (!btn || !depthDiv || !tableDiv) return;
+
+  // Toggle
+  if (depthDiv.style.display !== 'none') {
+    depthDiv.style.display = 'none';
+    btn.textContent = 'show order book depth ▾';
+    return;
+  }
+
+  btn.textContent = 'loading…';
+  btn.disabled = true;
+
+  // Get ticker from cache
+  const cached = kalshiCache[gid];
+  if (!cached) { btn.textContent = 'no data'; return; }
+  const kd = cached.data;
+  let ticker = null;
+  // We need to know which play this is — find from the kdata div
+  const kdataEl = document.getElementById('kdata-' + gid);
+  if (!kdataEl) { btn.textContent = 'no data'; return; }
+  let plays = [];
+  try { plays = JSON.parse(kdataEl.dataset.plays || '[]'); } catch(e) {}
+  const m = plays.find(p => p.key === marketKey);
+  if (!m) { btn.textContent = 'no data'; return; }
+  const v = (m.verdict || '').toUpperCase();
+  if (marketKey === 'ml') ticker = v.includes('AWAY') ? kd.awayML_ticker : kd.homeML_ticker;
+  if (marketKey === 'rl') ticker = v.includes('AWAY') ? kd.rl_ticker_away : kd.rl_ticker_home;
+  if (marketKey === 'total') ticker = kd.total_ticker;
+
+  if (!ticker) { btn.textContent = 'no ticker'; btn.disabled = false; return; }
+
+  const ob = await fetchOrderbook(ticker);
+  btn.disabled = false;
+
+  if (!ob || !ob.depths.length) {
+    btn.textContent = 'no depth data';
+    return;
+  }
+
+  // Build depth table
+  // yes_dollars sorted ascending = best prices first (lowest cents = best for buyer)
+  let cumSize = 0;
+  const rows = ob.depths.slice(0, 10).map(d => {
+    const equiv = centsToAmerican(d.cents);
+    const rowColor = d.cents <= (ob.depths[0]?.cents || 99) ? 'var(--green)' : 'var(--text)';
+    return '<tr>'
+      + '<td style="padding:3px 8px;font-family:DM Mono,monospace;font-size:11px;color:' + rowColor + '">' + d.cents + '¢</td>'
+      + '<td style="padding:3px 8px;font-family:DM Mono,monospace;font-size:11px;color:' + rowColor + '">' + equiv + '</td>'
+      + '<td style="padding:3px 8px;font-family:DM Mono,monospace;font-size:11px;color:var(--green)">' + fmtSize(d.cumSize) + ' cumul.</td>'
+      + '</tr>';
+  }).join('');
+
+  tableDiv.innerHTML = '<table style="width:100%;border-collapse:collapse;background:var(--s1);border-radius:4px;overflow:hidden">'
+    + '<thead><tr style="border-bottom:1px solid var(--border)">'
+    + '<th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left">Price</th>'
+    + '<th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left">Equiv</th>'
+    + '<th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left">Avail.</th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table>'
+    + '<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);margin-top:6px">Best price: ' + ob.depths[0].cents + '¢ · Total available to best price: ' + fmtSize(ob.depths[0].cumSize) + '</div>';
+
+  depthDiv.style.display = 'block';
+  btn.textContent = 'hide order book ▲';
+}
 const kalshiAccepted = new Set(); // tracks 'gameId-market' pairs accepted this session
 const kalshiAcceptedMatchups = new Set(); // tracks 'matchup|market' from kalshi_paper DB
 // Day-level cache: all markets for a given date, fetched once and shared across all games
@@ -659,6 +761,7 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
             results.total_cents_no  = parseFloat(bestMkt.no_ask_dollars || 0) * 100;
             results.total_ticker = bestMkt.ticker;
             results.total_line = bestLine;
+            results.total_size = Math.round(parseFloat(bestMkt.yes_ask_size_fp || 0));
             break;
           }
         } catch(e) {}
@@ -768,6 +871,11 @@ function kalshiPanelHTML(g, bets) {
             </div>
           </div>
           <div id="kjnote-${gid}-${m.key}" class="juice-note">Loading Kalshi prices…</div>
+          <div id="kdepth-${gid}-${m.key}" style="margin-top:10px;display:none">
+            <div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Order book depth</div>
+            <div id="kdepth-table-${gid}-${m.key}"></div>
+          </div>
+          <button id="kdepth-btn-${gid}-${m.key}" onclick="loadDepth('${gid}','${m.key}')" style="margin-top:8px;width:100%;padding:5px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);background:var(--s2);border:1px solid var(--border);border-radius:4px;cursor:pointer">show order book depth ▾</button>
         </div>
       </div>
     </div>`;
@@ -1959,6 +2067,11 @@ function triggerAllKalshiFetches() {
         if (m.key === 'ml') cents = v.includes('AWAY') ? kd.awayML_cents : kd.homeML_cents;
         if (m.key === 'rl') cents = v.includes('AWAY') ? kd.awayRL_cents : kd.homeRL_cents;
         if (m.key === 'total') cents = v.includes('OVER') ? kd.total_cents_yes : kd.total_cents_no;
+        // Size at ask (contracts available at current price)
+        let askSize = 0;
+        if (m.key === 'ml') askSize = v.includes('AWAY') ? (kd.awayML_size||0) : (kd.homeML_size||0);
+        if (m.key === 'rl') askSize = v.includes('AWAY') ? (kd.awayRL_size||0) : (kd.homeRL_size||0);
+        if (m.key === 'total') askSize = kd.total_size || 0;
         const kev = cents != null ? evFromCents(m.p, cents) : null;
         const equiv = cents != null ? centsToAmerican(cents) : '—';
         const dkEv = parseFloat(m.ev);
@@ -1980,6 +2093,14 @@ function triggerAllKalshiFetches() {
           else if (worse) { pill.textContent = 'Kalshi is worse −' + Math.abs(delta) + '%'; pill.className = 'vs-pill vs-worse'; }
           else { pill.textContent = 'Same as DK'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--s2);color:var(--text);border:1px solid var(--border)'; }
         }
+          // Update size display
+          const kmaxEl = document.getElementById('kmax-' + gid + '-' + m.key);
+          if (kmaxEl && cents != null) {
+            const sizeStr = askSize > 0 ? fmtSize(askSize) + ' available' : '';
+            const maxC = m.maxC;
+            const maxStr = maxC ? maxC + '¢ (≈' + centsToAmerican(maxC) + ')' : '—';
+            kmaxEl.innerHTML = (sizeStr ? '<span style="color:var(--green);font-weight:500">' + sizeStr + '</span><br>' : '') + 'max: ' + maxStr;
+          }
         const kprice = document.getElementById('kprice-' + gid + '-' + m.key);
         const kevEl = document.getElementById('kev-' + gid + '-' + m.key);
         const kequiv = document.getElementById('kequiv-' + gid + '-' + m.key);
