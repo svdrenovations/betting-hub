@@ -498,7 +498,7 @@ async function fetchAllKalshiML(gameDate) {
   const dd = String(d.getDate()).padStart(2,'0');
   const prefix = `KXMLBGAME-${yy}${mon}${dd}`;
   // Search by event_ticker prefix — returns all games on this date
-  const path = `/markets%3Fseries_ticker%3DKXMLBGAME%26limit%3D200`;
+  const path = `/markets%3Fseries_ticker%3DKXMLBGAME%26limit%3D500`;
   try {
     const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
       headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
@@ -520,7 +520,7 @@ async function fetchAllKalshiRL(gameDate) {
   const mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
   const dd = String(d.getDate()).padStart(2,'0');
   const prefix = `KXMLBSPREAD-${yy}${mon}${dd}`;
-  const path = `/markets%3Fseries_ticker%3DKXMLBSPREAD%26limit%3D200`;
+  const path = `/markets%3Fseries_ticker%3DKXMLBSPREAD%26limit%3D500`;
   try {
     const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
       headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
