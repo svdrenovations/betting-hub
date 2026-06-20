@@ -121,7 +121,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .modal-actions{display:flex;gap:8px;margin-top:1rem}
 .btn-save{flex:1;padding:10px;font-size:13px;font-weight:500;background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif}
 .btn-cancel{padding:10px 16px;font-size:13px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--text);cursor:pointer;font-family:'DM Sans',sans-serif}
-.t-table-wrap{overflow-x:auto}.t-table-wrap table{min-width:900px}
+.t-table-wrap{}.t-table-wrap table{min-width:900px}
 .t-table{width:100%;border-collapse:collapse;min-width:700px}
 .t-table th{font-family:DM Mono,monospace;font-size:10px;color:var(--text);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);text-transform:uppercase;white-space:nowrap;cursor:pointer;user-select:none}
 .t-table td{font-size:12px;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text)}
@@ -1477,7 +1477,7 @@ function renderKalshi(){
       <td class="mono" style="color:${b.paper_pl_per_contract>0?'var(--green)':b.paper_pl_per_contract<0?'var(--red)':'var(--text)'}">${b.paper_pl_per_contract!=null?(b.paper_pl_per_contract>0?'+':'')+parseFloat(b.paper_pl_per_contract).toFixed(2):'—'}</td>
     </tr>`;
   }).join('');
-  el.innerHTML=`<div style="overflow-x:auto;padding-bottom:4px"><table class="t-table"><thead><tr>
+  el.innerHTML=`<div class="scroll-mirror" id="tmirror"><div class="scroll-mirror-inner" id="tmi"></div></div><div class="t-table-wrap" id="twrap"><table class="t-table"><thead><tr>
     <th>Date</th><th>Matchup</th><th>Market</th><th>Situation</th>
     <th>Entry</th><th>Model %</th><th>Kalshi EV</th><th>SB EV</th>
     <th>Result</th><th>Status</th><th>P&L/contract</th>
@@ -1603,7 +1603,7 @@ function renderTracker(){
   const wins=filtered.filter(b=>b.result==='win').length;
   document.getElementById('tracker-subtitle').textContent=settled.length?`${wins}-${settled.length-wins} record (${Math.round(wins/settled.length*100)}%) · ${filtered.filter(b=>b.result==='pending').length} pending`:`${filtered.length} bets${anyFilterActive()?' match':' logged'}`;
   if(!filtered.length){el.innerHTML=`<div class="empty-state"><div class="empty-title">No bets ${anyFilterActive()?'match the filter':'yet'}</div></div>`;return;}
-  el.innerHTML=`<div style="overflow-x:auto;padding-bottom:4px"><table class="t-table"><thead><tr>${trackerHeadHTML()}</tr></thead><tbody>${sortBets(filtered).map(b=>{
+  el.innerHTML=`<div class="scroll-mirror" id="tmirror"><div class="scroll-mirror-inner" id="tmi"></div></div><div class="t-table-wrap" id="twrap"><table class="t-table"><thead><tr>${trackerHeadHTML()}</tr></thead><tbody>${sortBets(filtered).map(b=>{
     const btns=['win','loss','push','pending'].map(r=>`<button onclick="setResult(${b.id},'${r}')" class="${r}-btn ${b.result===r?'on':''}">${r}</button>`).join('');
     const ev=b.ev!=null?`<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>`:'—';
     return`<tr>
@@ -1624,7 +1624,17 @@ function renderTracker(){
       <td style="font-size:11px">${b.awayScore!==undefined&&b.homeScore!==undefined&&b.result!=='pending'?b.awayScore+'-'+b.homeScore:'—'}</td>
       <td class="mono" style="font-size:11px">${(()=>{if(b.clv!=null){const closed=`${b.closingOdds||'?'}${b.closingLine?' @ '+b.closingLine:''}`;return`<span style="color:${parseFloat(b.clv)>=0?'var(--green)':'var(--red)'}">${parseFloat(b.clv)>=0?'+':''}${b.clv}%</span> <span style="font-size:10px">closed ${closed}</span>`;}if(!b.book||!String(b.book).trim())return`<span style="color:var(--amber);font-size:10px">+ add book</span>`;return`<span style="font-size:10px">pending</span>`;})()}</td>
     </tr>`;
-  }).join('')}</tbody></table></div>`;
+  }).join('')}</tbody></table></div>\`;
+  setTimeout(()=>{
+    const tw=document.getElementById('twrap');
+    const tm=document.getElementById('tmirror');
+    const ti=document.getElementById('tmi');
+    if(tw&&tm&&ti){
+      ti.style.width=tw.scrollWidth+'px';
+      tm.addEventListener('scroll',()=>{tw.scrollLeft=tm.scrollLeft;});
+      tw.addEventListener('scroll',()=>{tm.scrollLeft=tw.scrollLeft;});
+    }
+  },50);
 }
 
 // ── EDIT BET ──────────────────────────────────────────────────────────────────
