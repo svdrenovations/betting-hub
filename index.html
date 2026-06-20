@@ -597,11 +597,32 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
       } catch(e) {}
     }
 
-    // ── TOTAL: Kalshi totals are under KXMLBGAME event, not KXMLBTOTAL ──
-    // The ML markets we already fetched are from KXMLBGAME — fetch that same event for totals
+    // ── TOTAL: Search KXMLBTOTAL series by team pair and date ──
     if (total) {
       const totLine = parseFloat(total);
-      for (const ticker of candidateML) {
+      // Build date prefix
+      const td = new Date(commenceTime || (gameDate + 'T12:00:00'));
+      const etMs = td.getTime() + (-4*60)*60000;
+      const etD = new Date(etMs);
+      const tyy = String(etD.getUTCFullYear()).slice(2);
+      const tmon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][etD.getUTCMonth()];
+      const tdd = String(etD.getUTCDate()).padStart(2,'0');
+      const thh = String(etD.getUTCHours()).padStart(2,'0');
+      const tmm = String(etD.getUTCMinutes()).padStart(2,'0');
+      // Try exact time and ±1,2,5 minute variants
+      const totCandidates = [];
+      for (const delta of [0,-1,1,-2,2,-5,5]) {
+        const ct2 = new Date(td.getTime() + delta*60000);
+        const em2 = ct2.getTime() + (-4*60)*60000;
+        const ed2 = new Date(em2);
+        const yy2 = String(ed2.getUTCFullYear()).slice(2);
+        const mon2 = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][ed2.getUTCMonth()];
+        const dd2 = String(ed2.getUTCDate()).padStart(2,'0');
+        const hh2 = String(ed2.getUTCHours()).padStart(2,'0');
+        const mm2 = String(ed2.getUTCMinutes()).padStart(2,'0');
+        totCandidates.push(`KXMLBTOTAL-${yy2}${mon2}${dd2}${hh2}${mm2}${teamPair}`);
+      }
+      for (const ticker of totCandidates) {
         try {
           const path = `/markets%3Fevent_ticker%3D${encodeURIComponent(ticker)}%26limit%3D20`;
           const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
@@ -610,23 +631,28 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
           if (!res.ok) continue;
           const data = await res.json();
           const mkts = data.markets || [];
-          // Total markets have yes_sub_title like "Over 8.5" or "Under 8.5"
+          if (!mkts.length) continue;
+          // Match by yes_sub_title e.g. "Over 8.5" or by ticker suffix
           let bestDiff = 99, bestLine = null, bestMkt = null;
           for (const mkt of mkts) {
-            const sub = (mkt.yes_sub_title || mkt.no_sub_title || '').toLowerCase();
+            const sub = (mkt.yes_sub_title || '').toLowerCase();
             const lineMatch = sub.match(/(over|under)\s+([\d.]+)/);
-            if (!lineMatch) continue;
-            const kalshiLine = parseFloat(lineMatch[2]);
-            if (isNaN(kalshiLine) || kalshiLine < 4 || kalshiLine > 30) continue;
-            const diff = Math.abs(kalshiLine - totLine);
-            if (diff < bestDiff) {
-              bestDiff = diff;
-              bestLine = kalshiLine;
-              bestMkt = mkt;
+            let kalshiLine = null;
+            if (lineMatch) {
+              kalshiLine = parseFloat(lineMatch[2]);
+            } else {
+              // Fallback: parse from ticker suffix
+              const numMatch = (mkt.ticker||'').match(/-(\d+)$/);
+              if (numMatch) {
+                const raw = parseInt(numMatch[1]);
+                kalshiLine = raw >= 40 ? raw/10 : raw; // 85→8.5, 13→13
+              }
             }
+            if (!kalshiLine || kalshiLine < 4 || kalshiLine > 30) continue;
+            const diff = Math.abs(kalshiLine - totLine);
+            if (diff < bestDiff) { bestDiff=diff; bestLine=kalshiLine; bestMkt=mkt; }
           }
           if (bestMkt) {
-            // yes = the direction in yes_sub_title (e.g. "Over 8.5")
             const yesIsOver = (bestMkt.yes_sub_title||'').toLowerCase().includes('over');
             results.total_cents_yes = yesIsOver
               ? parseFloat(bestMkt.yes_ask_dollars || bestMkt.last_price_dollars || 0) * 100
@@ -1982,6 +2008,11 @@ function triggerAllKalshiFetches() {
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 document.getElementById('date-display').textContent=fmtDate(currentDate);
+// Pre-populate kalshiAccepted from Supabase so accepted plays stay grayed out across reloads
+fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper?select=game_pk,market&result=eq.pending`,{headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}})
+  .then(r=>r.ok?r.json():[]).then(rows=>{
+    rows.forEach(r=>{if(r.game_pk&&r.market)kalshiAccepted.add(r.game_pk+'-'+r.market.toLowerCase());});
+  }).catch(()=>{});
 loadBetsFromSupabase().then(()=>{updateNavRecord();renderGames();});
 if(new URLSearchParams(location.search).get('game')){openDeepLinkGame();}else{loadGames();}
 </script>
