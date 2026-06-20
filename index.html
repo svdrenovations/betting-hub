@@ -121,7 +121,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .modal-actions{display:flex;gap:8px;margin-top:1rem}
 .btn-save{flex:1;padding:10px;font-size:13px;font-weight:500;background:var(--green-bg);border:1px solid var(--green-dim);border-radius:8px;color:var(--green);cursor:pointer;font-family:'DM Sans',sans-serif}
 .btn-cancel{padding:10px 16px;font-size:13px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--text);cursor:pointer;font-family:'DM Sans',sans-serif}
-.t-table-wrap{overflow-x:auto}
+.t-table-wrap{overflow-x:auto}.t-table-wrap table{min-width:900px}
 .t-table{width:100%;border-collapse:collapse;min-width:700px}
 .t-table th{font-family:DM Mono,monospace;font-size:10px;color:var(--text);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border);text-transform:uppercase;white-space:nowrap;cursor:pointer;user-select:none}
 .t-table td{font-size:12px;padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text)}
@@ -880,13 +880,13 @@ let gSort = { col:'date', dir:'desc' };
 const TRACKER_COLS = [
   {key:'date',label:'Date',w:70,t:'str'},{key:'matchup',label:'Matchup',w:0,t:'str'},
   {key:'type',label:'Type',w:0,t:'str'},{key:'odds',label:'Odds',w:52,t:'num'},
-  {key:'betLine',label:'Spread/Tot',w:60,t:'num'},{key:'maxJuice',label:'Max juice',w:60,t:'num'},
+  {key:'betLine',label:'Spread/Tot',w:60,t:'num'},
   {key:'book',label:'Book',w:80,t:'str'},{key:'units',label:'Units',w:46,t:'num'},
   {key:'ev',label:'EV%',w:58,t:'num'},{key:'confidence',label:'Conf',w:52,t:'rank'},
   {key:'situations',label:'Situation',w:0,t:'str'},
+  {key:'result',label:'Result',w:0,t:'rank'},
   {key:'model_pred',label:'Model',w:64,t:'num'},{key:'sim_pred',label:'Sim',w:64,t:'num'},
-  {key:'score',label:'Score',w:50,t:'num'},{key:'clv',label:'CLV',w:56,t:'num'},
-  {key:'result',label:'Result',w:0,t:'rank'}
+  {key:'score',label:'Score',w:50,t:'num'},{key:'clv',label:'CLV',w:56,t:'num'}
 ];
 function sortVal(b,col){
   switch(col){
@@ -916,10 +916,11 @@ function setSort(col){
   renderTracker();
 }
 function trackerHeadHTML(){
-  return TRACKER_COLS.map(c=>{
+  const cols='<th style="width:52px"></th>'+TRACKER_COLS.map(c=>{
     const active=gSort.col===c.key,arrow=active?(gSort.dir==='asc'?' ▲':' ▼'):'';
     return `<th style="${c.w?`width:${c.w}px;`:''}${active?'color:var(--green)':''}" onclick="setSort('${c.key}')">${c.label}${arrow}</th>`;
-  }).join('')+'<th style="width:28px"></th>';
+  }).join('');
+  return cols;
 }
 
 let pendingLog=null,pendingLogEV=null,expanded={};
@@ -1476,11 +1477,11 @@ function renderKalshi(){
       <td class="mono" style="color:${b.paper_pl_per_contract>0?'var(--green)':b.paper_pl_per_contract<0?'var(--red)':'var(--text)'}">${b.paper_pl_per_contract!=null?(b.paper_pl_per_contract>0?'+':'')+parseFloat(b.paper_pl_per_contract).toFixed(2):'—'}</td>
     </tr>`;
   }).join('');
-  el.innerHTML=`<table class="t-table"><thead><tr>
+  el.innerHTML=`<div style="overflow-x:auto;padding-bottom:4px"><table class="t-table"><thead><tr>
     <th>Date</th><th>Matchup</th><th>Market</th><th>Situation</th>
     <th>Entry</th><th>Model %</th><th>Kalshi EV</th><th>SB EV</th>
     <th>Result</th><th>Status</th><th>P&L/contract</th>
-  </tr></thead><tbody>${rows}</tbody></table>`;
+  </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 async function setKalshiResult(id,result){
@@ -1602,16 +1603,28 @@ function renderTracker(){
   const wins=filtered.filter(b=>b.result==='win').length;
   document.getElementById('tracker-subtitle').textContent=settled.length?`${wins}-${settled.length-wins} record (${Math.round(wins/settled.length*100)}%) · ${filtered.filter(b=>b.result==='pending').length} pending`:`${filtered.length} bets${anyFilterActive()?' match':' logged'}`;
   if(!filtered.length){el.innerHTML=`<div class="empty-state"><div class="empty-title">No bets ${anyFilterActive()?'match the filter':'yet'}</div></div>`;return;}
-  el.innerHTML=`<table class="t-table"><thead><tr>${trackerHeadHTML()}</tr></thead><tbody>${sortBets(filtered).map(b=>{
+  el.innerHTML=`<div style="overflow-x:auto;padding-bottom:4px"><table class="t-table"><thead><tr>${trackerHeadHTML()}</tr></thead><tbody>${sortBets(filtered).map(b=>{
     const btns=['win','loss','push','pending'].map(r=>`<button onclick="setResult(${b.id},'${r}')" class="${r}-btn ${b.result===r?'on':''}">${r}</button>`).join('');
     const ev=b.ev!=null?`<span class="${parseFloat(b.ev)>=0?'ep':'en'}">${parseFloat(b.ev)>=0?'+':''}${b.ev}%</span>`:'—';
-    return`<tr><td class="mono" style="font-size:11px">${b.date}</td><td style="font-size:12px"><a href="?game=${encodeURIComponent(b.matchup)}&date=${encodeURIComponent(b.date)}" target="_blank" rel="noopener" style="color:var(--green);text-decoration:none">${b.matchup} <span style="font-size:10px">↗</span></a></td><td style="font-size:11px">${b.type}</td><td class="mono">${b.odds}</td><td class="mono" style="font-size:11px">${b.betLine||'—'}</td><td class="mono" style="font-size:11px;color:var(--amber)">${b.maxJuice||'—'}</td><td style="font-size:11px">${b.book||'—'}</td><td class="mono">${b.units}</td><td>${ev}</td><td style="font-size:11px">${b.confidence||'—'}</td><td style="font-size:11px">${b.situations||'—'}${b.fadeReason?` <span style="color:var(--amber)">· ${b.fadeReason}</span>`:''}</td>
+    return`<tr>
+      <td style="white-space:nowrap"><button onclick="openEdit(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--text);font-size:13px;padding:2px 4px">✏️</button><button onclick="deleteBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--text);font-size:17px;padding:2px 4px">×</button></td>
+      <td class="mono" style="font-size:11px">${b.date}</td>
+      <td style="font-size:12px"><a href="?game=${encodeURIComponent(b.matchup)}&date=${encodeURIComponent(b.date)}" target="_blank" rel="noopener" style="color:var(--green);text-decoration:none">${b.matchup} <span style="font-size:10px">↗</span></a></td>
+      <td style="font-size:11px">${b.type}</td>
+      <td class="mono">${b.odds}</td>
+      <td class="mono" style="font-size:11px">${b.betLine||'—'}</td>
+      <td style="font-size:11px">${b.book||'—'}</td>
+      <td class="mono">${b.units}</td>
+      <td>${ev}</td>
+      <td style="font-size:11px">${b.confidence||'—'}</td>
+      <td style="font-size:11px">${b.situations||'—'}${b.fadeReason?` <span style="color:var(--amber)">· ${b.fadeReason}</span>`:''}</td>
+      <td><div class="rsel">${btns}</div></td>
       <td class="mono" style="font-size:11px">${b.modelAwayRuns!=null&&b.modelHomeRuns!=null?b.modelAwayRuns+'-'+b.modelHomeRuns:'—'}</td>
       <td class="mono" style="font-size:11px">${(()=>{const ma=b.modelAwayRuns,mh=b.modelHomeRuns,sa=b.simAwayRuns,sh=b.simHomeRuns;if(sa==null||sh==null)return'<span>—</span>';const inv=(ma!=null&&mh!=null)&&((ma>mh)!==(sa>sh));return`<span style="color:${inv?'var(--amber)':'var(--text)'}"${inv?' title="Sim disagrees with model"':''}>${sa}-${sh}${inv?' ⇄':''}</span>`;})()}</td>
       <td style="font-size:11px">${b.awayScore!==undefined&&b.homeScore!==undefined&&b.result!=='pending'?b.awayScore+'-'+b.homeScore:'—'}</td>
       <td class="mono" style="font-size:11px">${(()=>{if(b.clv!=null){const closed=`${b.closingOdds||'?'}${b.closingLine?' @ '+b.closingLine:''}`;return`<span style="color:${parseFloat(b.clv)>=0?'var(--green)':'var(--red)'}">${parseFloat(b.clv)>=0?'+':''}${b.clv}%</span> <span style="font-size:10px">closed ${closed}</span>`;}if(!b.book||!String(b.book).trim())return`<span style="color:var(--amber);font-size:10px">+ add book</span>`;return`<span style="font-size:10px">pending</span>`;})()}</td>
-      <td><div class="rsel">${btns}</div></td><td style="display:flex;gap:4px"><button onclick="openEdit(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--text);font-size:13px">✏️</button><button onclick="deleteBet(${b.id})" style="background:none;border:none;cursor:pointer;color:var(--text);font-size:17px">×</button></td></tr>`;
-  }).join('')}</tbody></table>`;
+    </tr>`;
+  }).join('')}</tbody></table></div>`;
 }
 
 // ── EDIT BET ──────────────────────────────────────────────────────────────────
