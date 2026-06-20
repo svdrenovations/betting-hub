@@ -489,8 +489,8 @@ async function fetchOrderbook(ticker) {
     let cumSize = 0;
     const depths = [];
     for (const [priceDollars, sizeFp] of yesLevels) {
-      const cents = Math.round(priceDollars * 100);
-      const sizeDollars = parseFloat(sizeFp) || 0; // each contract = $1
+      // Kalshi orderbook prices may be in cents (46) or dollars (0.46) - check scale
+      const cents = priceDollars > 1 ? Math.round(priceDollars) : Math.round(priceDollars * 100);
       cumSize += sizeDollars;
       if (cents > 0 && cents < 100) depths.push({ cents, cumSize: Math.round(cumSize) });
     }
