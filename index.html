@@ -668,7 +668,19 @@ async function loadDepth(gid, marketKey) {
 
   // Build interactive table — one row per price level
   // Columns: Your cost | Equiv American | EV at this price | Available (contracts + $ to risk + $ to win) | Qty input | Accept
-  const modelP = m.p;
+  // For totals: recalculate model prob using Kalshi's actual line (e.g. 8.5 not 9.0)
+  let modelP = m.p;
+  if (marketKey === 'total' && kd.total_line != null && m.projTotal) {
+    const kalshiLine = kd.total_line;
+    const dkLine = parseFloat(m.line || 0);
+    if (Math.abs(kalshiLine - dkLine) > 0.1) {
+      const projTotal = parseFloat(m.projTotal);
+      if (projTotal > 0) {
+        const pOver = 1 / (1 + Math.exp(1.7 * (kalshiLine - projTotal) / TOTAL_SD));
+        modelP = v.includes('OVER') ? pOver : 1 - pOver;
+      }
+    }
+  }
 
   const rows = levels.map((l, i) => {
     const cents = l.yesCents;
