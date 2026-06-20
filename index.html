@@ -953,9 +953,11 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
           const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
           });
-          if (!res.ok) continue;
+          if (!res.ok) { console.log('Total fetch non-ok:', res.status, ticker); continue; }
           const data = await res.json();
           const mkts = data.markets || [];
+          console.log('Total event_ticker', ticker, '→', mkts.length, 'markets');
+          if (mkts.length) console.log('First mkt:', JSON.stringify(mkts[0]).slice(0, 200));
           if (!mkts.length) continue;
           const { bestMkt, bestLine, bestDiff } = findBestMkt(mkts, totalVerdict);
           if (bestMkt && bestDiff <= 1) {
@@ -979,10 +981,14 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
           });
           if (res.ok) {
             const data = await res.json();
-            const mkts = (data.markets || []).filter(m => {
+            const allMkts = data.markets || [];
+            console.log('Total fallback: series returned', allMkts.length, 'markets');
+            if (allMkts.length) console.log('Sample tickers:', allMkts.slice(0,5).map(m=>m.ticker));
+            const mkts = allMkts.filter(m => {
               const tk = (m.ticker || '').toUpperCase();
-              return tk.includes(teamPair) || tk.includes(awayCode) && tk.includes(homeCode);
+              return tk.includes(teamPair) || (tk.includes(awayCode) && tk.includes(homeCode));
             });
+            console.log('Total fallback filtered to', mkts.length, 'for teamPair', teamPair, awayCode, homeCode);
             const { bestMkt, bestLine, bestDiff } = findBestMkt(mkts, totalVerdict);
             if (bestMkt) {
               results.total_cents_yes = parseFloat(bestMkt.yes_ask_dollars || bestMkt.last_price_dollars || 0) * 100;
