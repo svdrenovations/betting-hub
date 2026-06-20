@@ -469,30 +469,106 @@ function evFromCents(p, cents) {
 const kalshiCache = {};
 const orderbookCache = {};
 
-async function fetchOrderbook(ticker) {
-  if (!ticker) return null;
-  if (orderbookCache[ticker] && Date.now() - orderbookCache[ticker].ts < 60000) return orderbookCache[ticker].data;
+// Fetch orderbooks for one or two tickers in a single batch call
+// Returns map of ticker → { yes_dollars, no_dollars }
+async function fetchOrderbooks(tickers) {
+  if (!tickers || !tickers.length) return {};
+  const cacheKey = tickers.slice().sort().join('|');
+  if (orderbookCache[cacheKey] && Date.now() - orderbookCache[cacheKey].ts < 60000) return orderbookCache[cacheKey].data;
   try {
-    const res = await fetch(`${KALSHI_PROXY}?path=/markets/${encodeURIComponent(ticker)}/orderbook`, {
+    const params = tickers.map(t => `tickers=${encodeURIComponent(t)}`).join('&');
+    const res = await fetch(`${KALSHI_PROXY}?path=/markets/orderbooks%3F${encodeURIComponent(params)}`, {
       headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const ob = data.orderbook_fp || {};
-    // yes_dollars: [[price_in_dollars, size_fp], ...] — bids only (a YES bid at X = NO ask at 100-X)
-    // Sort ascending by price so lowest cents (best ask for buyer) comes first
-    const yesLevels = (ob.yes_dollars || []).sort((a, b) => a[0] - b[0]);
-    let cumSize = 0;
-    const depths = [];
-    for (const [priceDollars, sizeFp] of yesLevels) {
-      const cents = priceDollars > 1 ? Math.round(priceDollars) : Math.round(priceDollars * 100);
-      cumSize += parseFloat(sizeFp) || 0;
-      if (cents > 0 && cents < 100) depths.push({ cents, cumSize: Math.round(cumSize) });
+    if (!res.ok) {
+      // Fall back to single calls
+      const out = {};
+      for (const t of tickers) {
+        const r = await fetch(`${KALSHI_PROXY}?path=/markets/${encodeURIComponent(t)}/orderbook`, {
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        if (r.ok) { const d = await r.json(); out[t] = d.orderbook_fp || {}; }
+      }
+      orderbookCache[cacheKey] = { ts: Date.now(), data: out };
+      return out;
     }
-    const result = { depths, topSize: depths[0]?.cumSize || 0 };
-    orderbookCache[ticker] = { ts: Date.now(), data: result };
-    return result;
-  } catch(e) { return null; }
+    const data = await res.json();
+    const out = {};
+    for (const ob of (data.orderbooks || [])) { out[ob.ticker] = ob.orderbook_fp || {}; }
+    orderbookCache[cacheKey] = { ts: Date.now(), data: out };
+    return out;
+  } catch(e) { return {}; }
+}
+
+// Parse a raw price level [[dollars_string, fp], ...] into cents
+function obCents(priceDollars) {
+  const p = parseFloat(priceDollars);
+  return p > 1 ? Math.round(p) : Math.round(p * 100);
+}
+
+// Build merged depth levels for a given play verdict
+// Returns array of { yesCents, size, source } sorted best-price first (cheapest YES cost)
+// buyingYes=true: we want YES → counterparty bids are NO bids → our cost = 100 - NO bid
+//                  also check other ticker's YES bids → our cost = 100 - YES bid (same thing from opposite market)
+// buyingYes=false: we want NO → counterparty bids are YES bids → our cost = 100 - YES bid
+function buildDepthLevels(primaryOb, secondaryOb, buyingYes) {
+  const levels = [];
+
+  // Primary ticker
+  if (primaryOb) {
+    const counterpartyBids = buyingYes ? (primaryOb.no_dollars || []) : (primaryOb.yes_dollars || []);
+    for (const [price, sizeFp] of counterpartyBids) {
+      const bidCents = obCents(price);
+      const ourCost = 100 - bidCents; // inverted: counterparty's bid = our fill price
+      const size = parseFloat(sizeFp) || 0;
+      if (ourCost > 0 && ourCost < 100 && size > 0) {
+        levels.push({ yesCents: ourCost, size: Math.round(size), source: 'primary' });
+      }
+    }
+  }
+
+  // Secondary ticker (ML only — opposite team market)
+  // On opp market, buying their NO = same as buying our YES
+  if (secondaryOb) {
+    const counterpartyBids = buyingYes ? (secondaryOb.yes_dollars || []) : (secondaryOb.no_dollars || []);
+    for (const [price, sizeFp] of counterpartyBids) {
+      const bidCents = obCents(price);
+      const ourCost = 100 - bidCents;
+      const size = parseFloat(sizeFp) || 0;
+      if (ourCost > 0 && ourCost < 100 && size > 0) {
+        levels.push({ yesCents: ourCost, size: Math.round(size), source: 'secondary' });
+      }
+    }
+  }
+
+  // Merge levels at same price, sort ascending (cheapest = best)
+  const merged = {};
+  for (const l of levels) {
+    if (merged[l.yesCents]) merged[l.yesCents].size += l.size;
+    else merged[l.yesCents] = { yesCents: l.yesCents, size: l.size };
+  }
+  return Object.values(merged).sort((a, b) => a.yesCents - b.yesCents);
+}
+
+// Legacy single-ticker wrapper used by existing panel display code
+async function fetchOrderbook(ticker) {
+  if (!ticker) return null;
+  const obs = await fetchOrderbooks([ticker]);
+  const ob = obs[ticker];
+  if (!ob) return null;
+  const yesLevels = (ob.yes_dollars || []).sort((a, b) => parseFloat(b[0]) - parseFloat(a[0]));
+  const noLevels  = (ob.no_dollars  || []).sort((a, b) => parseFloat(b[0]) - parseFloat(a[0]));
+  const bestYesBid = yesLevels[0] ? obCents(yesLevels[0][0]) : null;
+  const bestNoBid  = noLevels[0]  ? obCents(noLevels[0][0])  : null;
+  const impliedAsk = bestNoBid != null ? 100 - bestNoBid : null;
+  let cumSize = 0;
+  const depths = [];
+  for (const [price, sizeFp] of yesLevels) {
+    const cents = obCents(price);
+    cumSize += parseFloat(sizeFp) || 0;
+    if (cents > 0 && cents < 100) depths.push({ cents, cumSize: Math.round(cumSize) });
+  }
+  return { depths, bestYesBid, impliedAsk, topSize: depths[0]?.cumSize || 0, raw: ob };
 }
 
 function fmtSize(dollars) {
@@ -518,56 +594,162 @@ async function loadDepth(gid, marketKey) {
   btn.textContent = 'loading…';
   btn.disabled = true;
 
-  // Get ticker from cache
   const cached = kalshiCache[gid];
-  if (!cached) { btn.textContent = 'no data'; return; }
+  if (!cached) { btn.textContent = 'no data'; btn.disabled = false; return; }
   const kd = cached.data;
-  let ticker = null;
-  // We need to know which play this is — find from the kdata div
   const kdataEl = document.getElementById('kdata-' + gid);
-  if (!kdataEl) { btn.textContent = 'no data'; return; }
+  if (!kdataEl) { btn.textContent = 'no data'; btn.disabled = false; return; }
   let plays = [];
   try { plays = JSON.parse(kdataEl.dataset.plays || '[]'); } catch(e) {}
   const m = plays.find(p => p.key === marketKey);
-  if (!m) { btn.textContent = 'no data'; return; }
+  if (!m) { btn.textContent = 'no data'; btn.disabled = false; return; }
+
   const v = (m.verdict || '').toUpperCase();
-  if (marketKey === 'ml') ticker = v.includes('AWAY') ? kd.awayML_ticker : kd.homeML_ticker;
-  if (marketKey === 'rl') ticker = v.includes('AWAY') ? kd.rl_ticker_away : kd.rl_ticker_home;
-  if (marketKey === 'total') ticker = kd.total_ticker;
+  const matchup = kdataEl.dataset.matchup;
+  const gameDate = kdataEl.dataset.date;
+  const situations = kdataEl.dataset.sits;
+  const dkEv = parseFloat(m.ev);
 
-  if (!ticker) { btn.textContent = 'no ticker'; btn.disabled = false; return; }
+  // Determine tickers and which side we're buying
+  // ML: two tickers (away team wins + home team wins)
+  // RL: one ticker per side (away covers or home covers)
+  // Total: one ticker (over X runs)
+  let primaryTicker = null, secondaryTicker = null, buyingYes = true, sideLabel = '';
 
-  const ob = await fetchOrderbook(ticker);
+  if (marketKey === 'ml') {
+    if (v.includes('AWAY')) {
+      // Betting AWAY wins → buying YES on away ticker + NO on home ticker
+      primaryTicker = kd.awayML_ticker;   // YES on this = away wins ✓
+      secondaryTicker = kd.homeML_ticker; // NO on this = away wins ✓
+      buyingYes = true;
+      sideLabel = 'Away wins YES';
+    } else {
+      // Betting HOME wins → buying YES on home ticker + NO on away ticker
+      primaryTicker = kd.homeML_ticker;
+      secondaryTicker = kd.awayML_ticker;
+      buyingYes = true;
+      sideLabel = 'Home wins YES';
+    }
+  } else if (marketKey === 'rl') {
+    if (v.includes('AWAY')) {
+      primaryTicker = kd.rl_ticker_away;
+      buyingYes = true;
+      sideLabel = 'Away covers YES';
+    } else {
+      primaryTicker = kd.rl_ticker_home;
+      buyingYes = true;
+      sideLabel = 'Home covers YES';
+    }
+  } else if (marketKey === 'total') {
+    primaryTicker = kd.total_ticker;
+    buyingYes = v.includes('OVER');
+    sideLabel = v.includes('OVER') ? 'Over YES' : 'Under NO';
+  }
+
+  if (!primaryTicker) { btn.textContent = 'no ticker'; btn.disabled = false; return; }
+
+  const tickers = [primaryTicker];
+  if (secondaryTicker && secondaryTicker !== primaryTicker) tickers.push(secondaryTicker);
+
+  const obs = await fetchOrderbooks(tickers);
   btn.disabled = false;
 
-  if (!ob || !ob.depths.length) {
-    btn.textContent = 'no depth data';
+  const primaryOb  = obs[primaryTicker]  || null;
+  const secondaryOb = secondaryTicker ? (obs[secondaryTicker] || null) : null;
+
+  const levels = buildDepthLevels(primaryOb, secondaryOb, buyingYes);
+
+  if (!levels.length) {
+    tableDiv.innerHTML = '<div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text)">No open orders found in the book</div>';
+    depthDiv.style.display = 'block';
+    btn.textContent = 'hide order book ▲';
     return;
   }
 
-  // Build depth table
-  // yes_dollars sorted ascending = best prices first (lowest cents = best for buyer)
-  let cumSize = 0;
-  const rows = ob.depths.slice(0, 10).map(d => {
-    const equiv = centsToAmerican(d.cents);
-    const rowColor = d.cents <= (ob.depths[0]?.cents || 99) ? 'var(--green)' : 'var(--text)';
-    return '<tr>'
-      + '<td style="padding:3px 8px;font-family:DM Mono,monospace;font-size:11px;color:' + rowColor + '">' + d.cents + '¢</td>'
-      + '<td style="padding:3px 8px;font-family:DM Mono,monospace;font-size:11px;color:' + rowColor + '">' + equiv + '</td>'
-      + '<td style="padding:3px 8px;font-family:DM Mono,monospace;font-size:11px;color:var(--green)">' + fmtSize(d.cumSize) + ' cumul.</td>'
-      + '</tr>';
+  // Build interactive table — one row per price level
+  // Columns: Your cost | Equiv American | EV at this price | Available contracts | Qty input | Accept
+  const modelP = m.p;
+
+  const rows = levels.map((l, i) => {
+    const cents = l.yesCents;
+    const ev = evFromCents(modelP, cents);
+    const equiv = centsToAmerican(cents);
+    const evColor = ev >= 10 ? 'var(--green)' : ev >= 6 ? 'var(--amber)' : ev >= 0 ? 'var(--text)' : 'var(--red)';
+    const isBest = i === 0;
+    const rowBg = isBest ? 'background:var(--green-bg);' : '';
+    const betterThanDK = ev > dkEv;
+    const priceFlagStyle = betterThanDK ? 'color:var(--green);font-weight:600' : 'color:var(--amber)';
+    const rowId = `depth-row-${gid}-${marketKey}-${i}`;
+    const qtyId = `depth-qty-${gid}-${marketKey}-${i}`;
+
+    return `<tr style="${rowBg}border-bottom:1px solid var(--border)">
+      <td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:12px;${priceFlagStyle}">${cents}¢${betterThanDK ? ' ★' : ''}</td>
+      <td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:11px;color:var(--text)">${equiv}</td>
+      <td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:11px;color:${evColor}">${ev != null ? (ev >= 0 ? '+' : '') + ev.toFixed(1) + '%' : '—'}</td>
+      <td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:11px;color:var(--text)">${l.size} contracts</td>
+      <td style="padding:3px 6px"><input id="${qtyId}" type="number" min="1" max="${l.size}" value="1" style="width:56px;padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;background:var(--s2);border:1px solid var(--border2);border-radius:4px;color:var(--text)"></td>
+      <td style="padding:3px 8px"><button onclick="acceptDepthOrder('${gid}','${marketKey}','${m.label}','${m.verdict}',${cents},${(ev||0).toFixed(1)},${modelP.toFixed(4)},${dkEv.toFixed(1)},'${matchup}','${gameDate}','${situations}','${primaryTicker}','${qtyId}')" style="padding:4px 10px;font-size:11px;font-weight:500;border-radius:5px;border:1px solid var(--amber-dim);background:var(--amber-bg);color:var(--amber);cursor:pointer;font-family:DM Sans,sans-serif;white-space:nowrap">Accept</button></td>
+    </tr>`;
   }).join('');
 
-  tableDiv.innerHTML = '<table style="width:100%;border-collapse:collapse;background:var(--s1);border-radius:4px;overflow:hidden">'
-    + '<thead><tr style="border-bottom:1px solid var(--border)">'
-    + '<th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left">Price</th>'
-    + '<th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left">Equiv</th>'
-    + '<th style="padding:3px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left">Avail.</th>'
-    + '</tr></thead><tbody>' + rows + '</tbody></table>'
-    + '<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);margin-top:6px">Best price: ' + ob.depths[0].cents + '¢ · Total available to best price: ' + fmtSize(ob.depths[0].cumSize) + '</div>';
+  const cheapest = levels[0].yesCents;
+  const bestEv = evFromCents(modelP, cheapest);
+  const header = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+    <div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-transform:uppercase;letter-spacing:.04em">${sideLabel} · best available price · ★ = beats DK</div>
+    <div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text)">${levels.length} price levels · ${levels.reduce((s,l) => s + l.size, 0)} contracts total</div>
+  </div>`;
+
+  tableDiv.innerHTML = header
+    + `<div style="overflow-y:auto;max-height:300px">`
+    + `<table style="width:100%;border-collapse:collapse;background:var(--s1)">`
+    + `<thead style="position:sticky;top:0;background:var(--s2)"><tr>`
+    + `<th style="padding:4px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left;border-bottom:1px solid var(--border2)">Your cost</th>`
+    + `<th style="padding:4px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left;border-bottom:1px solid var(--border2)">Equiv</th>`
+    + `<th style="padding:4px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left;border-bottom:1px solid var(--border2)">EV</th>`
+    + `<th style="padding:4px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left;border-bottom:1px solid var(--border2)">Available</th>`
+    + `<th style="padding:4px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left;border-bottom:1px solid var(--border2)">Qty</th>`
+    + `<th style="padding:4px 8px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left;border-bottom:1px solid var(--border2)"></th>`
+    + `</tr></thead><tbody>${rows}</tbody></table></div>`;
 
   depthDiv.style.display = 'block';
   btn.textContent = 'hide order book ▲';
+}
+
+async function acceptDepthOrder(gameId, market, label, verdict, cents, kalshiEv, modelProb, sbEv, matchup, gameDate, situations, ticker, qtyInputId) {
+  const qtyEl = document.getElementById(qtyInputId);
+  const qty = qtyEl ? parseInt(qtyEl.value) || 1 : 1;
+  const side = (verdict||'').replace(/^(BET|LEAN)\s+/i,'').trim();
+  try {
+    const row = {
+      game_date: gameDate,
+      matchup,
+      market,
+      side,
+      entry_cents: cents,
+      kalshi_implied: cents,
+      model_prob: +(modelProb * 100).toFixed(1),
+      sb_ev: sbEv,
+      kalshi_ev: kalshiEv,
+      kalshi_ticker: ticker || null,
+      action: verdict,
+      situations: situations || null,
+      result: 'pending',
+      captured_at: new Date().toISOString()
+    };
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify(row)
+    });
+    if (res.ok) {
+      if (qtyEl) qtyEl.closest('tr').style.background = 'var(--green-bg)';
+      const btn = qtyEl ? qtyEl.closest('tr').querySelector('button') : null;
+      if (btn) { btn.textContent = `✓ ${qty}c logged`; btn.style.borderColor = 'var(--green-dim)'; btn.style.background = 'var(--green-bg)'; btn.style.color = 'var(--green)'; btn.disabled = true; }
+      if (document.getElementById('page-kalshi').classList.contains('on')) renderKalshi();
+    } else {
+      alert('Could not log: ' + res.status);
+    }
+  } catch(e) { alert('Error: ' + e.message); }
 }
 const kalshiAccepted = new Set(); // tracks 'gameId-market' pairs accepted this session
 const kalshiAcceptedMatchups = new Set(); // tracks 'matchup|market' from kalshi_paper DB
