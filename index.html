@@ -1624,7 +1624,7 @@ function renderTracker(){
       <td style="font-size:11px">${b.awayScore!==undefined&&b.homeScore!==undefined&&b.result!=='pending'?b.awayScore+'-'+b.homeScore:'—'}</td>
       <td class="mono" style="font-size:11px">${(()=>{if(b.clv!=null){const closed=`${b.closingOdds||'?'}${b.closingLine?' @ '+b.closingLine:''}`;return`<span style="color:${parseFloat(b.clv)>=0?'var(--green)':'var(--red)'}">${parseFloat(b.clv)>=0?'+':''}${b.clv}%</span> <span style="font-size:10px">closed ${closed}</span>`;}if(!b.book||!String(b.book).trim())return`<span style="color:var(--amber);font-size:10px">+ add book</span>`;return`<span style="font-size:10px">pending</span>`;})()}</td>
     </tr>`;
-  }).join('')}</tbody></table></div>\`;
+  }).join('')}</tbody></table></div>`;
   setTimeout(()=>{
     const tw=document.getElementById('twrap');
     const tm=document.getElementById('tmirror');
