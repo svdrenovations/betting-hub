@@ -595,6 +595,43 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
       } catch(e) {}
     }
 
+    // ── TOTAL: KXMLBTOTAL uses same event ticker pattern ──
+    if (total) {
+      const totLine = parseFloat(total);
+      const candidateTOT = candidateML.map(t => t.replace('KXMLBGAME-', 'KXMLBTOTAL-'));
+      for (const ticker of candidateTOT) {
+        try {
+          const path = `/markets%3Fevent_ticker%3D${encodeURIComponent(ticker)}%26limit%3D10`;
+          const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
+            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+          });
+          if (!res.ok) continue;
+          const data = await res.json();
+          const mkts = data.markets || [];
+          // Match the market whose line is closest to our total line
+          // Kalshi total tickers end in the run total e.g. -85 = over/under 8.5
+          let bestDiff = 99;
+          for (const mkt of mkts) {
+            const tk = (mkt.ticker || '');
+            // Extract number from end of ticker e.g. KXMLBTOTAL-26JUN201310CWSDET-85
+            const numMatch = tk.match(/-(\d+)$/);
+            if (!numMatch) continue;
+            const kalshiLine = parseInt(numMatch[1]) / 10; // 85 → 8.5
+            const diff = Math.abs(kalshiLine - totLine);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              // yes = over, no = under
+              results.total_cents_yes = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+              results.total_cents_no  = parseFloat(mkt.no_ask_dollars || 0) * 100;
+              results.total_ticker = mkt.ticker;
+              results.total_line = kalshiLine;
+            }
+          }
+          if (results.total_cents_yes != null) break;
+        } catch(e) {}
+      }
+    }
+
     kalshiCache[cacheKey] = { ts: Date.now(), data: results };
     return results;
   } catch(e) { console.error('Kalshi fetch error:', e); return {}; }
