@@ -487,103 +487,77 @@ function kalshiTeamCode(fullName) {
   return KALSHI_TEAM_CODES[fullName] || fullName.split(' ').pop().slice(0,3).toUpperCase();
 }
 
-// Fetch ALL active KXMLBGAME markets for a given date (one call, cached for 5 min)
-async function fetchAllKalshiML(gameDate) {
-  if (kalshiDayCache[gameDate] && Date.now() - kalshiDayCache[gameDate].ts < 300000) {
-    return kalshiDayCache[gameDate].markets;
-  }
-  const d = new Date(gameDate + 'T12:00:00');
-  const yy = String(d.getFullYear()).slice(2);
-  const mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
-  const dd = String(d.getDate()).padStart(2,'0');
-  const prefix = `KXMLBGAME-${yy}${mon}${dd}`;
-  // Search by event_ticker prefix — returns all games on this date
-  const path = `/markets%3Fseries_ticker%3DKXMLBGAME%26limit%3D500`;
-  try {
-    const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    const markets = data.markets || [];
-    kalshiDayCache[gameDate] = { ts: Date.now(), markets };
-    return markets;
-  } catch(e) { return []; }
-}
-
-async function fetchAllKalshiRL(gameDate) {
-  if (kalshiDayCache['rl_'+gameDate] && Date.now() - kalshiDayCache['rl_'+gameDate].ts < 300000) {
-    return kalshiDayCache['rl_'+gameDate].markets;
-  }
-  const d = new Date(gameDate + 'T12:00:00');
-  const yy = String(d.getFullYear()).slice(2);
-  const mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
-  const dd = String(d.getDate()).padStart(2,'0');
-  const prefix = `KXMLBSPREAD-${yy}${mon}${dd}`;
-  const path = `/markets%3Fseries_ticker%3DKXMLBSPREAD%26limit%3D500`;
-  try {
-    const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    const markets = data.markets || [];
-    kalshiDayCache['rl_'+gameDate] = { ts: Date.now(), markets };
-    return markets;
-  } catch(e) { return []; }
-}
-
-async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total) {
+async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, commenceTime) {
   const cacheKey = gameId;
   if (kalshiCache[cacheKey] && Date.now() - kalshiCache[cacheKey].ts < 300000) return kalshiCache[cacheKey].data;
   try {
     const awayCode = kalshiTeamCode(awayTeam);
     const homeCode = kalshiTeamCode(homeTeam);
     const results = {};
-
-    // Build date prefix for today e.g. "26JUN19"
-    const gd = new Date(gameDate + 'T12:00:00');
-    const gyy = String(gd.getFullYear()).slice(2);
-    const gmon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][gd.getMonth()];
-    const gdd = String(gd.getDate()).padStart(2,'0');
-    const datePrefix = ('KXMLBGAME-' + gyy + gmon + gdd).toUpperCase();
-    const rlDatePrefix = ('KXMLBSPREAD-' + gyy + gmon + gdd).toUpperCase();
-    // Kalshi concatenates away+home codes in the event ticker e.g. BOSSEA, ANGATH, BALLAA
     const teamPair = (awayCode + homeCode).toUpperCase();
 
-    // ── ML ──
-    const mlMarkets = await fetchAllKalshiML(gameDate);
-    for (const mkt of mlMarkets) {
-      const ev = (mkt.event_ticker || '').toUpperCase();
-      const tk = (mkt.ticker || '').toUpperCase();
-      if (!ev.startsWith(datePrefix)) continue;
-      if (!ev.includes(teamPair)) continue;
-      // yes_ask_dollars is e.g. 0.95 → multiply by 100 for cents
-      if (tk.endsWith('-' + awayCode)) {
-        results.awayML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-        results.awayML_ticker = mkt.ticker;
-      }
-      if (tk.endsWith('-' + homeCode)) {
-        results.homeML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-        results.homeML_ticker = mkt.ticker;
-      }
+    // Build event ticker from commence_time: KXMLBGAME-26JUN192210BOSSEA
+    // commence_time is UTC ISO string e.g. "2026-06-20T02:10:00Z"
+    let eventTicker = null;
+    if (commenceTime) {
+      const ct = new Date(commenceTime);
+      // Convert UTC to ET (UTC-4 in summer)
+      const etOffset = -4 * 60;
+      const etMs = ct.getTime() + etOffset * 60000;
+      const etDate = new Date(etMs);
+      const yy = String(etDate.getUTCFullYear()).slice(2);
+      const mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][etDate.getUTCMonth()];
+      const dd = String(etDate.getUTCDate()).padStart(2,'0');
+      const hh = String(etDate.getUTCHours()).padStart(2,'0');
+      const mm = String(etDate.getUTCMinutes()).padStart(2,'0');
+      eventTicker = `KXMLBGAME-${yy}${mon}${dd}${hh}${mm}${teamPair}`;
     }
 
-    // ── RL ──
-    const rlMarkets = await fetchAllKalshiRL(gameDate);
-    for (const mkt of rlMarkets) {
-      const ev = (mkt.event_ticker || '').toUpperCase();
-      const tk = (mkt.ticker || '').toUpperCase();
-      if (!ev.startsWith(rlDatePrefix)) continue;
-      if (!ev.includes(teamPair)) continue;
-      if (tk.endsWith(awayCode + '2')) {
-        results.awayRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-        results.rl_ticker_away = mkt.ticker;
-      }
-      if (tk.endsWith(homeCode + '2')) {
-        results.homeRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-        results.rl_ticker_home = mkt.ticker;
-      }
+    // ── ML: fetch by exact event_ticker ──
+    if (eventTicker) {
+      const path = `/markets%3Fevent_ticker%3D${encodeURIComponent(eventTicker)}%26limit%3D10`;
+      try {
+        const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          for (const mkt of (data.markets || [])) {
+            const tk = (mkt.ticker || '').toUpperCase();
+            if (tk.endsWith('-' + awayCode)) {
+              results.awayML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+              results.awayML_ticker = mkt.ticker;
+            }
+            if (tk.endsWith('-' + homeCode)) {
+              results.homeML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+              results.homeML_ticker = mkt.ticker;
+            }
+          }
+        }
+      } catch(e) {}
+
+      // ── RL: same with KXMLBSPREAD ──
+      const rlTicker = eventTicker.replace('KXMLBGAME-', 'KXMLBSPREAD-');
+      const rlPath = `/markets%3Fevent_ticker%3D${encodeURIComponent(rlTicker)}%26limit%3D10`;
+      try {
+        const res = await fetch(`${KALSHI_PROXY}?path=${rlPath}`, {
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          for (const mkt of (data.markets || [])) {
+            const tk = (mkt.ticker || '').toUpperCase();
+            if (tk.endsWith(awayCode + '2')) {
+              results.awayRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+              results.rl_ticker_away = mkt.ticker;
+            }
+            if (tk.endsWith(homeCode + '2')) {
+              results.homeRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+              results.rl_ticker_home = mkt.ticker;
+            }
+          }
+        }
+      } catch(e) {}
     }
 
     kalshiCache[cacheKey] = { ts: Date.now(), data: results };
@@ -717,9 +691,10 @@ function kalshiPanelHTML(g, bets) {
       const homeTeam=${JSON.stringify(g.home_team)};
       const gameDate=${JSON.stringify(g.game_date)};
       const total=${JSON.stringify(g.total)};
+      const commenceTime=${JSON.stringify(g.commence_time)};
       const situations=${JSON.stringify((g.situations||[]).join(','))};
       const matchup=${JSON.stringify(g.away_team+' @ '+g.home_team)};
-      fetchKalshiPrices(gid,awayTeam,homeTeam,gameDate,total).then(kd=>{
+      fetchKalshiPrices(gid,awayTeam,homeTeam,gameDate,total,commenceTime).then(kd=>{
         const ts=document.getElementById('kts-'+gid);
         if(ts) ts.textContent='live · just now';
         for(const m of plays){
