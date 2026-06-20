@@ -1131,7 +1131,9 @@ function kalshiPanelHTML(g, bets) {
     key:m.key, label:m.label, verdict:m.verdict, ev:m.ev,
     dkOdds: dkOdds(m), dkLine: dkLine(m),
     p: prob(m),
-    maxC: kalshiMaxCents(prob(m))
+    maxC: kalshiMaxCents(prob(m)),
+    line: m.key==='total' ? (m.line||g.total_line) : null,
+    projTotal: m.key==='total' ? g.proj_total : null
   })));
 
   // Don't show Kalshi panel for games that have already started
@@ -2330,16 +2332,24 @@ function triggerAllKalshiFetches() {
         if (m.key === 'ml') askSize = v.includes('AWAY') ? (kd.awayML_size||0) : (kd.homeML_size||0);
         if (m.key === 'rl') askSize = v.includes('AWAY') ? (kd.awayRL_size||0) : (kd.homeRL_size||0);
         if (m.key === 'total') askSize = kd.total_size || 0;
-        const kev = cents != null ? evFromCents(m.p, cents) : null;
-        const equiv = cents != null ? centsToAmerican(cents) : '—';
-        const dkEv = parseFloat(m.ev);
-        // For totals: DK may be flat (9.0) while Kalshi uses .5 lines (8.5/9.5)
-        // We intentionally target the favorable .5 line — this is NOT a mismatch, it's better odds
+        // For totals: recalculate model prob using Kalshi's actual line (e.g. 8.5 not 9.0)
+        // since the .5 line has a different true probability than the DK flat line
+        let kalshiModelP = m.p;
         const dkTotalLine = parseFloat(m.line || 0);
         const kalshiTotalLine = kd.total_line || null;
+        if (m.key === 'total' && kalshiTotalLine != null && Math.abs(kalshiTotalLine - dkTotalLine) > 0.1) {
+          // Use the same logistic model but with Kalshi's line
+          const projTotal = parseFloat(m.projTotal || 0);
+          if (projTotal > 0) {
+            const pOver = 1 / (1 + Math.exp(1.7 * (kalshiTotalLine - projTotal) / TOTAL_SD));
+            kalshiModelP = v.includes('OVER') ? pOver : 1 - pOver;
+          }
+        }
+        const kev = cents != null ? evFromCents(kalshiModelP, cents) : null;
+        const equiv = cents != null ? centsToAmerican(cents) : '—';
+        const dkEv = parseFloat(m.ev);
         // Only flag as true mismatch if lines differ by more than 1 run (unexpected)
         const totalLineMismatch = m.key === 'total' && kalshiTotalLine != null && Math.abs(kalshiTotalLine - dkTotalLine) > 1.0;
-        // For .5 line differences (intentional), still compare EV — it's a better line so EV should be higher
         const delta = kev != null ? +(kev - dkEv).toFixed(1) : null;
         const better = delta != null && delta > 0;
         const worse = delta != null && delta < 0;
