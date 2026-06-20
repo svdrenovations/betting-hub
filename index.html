@@ -479,19 +479,14 @@ async function fetchOrderbook(ticker) {
     if (!res.ok) return null;
     const data = await res.json();
     const ob = data.orderbook_fp || {};
-    // yes_dollars: [[cents, size_dollars], ...] sorted best to worst
-    // For yes (over/away): lower cents = better price for buyer
-    // Aggregate cumulative size at each price level
-    // yes_dollars: [[price_in_dollars, size_fp], ...]
-    // price is in dollars e.g. 0.46 = 46¢, size_fp is in fractional contracts ($1 each)
-    // Sort ascending by price so lowest (best for buyer) comes first
-    const yesLevels = (ob.yes_dollars || []).sort((a,b) => a[0]-b[0]);
+    // yes_dollars: [[price_in_dollars, size_fp], ...] — bids only (a YES bid at X = NO ask at 100-X)
+    // Sort ascending by price so lowest cents (best ask for buyer) comes first
+    const yesLevels = (ob.yes_dollars || []).sort((a, b) => a[0] - b[0]);
     let cumSize = 0;
     const depths = [];
     for (const [priceDollars, sizeFp] of yesLevels) {
-      // Kalshi orderbook prices may be in cents (46) or dollars (0.46) - check scale
       const cents = priceDollars > 1 ? Math.round(priceDollars) : Math.round(priceDollars * 100);
-      cumSize += sizeDollars;
+      cumSize += parseFloat(sizeFp) || 0;
       if (cents > 0 && cents < 100) depths.push({ cents, cumSize: Math.round(cumSize) });
     }
     const result = { depths, topSize: depths[0]?.cumSize || 0 };
@@ -2137,12 +2132,12 @@ function triggerAllKalshiFetches() {
           const matchupKey = (matchup + '|' + m.key).toLowerCase();
           if (kalshiAccepted.has(gid + '-' + m.key) || kalshiAcceptedMatchups.has(matchupKey)) {
             kact.innerHTML = '<button class="k-accept" disabled style="border-color:var(--green-dim);background:var(--green-bg);color:var(--green);opacity:.7">Accepted ✓</button>';
-          } else if (cents == null || !aboveGate) {
-            kact.innerHTML = '<div class="no-edge-label">' + (cents == null ? 'no market' : 'no Kalshi edge') + '</div>';
+          } else if (cents == null) {
+            kact.innerHTML = '<div class="no-edge-label">no market</div>';
           } else {
             const ticker = m.key === 'total' ? kd.total_ticker : (m.key === 'rl' ? (v.includes('AWAY') ? kd.rl_ticker_away : kd.rl_ticker_home) : (v.includes('AWAY') ? kd.awayML_ticker : kd.homeML_ticker));
             const kalshiLine = m.key==='total' ? (kd.total_line||'') : '';
-            kact.innerHTML = '<button class="k-accept" onclick="acceptKalshi(\''+gid+'\',\''+m.key+'\',\''+m.label+'\',\''+m.verdict+'\','+Math.round(cents)+','+kev.toFixed(1)+','+m.p.toFixed(4)+','+dkEv.toFixed(1)+',\''+matchup+'\',\''+gameDate+'\',\''+situations+'\',\''+( ticker||'')+'\',\''+kalshiLine+'\')">Accept</button>';
+            kact.innerHTML = '<button class="k-accept" onclick="acceptKalshi(\''+gid+'\',\''+m.key+'\',\''+m.label+'\',\''+m.verdict+'\','+Math.round(cents)+','+kev.toFixed(1)+','+m.p.toFixed(4)+','+dkEv.toFixed(1)+',\''+matchup+'\',\''+gameDate+'\',\''+situations+'\',\''+(ticker||'')+'\',\''+kalshiLine+'\')">Accept</button>';
           }
         }
         const kjline = document.getElementById('kjline-' + gid + '-' + m.key);
@@ -2161,10 +2156,10 @@ function triggerAllKalshiFetches() {
         if (kjdetail && cents != null) kjdetail.textContent = 'Implied ' + centsToImplied(cents) + ' · win ' + kalshiPayout(cents) + ' per $100';
         if (kjnote) {
           if (cents == null) { kjnote.textContent = 'No active Kalshi market found for this play.'; }
-          else if (!aboveGate) { kjnote.style.color = 'var(--red)'; kjnote.textContent = 'Kalshi has priced this tighter than DK — edge drops below 6%. Skip Kalshi on this play and use the book.'; }
-          else if (totalLineMismatch) { kjnote.textContent = 'Kalshi line: ' + lineDir + ' ' + kalshiTotalLine + ' vs DK ' + lineDir + ' ' + dkTotalLine + '. Different lines - Kalshi: ' + Math.round(cents) + 'c (approx ' + equiv + ')'; }
-          else if (better) { kjnote.textContent = 'Kalshi is cheaper than DK on this play. At $100 risked: Kalshi returns ' + kalshiPayout(cents) + ' vs DK\'s ' + americanPayout(m.dkOdds) + '. Bet Kalshi.'; }
-          else { kjnote.textContent = 'Kalshi is more expensive than DK (' + equiv + ' vs ' + m.dkOdds + '). Still clears 6% EV on our model but DK is the better price. Hit DK first; use Kalshi if you need more action.'; }
+          else if (totalLineMismatch) { kjnote.textContent = 'Kalshi line: ' + lineDir + ' ' + kalshiTotalLine + ' vs DK ' + lineDir + ' ' + dkTotalLine + '. Different lines — Kalshi: ' + Math.round(cents) + '¢ (≈ ' + equiv + ')'; }
+          else if (kev != null && kev < 0) { kjnote.style.color = 'var(--red)'; kjnote.textContent = 'Kalshi has priced out your edge (' + equiv + ' vs DK ' + m.dkOdds + '). Kalshi EV is negative — use the book.'; }
+          else if (better) { kjnote.style.color = ''; kjnote.textContent = 'Kalshi is cheaper than DK. At $100 risked: Kalshi returns ' + kalshiPayout(cents) + ' vs DK\'s ' + americanPayout(m.dkOdds) + '. Kalshi is the better price.'; }
+          else { kjnote.style.color = ''; kjnote.textContent = 'Kalshi is more expensive than DK (' + equiv + ' vs ' + m.dkOdds + '). DK is the better price, but Kalshi still has positive EV on your model.'; }
         }
       }
     }).catch((e) => {
