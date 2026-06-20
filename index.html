@@ -1975,8 +1975,8 @@ function triggerAllKalshiFetches() {
         const pill = document.getElementById('kpill-' + gid + '-' + m.key);
         if (pill) {
           if (cents == null) { pill.textContent = 'No Kalshi market'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--s2);color:var(--text);border:1px solid var(--border)'; }
-          else if (totalLineMismatch) { pill.textContent = 'Kalshi: ' + lineDir + ' ' + kalshiTotalLine + ' (diff line)'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-dim)'; }
-          else if (better) { pill.textContent = 'Kalshi is better +' + Math.abs(delta) + '%'; pill.className = 'vs-pill vs-better'; }
+          if (cents == null) { pill.textContent = 'No Kalshi market'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--s2);color:var(--text);border:1px solid var(--border)'; }
+          else if (totalLineMismatch) { pill.textContent = lineDir + ' ' + kalshiTotalLine + ' on Kalshi'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-dim)'; }
           else if (worse) { pill.textContent = 'Kalshi is worse −' + Math.abs(delta) + '%'; pill.className = 'vs-pill vs-worse'; }
           else { pill.textContent = 'Same as DK'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--s2);color:var(--text);border:1px solid var(--border)'; }
         }
@@ -1984,17 +1984,16 @@ function triggerAllKalshiFetches() {
         const kevEl = document.getElementById('kev-' + gid + '-' + m.key);
         const kequiv = document.getElementById('kequiv-' + gid + '-' + m.key);
         // Show Kalshi line in price for totals
+        // price display
         if (kprice) {
-          const lineSuffix = (m.key === 'total' && kalshiTotalLine) ? ' · ' + lineDir[0] + kalshiTotalLine : '';
-          kprice.textContent = cents != null ? Math.round(cents) + '¢' + lineSuffix : '—';
+          kprice.textContent = cents != null ? Math.round(cents) + '¢' : '—';
         }
         if (cents != null && kprice) kprice.style.color = totalLineMismatch ? 'var(--amber)' : better ? 'var(--green)' : worse ? 'var(--red)' : 'var(--amber)';
         if (kevEl) {
-          if (kev != null) { kevEl.textContent = (kev >= 0 ? '+' : '') + kev.toFixed(1) + '% EV' + (totalLineMismatch ? ' (' + lineDir + ' ' + kalshiTotalLine + ')' : ''); kevEl.style.color = kev >= 6 ? 'var(--green)' : kev >= 0 ? 'var(--amber)' : 'var(--red)'; }
+          if (kev != null) { kevEl.textContent = (kev >= 0 ? '+' : '') + kev.toFixed(1) + '% EV'; kevEl.style.color = kev >= 6 ? 'var(--green)' : kev >= 0 ? 'var(--amber)' : 'var(--red)'; }
           else { kevEl.textContent = '—'; }
         }
-        if (kequiv) kequiv.textContent = cents != null ? '≈ ' + equiv + ' equiv' : '—';
-        const kact = document.getElementById('kact-' + gid + '-' + m.key);
+        if (kequiv) kequiv.textContent = cents != null ? (totalLineMismatch ? (lineDir + ' ' + kalshiTotalLine + ' · ') : '') + '≈ ' + equiv + ' equiv' : '—';
         if (kact) {
           const matchupKey = (matchup + '|' + m.key).toLowerCase();
           if (kalshiAccepted.has(gid + '-' + m.key) || kalshiAcceptedMatchups.has(matchupKey)) {
