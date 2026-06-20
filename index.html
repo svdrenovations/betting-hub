@@ -462,8 +462,9 @@ function kalshiMaxCents(p) {
 function evFromCents(p, cents) {
   const c = parseFloat(cents) / 100;
   if (isNaN(c) || !(p > 0)) return null;
-  return +((p * (1 - c) - (1 - p) * c) * 100).toFixed(1);
-}
+  // EV per dollar risked: (p * payout - (1-p)) / cost
+  // payout on win = (1-c)/c dollars per dollar risked
+  return +(( p * (1 - c) / c - (1 - p)) * 100).toFixed(1);
 
 const kalshiCache = {};
 const kalshiAccepted = new Set(); // tracks 'gameId-market' pairs that have been accepted
@@ -596,50 +597,50 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
       } catch(e) {}
     }
 
-    // ── TOTAL: KXMLBTOTAL uses same event ticker pattern ──
+    // ── TOTAL: Kalshi totals are under KXMLBGAME event, not KXMLBTOTAL ──
+    // The ML markets we already fetched are from KXMLBGAME — fetch that same event for totals
     if (total) {
       const totLine = parseFloat(total);
-      const candidateTOT = candidateML.map(t => t.replace('KXMLBGAME-', 'KXMLBTOTAL-'));
-      for (const ticker of candidateTOT) {
+      for (const ticker of candidateML) {
         try {
-          const path = `/markets%3Fevent_ticker%3D${encodeURIComponent(ticker)}%26limit%3D10`;
+          const path = `/markets%3Fevent_ticker%3D${encodeURIComponent(ticker)}%26limit%3D20`;
           const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
             headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
           });
           if (!res.ok) continue;
           const data = await res.json();
           const mkts = data.markets || [];
-          // Match Kalshi total line to our DK line
-          // Kalshi ticker ends in e.g. -85 = 8.5 runs
-          // Only use lines that actually exist (8.5, 9.5 etc) — not the DK line itself
-          // Pick the line closest to our DK total; on a tie pick lower for OVER, higher for UNDER
+          // Total markets have yes_sub_title like "Over 8.5" or "Under 8.5"
           let bestDiff = 99, bestLine = null, bestMkt = null;
           for (const mkt of mkts) {
-            const tk = (mkt.ticker || '');
-            const numMatch = tk.match(/-(\d+)$/);
-            if (!numMatch) continue;
-            const kalshiLine_raw = parseInt(numMatch[1]);
-            // -85=8.5 runs, -130=13.0 runs, -13 could be 1.3 or 13.0
-            let kalshiLine = kalshiLine_raw / 10;
-            if (kalshiLine < 4) kalshiLine = kalshiLine_raw; // e.g. 13 → 13.0
-            if (kalshiLine < 4 || kalshiLine > 30) continue;
-            if (diff < bestDiff || (diff === bestDiff && bestLine != null)) {
-              // On tie: prefer lower line for OVER plays, higher for UNDER
-              const isTie = diff === bestDiff;
-              if (!isTie || (kalshiLine < bestLine)) {
-                bestDiff = diff;
-                bestLine = kalshiLine;
-                bestMkt = mkt;
-              }
+            const sub = (mkt.yes_sub_title || mkt.no_sub_title || '').toLowerCase();
+            const lineMatch = sub.match(/(over|under)\s+([\d.]+)/);
+            if (!lineMatch) continue;
+            const kalshiLine = parseFloat(lineMatch[2]);
+            if (isNaN(kalshiLine) || kalshiLine < 4 || kalshiLine > 30) continue;
+            const diff = Math.abs(kalshiLine - totLine);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              bestLine = kalshiLine;
+              bestMkt = mkt;
             }
           }
           if (bestMkt) {
-            results.total_cents_yes = parseFloat(bestMkt.yes_ask_dollars || bestMkt.last_price_dollars || 0) * 100;
-            results.total_cents_no  = parseFloat(bestMkt.no_ask_dollars || 0) * 100;
+            // yes = the direction in yes_sub_title (e.g. "Over 8.5")
+            const yesIsOver = (bestMkt.yes_sub_title||'').toLowerCase().includes('over');
+            results.total_cents_yes = yesIsOver
+              ? parseFloat(bestMkt.yes_ask_dollars || bestMkt.last_price_dollars || 0) * 100
+              : parseFloat(bestMkt.no_ask_dollars || 0) * 100;
+            results.total_cents_no = yesIsOver
+              ? parseFloat(bestMkt.no_ask_dollars || 0) * 100
+              : parseFloat(bestMkt.yes_ask_dollars || bestMkt.last_price_dollars || 0) * 100;
             results.total_ticker = bestMkt.ticker;
             results.total_line = bestLine;
+            break;
           }
-          if (results.total_cents_yes != null) break;
+        } catch(e) {}
+      }
+    }
         } catch(e) {}
       }
     }
