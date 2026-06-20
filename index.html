@@ -757,7 +757,7 @@ const kalshiAcceptedMatchups = new Set(); // tracks 'matchup|market' from kalshi
 const kalshiDayCache = {};
 
 const KALSHI_TEAM_CODES = {
-  'Arizona Diamondbacks':'ARI','Atlanta Braves':'ATL','Baltimore Orioles':'BAL',
+  'Arizona Diamondbacks':'AZ','Atlanta Braves':'ATL','Baltimore Orioles':'BAL',
   'Boston Red Sox':'BOS','Chicago Cubs':'CHC','Chicago White Sox':'CWS',
   'Cincinnati Reds':'CIN','Cleveland Guardians':'CLE','Colorado Rockies':'COL',
   'Detroit Tigers':'DET','Houston Astros':'HOU','Kansas City Royals':'KC',
@@ -975,30 +975,38 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
       // Fallback: search by series_ticker + filter by team codes in ticker
       if (!found) {
         try {
-          const path = `/markets%3Fseries_ticker%3DKXMLBTOTAL%26limit%3D100%26status%3Dopen`;
-          const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
-            headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-          });
-          if (res.ok) {
-            const data = await res.json();
-            const allMkts = data.markets || [];
-            console.log('Total fallback: series returned', allMkts.length, 'markets');
-            if (allMkts.length) console.log('Sample tickers:', allMkts.slice(0,5).map(m=>m.ticker));
-            const mkts = allMkts.filter(m => {
-              const tk = (m.ticker || '').toUpperCase();
-              return tk.includes(teamPair) || (tk.includes(awayCode) && tk.includes(homeCode));
+          let allMkts = [];
+          let cursor = '';
+          for (let page = 0; page < 5; page++) {
+            const cursorParam = cursor ? `%26cursor%3D${encodeURIComponent(cursor)}` : '';
+            const path = `/markets%3Fseries_ticker%3DKXMLBTOTAL%26limit%3D100%26status%3Dopen${cursorParam}`;
+            const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
+              headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
             });
-            console.log('Total fallback filtered to', mkts.length, 'for teamPair', teamPair, awayCode, homeCode);
-            const { bestMkt, bestLine, bestDiff } = findBestMkt(mkts, totalVerdict);
-            if (bestMkt) {
-              results.total_cents_yes = parseFloat(bestMkt.yes_ask_dollars || bestMkt.last_price_dollars || 0) * 100;
-              results.total_cents_no  = parseFloat(bestMkt.no_ask_dollars || 0) * 100;
-              results.total_ticker = bestMkt.ticker;
-              results.total_line = bestLine;
-              results.total_size = Math.round(parseFloat(bestMkt.yes_ask_size_fp || 0));
-            }
+            if (!res.ok) break;
+            const data = await res.json();
+            const batch = data.markets || [];
+            allMkts = allMkts.concat(batch);
+            cursor = data.cursor || '';
+            console.log(`Total fallback page ${page}: ${batch.length} markets, cursor=${cursor}`);
+            if (!cursor || batch.length < 100) break;
           }
-        } catch(e) {}
+          console.log('Total fallback: total markets fetched', allMkts.length);
+          console.log('Sample tickers:', allMkts.slice(0,5).map(m=>m.ticker));
+          const mkts = allMkts.filter(m => {
+            const tk = (m.ticker || '').toUpperCase();
+            return tk.includes(teamPair) || (tk.includes(awayCode) && tk.includes(homeCode));
+          });
+          console.log('Total fallback filtered to', mkts.length, 'for teamPair', teamPair, awayCode, homeCode);
+          const { bestMkt, bestLine, bestDiff } = findBestMkt(mkts, totalVerdict);
+          if (bestMkt) {
+            results.total_cents_yes = parseFloat(bestMkt.yes_ask_dollars || bestMkt.last_price_dollars || 0) * 100;
+            results.total_cents_no  = parseFloat(bestMkt.no_ask_dollars || 0) * 100;
+            results.total_ticker = bestMkt.ticker;
+            results.total_line = bestLine;
+            results.total_size = Math.round(parseFloat(bestMkt.yes_ask_size_fp || 0));
+          }
+        } catch(e) { console.error('Total fallback error:', e); }
       }
     }
 
