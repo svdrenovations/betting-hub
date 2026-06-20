@@ -639,7 +639,7 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
           // For UNDER plays: pick highest line <= our DK line (better to cover higher)
           // On exact miss: pick closest, tie-break toward safer line
           let bestMkt = null, bestLine = null, bestDiff = 99;
-          const isOver = v.includes('OVER');
+          const isOver = true; // pick lower line on tie
           for (const mkt of mkts) {
             const sub = (mkt.yes_sub_title || '').toLowerCase();
             const lineMatch = sub.match(/(over|under)[\s\w]+(\d+\.?\d*)/);
