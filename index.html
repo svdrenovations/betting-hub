@@ -498,7 +498,7 @@ async function fetchAllKalshiML(gameDate) {
   const dd = String(d.getDate()).padStart(2,'0');
   const prefix = `KXMLBGAME-${yy}${mon}${dd}`;
   // Search by event_ticker prefix — returns all games on this date
-  const path = `/markets%3Fstatus%3Dactive%26series_ticker%3DKXMLBGAME%26event_ticker%3D${prefix}%26limit%3D200`;
+  const path = `/markets%3Fseries_ticker%3DKXMLBGAME%26limit%3D200`;
   try {
     const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
       headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
@@ -520,7 +520,7 @@ async function fetchAllKalshiRL(gameDate) {
   const mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
   const dd = String(d.getDate()).padStart(2,'0');
   const prefix = `KXMLBSPREAD-${yy}${mon}${dd}`;
-  const path = `/markets%3Fstatus%3Dactive%26series_ticker%3DKXMLBSPREAD%26event_ticker%3D${prefix}%26limit%3D200`;
+  const path = `/markets%3Fseries_ticker%3DKXMLBSPREAD%26limit%3D200`;
   try {
     const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
       headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
@@ -544,7 +544,7 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total) {
     // ── ML: search all today's KXMLBGAME markets, match by event_ticker containing both team codes ──
     const mlMarkets = await fetchAllKalshiML(gameDate);
     for (const mkt of mlMarkets) {
-      if (mkt.status !== 'active') continue;
+      
       const ev = (mkt.event_ticker || '').toUpperCase();
       const tk = (mkt.ticker || '').toUpperCase();
       // Event ticker contains both team codes e.g. KXMLBGAME-26JUN192210ANGATH
@@ -564,7 +564,7 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total) {
     // ── RL: same approach for KXMLBSPREAD ──
     const rlMarkets = await fetchAllKalshiRL(gameDate);
     for (const mkt of rlMarkets) {
-      if (mkt.status !== 'active') continue;
+      
       const ev = (mkt.event_ticker || '').toUpperCase();
       const tk = (mkt.ticker || '').toUpperCase();
       if (!ev.includes(awayCode) || !ev.includes(homeCode)) continue;
