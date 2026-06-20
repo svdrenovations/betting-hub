@@ -1832,7 +1832,7 @@ function triggerAllKalshiFetches() {
         if (kjnote) {
           if (cents == null) { kjnote.textContent = 'No active Kalshi market found for this play.'; }
           else if (!aboveGate) { kjnote.style.color = 'var(--red)'; kjnote.textContent = 'Kalshi has priced this tighter than DK — edge drops below 6%. Skip Kalshi on this play and use the book.'; }
-          else if (better) { kjnote.textContent = 'Kalshi is cheaper than DK on this play. At $100 risked: Kalshi returns ' + kalshiPayout(cents) + ' vs DK's ' + americanPayout(m.dkOdds) + '. Bet Kalshi.'; }
+          else if (better) { kjnote.textContent = 'Kalshi is cheaper than DK on this play. At $100 risked: Kalshi returns ' + kalshiPayout(cents) + ' vs DK\'s ' + americanPayout(m.dkOdds) + '. Bet Kalshi.'; }
           else { kjnote.textContent = 'Kalshi is more expensive than DK (' + equiv + ' vs ' + m.dkOdds + '). Still clears 6% EV on our model but DK is the better price. Hit DK first; use Kalshi if you need more action.'; }
         }
       }
