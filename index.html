@@ -482,12 +482,17 @@ async function fetchOrderbook(ticker) {
     // yes_dollars: [[cents, size_dollars], ...] sorted best to worst
     // For yes (over/away): lower cents = better price for buyer
     // Aggregate cumulative size at each price level
-    const yesLevels = (ob.yes_dollars || []).sort((a,b) => a[0]-b[0]); // ascending = best ask first
+    // yes_dollars: [[price_in_dollars, size_fp], ...]
+    // price is in dollars e.g. 0.46 = 46¢, size_fp is in fractional contracts ($1 each)
+    // Sort ascending by price so lowest (best for buyer) comes first
+    const yesLevels = (ob.yes_dollars || []).sort((a,b) => a[0]-b[0]);
     let cumSize = 0;
     const depths = [];
-    for (const [price, size] of yesLevels) {
-      cumSize += size;
-      depths.push({ cents: price, cumSize: Math.round(cumSize) });
+    for (const [priceDollars, sizeFp] of yesLevels) {
+      const cents = Math.round(priceDollars * 100);
+      const sizeDollars = parseFloat(sizeFp) || 0; // each contract = $1
+      cumSize += sizeDollars;
+      if (cents > 0 && cents < 100) depths.push({ cents, cumSize: Math.round(cumSize) });
     }
     const result = { depths, topSize: depths[0]?.cumSize || 0 };
     orderbookCache[ticker] = { ts: Date.now(), data: result };
