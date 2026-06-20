@@ -175,12 +175,29 @@ async function buildEventMap(date) {
   } while (cursor && pages < 12);
   return evs;
 }
+// Kalshi team codes (from live discovery) — match on these, not the truncated city text.
+const TEAM_CODE = {
+  'arizona diamondbacks':'AZ','atlanta braves':'ATL','baltimore orioles':'BAL','boston red sox':'BOS',
+  'chicago cubs':'CHC','chicago white sox':'CWS','cincinnati reds':'CIN','cleveland guardians':'CLE',
+  'colorado rockies':'COL','detroit tigers':'DET','houston astros':'HOU','kansas city royals':'KC',
+  'los angeles angels':'LAA','los angeles dodgers':'LAD','miami marlins':'MIA','milwaukee brewers':'MIL',
+  'minnesota twins':'MIN','new york mets':'NYM','new york yankees':'NYY','athletics':'ATH',
+  'philadelphia phillies':'PHI','pittsburgh pirates':'PIT','san diego padres':'SD','san francisco giants':'SF',
+  'seattle mariners':'SEA','st. louis cardinals':'STL','tampa bay rays':'TB','texas rangers':'TEX',
+  'toronto blue jays':'TOR','washington nationals':'WSH'
+};
+function codeFor(teamName) {
+  const k = String(teamName || '').toLowerCase().trim();
+  if (TEAM_CODE[k]) return TEAM_CODE[k];
+  for (const [name, code] of Object.entries(TEAM_CODE)) if (k.includes(name) || name.includes(k)) return code;
+  return null;
+}
 function resolveGame(play, evs) {
+  const aCode = codeFor(play.away_team), hCode = codeFor(play.home_team);
+  if (!aCode || !hCode) return null;
   for (const [eb, teams] of Object.entries(evs)) {
-    if (teams.length < 2) continue;
-    const a = teams.find(t => teamsMatch(play.away_team, t.city));
-    const h = teams.find(t => teamsMatch(play.home_team, t.city));
-    if (a && h && a.code !== h.code) return { eventBase: eb, awayCode: a.code, homeCode: h.code };
+    const codes = teams.map(t => t.code);
+    if (codes.includes(aCode) && codes.includes(hCode)) return { eventBase: eb, awayCode: aCode, homeCode: hCode };
   }
   return null;
 }
@@ -226,8 +243,18 @@ async function fetchPrice(ticker, action) {
       } catch (e) {}
     }
     const volume = num(m.volume_fp) ?? num(m.volume_24h_fp) ?? num(m.volume) ?? null;
-    return { cents, volume, last: toC(m.last_price_dollars) };
+    return { cents, volume, last: toC(m.last_price_dollars), status: m.status };
   } catch (e) { return { cents: null, error: e.message }; }
+}
+
+// Scheduled first pitch (ms) parsed from the event ticker's ET time token, e.g. KXMLBGAME-26JUN19'2210'BOSSEA.
+// June is EDT (UTC-4). Returns null if it can't parse.
+function gameStartMs(eventBase, dateStr) {
+  const body = String(eventBase || '').replace(/^KX[A-Z]+-/, '');   // strip the series prefix
+  const hhmm = body.slice(7, 11);                                   // 7-char date token, then HHMM
+  if (!/^\d{4}$/.test(hhmm)) return null;
+  const t = Date.parse(`${dateStr}T${hhmm.slice(0,2)}:${hhmm.slice(2,4)}:00-04:00`);
+  return isNaN(t) ? null : t;
 }
 
 // Resolve the whole slate to Kalshi markets + prices + EV-at-Kalshi (shared by test and run).
@@ -243,10 +270,15 @@ async function resolveSlate(date) {
     const pr = await fetchPrice(mk.ticker, mk.action);
     let kImplied = null, kEv = null;
     if (pr.cents != null && p.modelProb != null) { kImplied = pr.cents / 100; kEv = (p.modelProb * (100 / pr.cents) - 1) * 100; }
+    const startMs = gameStartMs(game.eventBase, p.date);
+    const started = startMs != null && Date.now() >= startMs;     // first pitch already happened?
+    const active  = pr.status ? (pr.status === 'active') : true;
+    const st = started ? 'started'
+             : pr.cents == null ? (pr.error ? 'price err' : 'no price yet')
+             : (active ? 'ok' : 'closed');
     out.push({ ...p, kalshi_ticker: mk.ticker, action: mk.action, entry_cents: pr.cents,
       kalshi_implied: kImplied != null ? +kImplied.toFixed(4) : null,
-      kalshi_ev: kEv != null ? +kEv.toFixed(2) : null, kalshi_volume: pr.volume ?? null,
-      status: pr.cents != null ? 'ok' : (pr.error ? 'price err' : 'no price yet') });
+      kalshi_ev: kEv != null ? +kEv.toFixed(2) : null, kalshi_volume: pr.volume ?? null, status: st });
   }
   return out;
 }
@@ -272,7 +304,7 @@ async function cmdTest(date) {
   requireSupabase();                 // reads mlb_games only
   const res = await resolveSlate(date);
   const ok = res.filter(r => r.status === 'ok');
-  console.log(`${date}: ${res.length} plays resolved, ${ok.length} priced (DRY READ — nothing written)\n`);
+  console.log(`${date}: ${res.length} plays resolved, ${ok.length} pre-game & priced (loggable) — DRY READ, nothing written\n`);
   for (const r of res) {
     const px = r.entry_cents != null ? `${Math.round(r.entry_cents)}c` : '--';
     const ev = r.kalshi_ev != null ? `${r.kalshi_ev > 0 ? '+' : ''}${r.kalshi_ev}%` : '';
