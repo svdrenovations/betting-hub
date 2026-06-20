@@ -683,92 +683,17 @@ function kalshiPanelHTML(g, bets) {
     </div>
     ${rows}
   </div>
-  <script>
-    (function(){
-      const gid='${gid}';
-      const plays=${playsJson};
-      const awayTeam=${JSON.stringify(g.away_team)};
-      const homeTeam=${JSON.stringify(g.home_team)};
-      const gameDate=${JSON.stringify(g.game_date)};
-      const total=${JSON.stringify(g.total)};
-      const commenceTime=${JSON.stringify(g.commence_time)};
-      const situations=${JSON.stringify((g.situations||[]).join(','))};
-      const matchup=${JSON.stringify(g.away_team+' @ '+g.home_team)};
-      fetchKalshiPrices(gid,awayTeam,homeTeam,gameDate,total,commenceTime).then(kd=>{
-        const ts=document.getElementById('kts-'+gid);
-        if(ts) ts.textContent='live · just now';
-        for(const m of plays){
-          let cents=null;
-          const v=(m.verdict||'').toUpperCase();
-          if(m.key==='ml') cents=v.includes('AWAY')?kd.awayML_cents:kd.homeML_cents;
-          if(m.key==='rl') cents=v.includes('AWAY')?kd.awayRL_cents:kd.homeRL_cents;
-          if(m.key==='total') cents=v.includes('OVER')?kd.total_cents_yes:kd.total_cents_no;
-          const kev = cents!=null ? evFromCents(m.p, cents) : null;
-          const equiv = cents!=null ? centsToAmerican(cents) : '—';
-          const dkEv = parseFloat(m.ev);
-          const delta = (kev!=null) ? +(kev-dkEv).toFixed(1) : null;
-          const better = delta!=null && delta>0;
-          const worse = delta!=null && delta<0;
-          const aboveGate = kev!=null && kev>=6;
-          // pill
-          const pill=document.getElementById('kpill-'+gid+'-'+m.key);
-          if(pill){
-            if(cents==null){pill.textContent='No Kalshi market';pill.className='vs-pill';pill.style.cssText='background:var(--s2);color:var(--text);border:1px solid var(--border)';}
-            else if(better){pill.textContent='Kalshi is better +'+Math.abs(delta)+'%';pill.className='vs-pill vs-better';}
-            else if(worse){pill.textContent='Kalshi is worse −'+Math.abs(delta)+'%';pill.className='vs-pill vs-worse';}
-            else{pill.textContent='Same as DK';pill.className='vs-pill';pill.style.cssText='background:var(--s2);color:var(--text);border:1px solid var(--border)';}
-          }
-          // price + ev + equiv
-          const kprice=document.getElementById('kprice-'+gid+'-'+m.key);
-          const kevEl=document.getElementById('kev-'+gid+'-'+m.key);
-          const kequiv=document.getElementById('kequiv-'+gid+'-'+m.key);
-          if(kprice) kprice.textContent=cents!=null?Math.round(cents)+'¢':'—';
-          if(cents!=null && kprice) kprice.style.color=better?'var(--green)':worse?'var(--red)':'var(--amber)';
-          if(kevEl){
-            if(kev!=null){kevEl.textContent=(kev>=0?'+':'')+kev.toFixed(1)+'% EV'; kevEl.style.color=kev>=6?'var(--green)':kev>=0?'var(--amber)':'var(--red)';}
-            else{kevEl.textContent='—';}
-          }
-          if(kequiv) kequiv.textContent=cents!=null?'≈ '+equiv+' equiv':'—';
-          // accept button
-          const kact=document.getElementById('kact-'+gid+'-'+m.key);
-          if(kact){
-            if(cents==null || !aboveGate){
-              kact.innerHTML='<div class="no-edge-label">'+(cents==null?'no market':'no Kalshi edge')+'</div>';
-            } else {
-              const ticker = m.key==='total'?kd.total_ticker:(m.key==='rl'?(v.includes('AWAY')?kd.rl_ticker_away:kd.rl_ticker_home):null);
-              kact.innerHTML='<button class="k-accept" onclick="acceptKalshi(\''+gid+'\',\''+m.key+'\',\''+m.label+'\',\''+m.verdict+'\','+Math.round(cents)+','+kev.toFixed(1)+','+m.p.toFixed(4)+','+dkEv.toFixed(1)+',\''+matchup+'\',\''+gameDate+'\',\''+situations+'\',\''+(ticker||'')+'\')">Accept</button>';
-            }
-          }
-          // dropdown juice card
-          const kjline=document.getElementById('kjline-'+gid+'-'+m.key);
-          const kjdetail=document.getElementById('kjdetail-'+gid+'-'+m.key);
-          const kjnote=document.getElementById('kjnote-'+gid+'-'+m.key);
-          const kjcard=document.getElementById('kjcard-'+gid+'-'+m.key);
-          if(kjline){
-            if(cents==null){kjline.textContent='No Kalshi market found';}
-            else{
-              const sideLabel=v.includes('OVER')||v.includes('AWAY')?'Yes':'No';
-              kjline.textContent=sideLabel+' @ '+Math.round(cents)+'¢ (≈ '+equiv+')';
-              kjline.style.color=better?'var(--green)':worse?'var(--red)':'var(--amber)';
-              if(kjcard) kjcard.style.borderColor=better?'var(--green-dim)':worse?'var(--red-dim)':'var(--amber-dim)';
-            }
-          }
-          if(kjdetail && cents!=null){
-            kjdetail.textContent='Implied '+centsToImplied(cents)+' · win '+kalshiPayout(cents)+' per $100';
-          }
-          if(kjnote){
-            if(cents==null){kjnote.textContent='No active Kalshi market found for this play.';}
-            else if(!aboveGate){kjnote.style.color='var(--red)';kjnote.textContent='Kalshi has priced this tighter than DK — edge drops below 6%. Skip Kalshi on this play and use the book.';}
-            else if(better){kjnote.textContent='Kalshi is cheaper than DK on this play. At $100 risked: Kalshi returns '+kalshiPayout(cents)+' vs DK\'s '+americanPayout(m.dkOdds)+'. Bet Kalshi.';}
-            else{kjnote.textContent='Kalshi is more expensive than DK ('+equiv+' vs '+m.dkOdds+'). Still clears 6% EV on our model but DK is the better price. Hit DK first; use Kalshi if you need more action.';}
-          }
-        }
-      }).catch(()=>{
-        const ts=document.getElementById('kts-'+gid);
-        if(ts) ts.textContent='price fetch failed';
-      });
-    })();
-  <\/script>`;
+  <div id="kdata-${gid}" 
+    data-gid="${gid}"
+    data-away="${g.away_team.replace(/"/g,'&quot;')}"
+    data-home="${g.home_team.replace(/"/g,'&quot;')}"
+    data-date="${g.game_date}"
+    data-ct="${(g.commence_time||'').replace(/"/g,'&quot;')}"
+    data-total="${g.total||''}"
+    data-sits="${(g.situations||[]).join(',').replace(/"/g,'&quot;')}"
+    data-matchup="${(g.away_team+' @ '+g.home_team).replace(/"/g,'&quot;')}"
+    data-plays="${playsJson.replace(/"/g,'&quot;')}"
+  ></div>`
 }
 
 function toggleKDrop(id, btn) {
@@ -1492,6 +1417,8 @@ function renderGames(){
   const sb=document.getElementById('game-sit-filters');if(sb)sb.innerHTML=gameSitFilterHTML();
   if(!filtered.length){document.getElementById('games-container').innerHTML=`<div class="empty-state"><div class="empty-title">No games match this filter</div></div>`;return;}
   document.getElementById('games-container').innerHTML=`<div class="games-grid">${filtered.map(gameCardHTML).join('')}</div>`;
+  // Trigger Kalshi fetches for all panels after DOM is ready
+  setTimeout(triggerAllKalshiFetches, 100);
 }
 
 function renderBestPlays(){
@@ -1824,6 +1751,96 @@ function exportCSV(){
   const esc=v=>`"${(v==null?'':v).toString().replace(/"/g,'""')}"`;
   const csv=[cols.map(c=>c[0]).join(','),...out.map(b=>cols.map(c=>esc(c[1](b))).join(','))].join('\n');
   const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='mlb_bets_'+isoDate(new Date())+'.csv';a.click();
+}
+
+
+// ── KALSHI PANEL UPDATER ──────────────────────────────────────────────────────
+// Called after renderGames() because innerHTML scripts don't execute
+function triggerAllKalshiFetches() {
+  const panels = document.querySelectorAll('[id^="kdata-"]');
+  panels.forEach(el => {
+    const gid = el.dataset.gid;
+    if (!gid) return;
+    let plays;
+    try { plays = JSON.parse(el.dataset.plays || '[]'); } catch(e) { plays = []; }
+    if (!plays) return;
+    const awayTeam = el.dataset.away;
+    const homeTeam = el.dataset.home;
+    const gameDate = el.dataset.date;
+    const commenceTime = el.dataset.ct;
+    const total = el.dataset.total;
+    const situations = el.dataset.sits;
+    const matchup = el.dataset.matchup;
+
+    fetchKalshiPrices(gid, awayTeam, homeTeam, gameDate, total, commenceTime).then(kd => {
+      const ts = document.getElementById('kts-' + gid);
+      if (ts) ts.textContent = 'live · just now';
+      for (const m of plays) {
+        let cents = null;
+        const v = (m.verdict || '').toUpperCase();
+        if (m.key === 'ml') cents = v.includes('AWAY') ? kd.awayML_cents : kd.homeML_cents;
+        if (m.key === 'rl') cents = v.includes('AWAY') ? kd.awayRL_cents : kd.homeRL_cents;
+        if (m.key === 'total') cents = v.includes('OVER') ? kd.total_cents_yes : kd.total_cents_no;
+        const kev = cents != null ? evFromCents(m.p, cents) : null;
+        const equiv = cents != null ? centsToAmerican(cents) : '—';
+        const dkEv = parseFloat(m.ev);
+        const delta = (kev != null) ? +(kev - dkEv).toFixed(1) : null;
+        const better = delta != null && delta > 0;
+        const worse = delta != null && delta < 0;
+        const aboveGate = kev != null && kev >= 6;
+        // pill
+        const pill = document.getElementById('kpill-' + gid + '-' + m.key);
+        if (pill) {
+          if (cents == null) { pill.textContent = 'No Kalshi market'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--s2);color:var(--text);border:1px solid var(--border)'; }
+          else if (better) { pill.textContent = 'Kalshi is better +' + Math.abs(delta) + '%'; pill.className = 'vs-pill vs-better'; }
+          else if (worse) { pill.textContent = 'Kalshi is worse −' + Math.abs(delta) + '%'; pill.className = 'vs-pill vs-worse'; }
+          else { pill.textContent = 'Same as DK'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--s2);color:var(--text);border:1px solid var(--border)'; }
+        }
+        const kprice = document.getElementById('kprice-' + gid + '-' + m.key);
+        const kevEl = document.getElementById('kev-' + gid + '-' + m.key);
+        const kequiv = document.getElementById('kequiv-' + gid + '-' + m.key);
+        if (kprice) kprice.textContent = cents != null ? Math.round(cents) + '¢' : '—';
+        if (cents != null && kprice) kprice.style.color = better ? 'var(--green)' : worse ? 'var(--red)' : 'var(--amber)';
+        if (kevEl) {
+          if (kev != null) { kevEl.textContent = (kev >= 0 ? '+' : '') + kev.toFixed(1) + '% EV'; kevEl.style.color = kev >= 6 ? 'var(--green)' : kev >= 0 ? 'var(--amber)' : 'var(--red)'; }
+          else { kevEl.textContent = '—'; }
+        }
+        if (kequiv) kequiv.textContent = cents != null ? '≈ ' + equiv + ' equiv' : '—';
+        const kact = document.getElementById('kact-' + gid + '-' + m.key);
+        if (kact) {
+          if (cents == null || !aboveGate) {
+            kact.innerHTML = '<div class="no-edge-label">' + (cents == null ? 'no market' : 'no Kalshi edge') + '</div>';
+          } else {
+            const ticker = m.key === 'total' ? kd.total_ticker : (m.key === 'rl' ? (v.includes('AWAY') ? kd.rl_ticker_away : kd.rl_ticker_home) : (v.includes('AWAY') ? kd.awayML_ticker : kd.homeML_ticker));
+            kact.innerHTML = '<button class="k-accept" onclick="acceptKalshi(\''+gid+'\',\''+m.key+'\',\''+m.label+'\',\''+m.verdict+'\','+Math.round(cents)+','+kev.toFixed(1)+','+m.p.toFixed(4)+','+dkEv.toFixed(1)+',\''+matchup+'\',\''+gameDate+'\',\''+situations+'\',\''+( ticker||'')+'\')">Accept</button>';
+          }
+        }
+        const kjline = document.getElementById('kjline-' + gid + '-' + m.key);
+        const kjdetail = document.getElementById('kjdetail-' + gid + '-' + m.key);
+        const kjnote = document.getElementById('kjnote-' + gid + '-' + m.key);
+        const kjcard = document.getElementById('kjcard-' + gid + '-' + m.key);
+        if (kjline) {
+          if (cents == null) { kjline.textContent = 'No Kalshi market found'; }
+          else {
+            const sideLabel = v.includes('OVER') || v.includes('AWAY') ? 'Yes' : 'No';
+            kjline.textContent = sideLabel + ' @ ' + Math.round(cents) + '¢ (≈ ' + equiv + ')';
+            kjline.style.color = better ? 'var(--green)' : worse ? 'var(--red)' : 'var(--amber)';
+            if (kjcard) kjcard.style.borderColor = better ? 'var(--green-dim)' : worse ? 'var(--red-dim)' : 'var(--amber-dim)';
+          }
+        }
+        if (kjdetail && cents != null) kjdetail.textContent = 'Implied ' + centsToImplied(cents) + ' · win ' + kalshiPayout(cents) + ' per $100';
+        if (kjnote) {
+          if (cents == null) { kjnote.textContent = 'No active Kalshi market found for this play.'; }
+          else if (!aboveGate) { kjnote.style.color = 'var(--red)'; kjnote.textContent = 'Kalshi has priced this tighter than DK — edge drops below 6%. Skip Kalshi on this play and use the book.'; }
+          else if (better) { kjnote.textContent = 'Kalshi is cheaper than DK on this play. At $100 risked: Kalshi returns ' + kalshiPayout(cents) + ' vs DK's ' + americanPayout(m.dkOdds) + '. Bet Kalshi.'; }
+          else { kjnote.textContent = 'Kalshi is more expensive than DK (' + equiv + ' vs ' + m.dkOdds + '). Still clears 6% EV on our model but DK is the better price. Hit DK first; use Kalshi if you need more action.'; }
+        }
+      }
+    }).catch(() => {
+      const ts = document.getElementById('kts-' + gid);
+      if (ts) ts.textContent = 'price fetch failed';
+    });
+  });
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
