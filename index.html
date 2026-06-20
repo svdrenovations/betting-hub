@@ -695,10 +695,12 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
           if (tk.endsWith(awayCode + '2')) {
             results.awayRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
             results.rl_ticker_away = mkt.ticker;
+            results.awayRL_size = Math.round(parseFloat(mkt.yes_ask_size_fp || 0));
           }
           if (tk.endsWith(homeCode + '2')) {
             results.homeRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
             results.rl_ticker_home = mkt.ticker;
+            results.homeRL_size = Math.round(parseFloat(mkt.yes_ask_size_fp || 0));
           }
         }
         if (results.awayRL_cents != null || results.homeRL_cents != null) break;
