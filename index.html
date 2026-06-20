@@ -466,92 +466,117 @@ function evFromCents(p, cents) {
 }
 
 const kalshiCache = {};
+// Day-level cache: all markets for a given date, fetched once and shared across all games
+const kalshiDayCache = {};
+
+const KALSHI_TEAM_CODES = {
+  'Arizona Diamondbacks':'ARI','Atlanta Braves':'ATL','Baltimore Orioles':'BAL',
+  'Boston Red Sox':'BOS','Chicago Cubs':'CHC','Chicago White Sox':'CWS',
+  'Cincinnati Reds':'CIN','Cleveland Guardians':'CLE','Colorado Rockies':'COL',
+  'Detroit Tigers':'DET','Houston Astros':'HOU','Kansas City Royals':'KC',
+  'Los Angeles Angels':'LAA','Los Angeles Dodgers':'LAD','Miami Marlins':'MIA',
+  'Milwaukee Brewers':'MIL','Minnesota Twins':'MIN','New York Mets':'NYM',
+  'New York Yankees':'NYY','Athletics':'ATH','Oakland Athletics':'ATH',
+  'Philadelphia Phillies':'PHI','Pittsburgh Pirates':'PIT','San Diego Padres':'SD',
+  'San Francisco Giants':'SF','Seattle Mariners':'SEA','St. Louis Cardinals':'STL',
+  'Tampa Bay Rays':'TB','Texas Rangers':'TEX','Toronto Blue Jays':'TOR',
+  'Washington Nationals':'WSH'
+};
+
+function kalshiTeamCode(fullName) {
+  return KALSHI_TEAM_CODES[fullName] || fullName.split(' ').pop().slice(0,3).toUpperCase();
+}
+
+// Fetch ALL active KXMLBGAME markets for a given date (one call, cached for 5 min)
+async function fetchAllKalshiML(gameDate) {
+  if (kalshiDayCache[gameDate] && Date.now() - kalshiDayCache[gameDate].ts < 300000) {
+    return kalshiDayCache[gameDate].markets;
+  }
+  const d = new Date(gameDate + 'T12:00:00');
+  const yy = String(d.getFullYear()).slice(2);
+  const mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+  const dd = String(d.getDate()).padStart(2,'0');
+  const prefix = `KXMLBGAME-${yy}${mon}${dd}`;
+  // Search by event_ticker prefix — returns all games on this date
+  const path = `/markets%3Fstatus%3Dactive%26series_ticker%3DKXMLBGAME%26event_ticker%3D${prefix}%26limit%3D200`;
+  try {
+    const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const markets = data.markets || [];
+    kalshiDayCache[gameDate] = { ts: Date.now(), markets };
+    return markets;
+  } catch(e) { return []; }
+}
+
+async function fetchAllKalshiRL(gameDate) {
+  if (kalshiDayCache['rl_'+gameDate] && Date.now() - kalshiDayCache['rl_'+gameDate].ts < 300000) {
+    return kalshiDayCache['rl_'+gameDate].markets;
+  }
+  const d = new Date(gameDate + 'T12:00:00');
+  const yy = String(d.getFullYear()).slice(2);
+  const mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+  const dd = String(d.getDate()).padStart(2,'0');
+  const prefix = `KXMLBSPREAD-${yy}${mon}${dd}`;
+  const path = `/markets%3Fstatus%3Dactive%26series_ticker%3DKXMLBSPREAD%26event_ticker%3D${prefix}%26limit%3D200`;
+  try {
+    const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const markets = data.markets || [];
+    kalshiDayCache['rl_'+gameDate] = { ts: Date.now(), markets };
+    return markets;
+  } catch(e) { return []; }
+}
+
 async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total) {
   const cacheKey = gameId;
   if (kalshiCache[cacheKey] && Date.now() - kalshiCache[cacheKey].ts < 300000) return kalshiCache[cacheKey].data;
   try {
-    // Build date suffix: YYMONDD format e.g. 26JUN19
-    const d = new Date(gameDate + 'T12:00:00');
-    const yy = String(d.getFullYear()).slice(2);
-    const mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
-    const dd = String(d.getDate()).padStart(2,'0');
-    const TEAM_CODES = {
-      'Arizona Diamondbacks':'AZ','Atlanta Braves':'ATL','Baltimore Orioles':'BAL',
-      'Boston Red Sox':'BOS','Chicago Cubs':'CHC','Chicago White Sox':'CWS',
-      'Cincinnati Reds':'CIN','Cleveland Guardians':'CLE','Colorado Rockies':'COL',
-      'Detroit Tigers':'DET','Houston Astros':'HOU','Kansas City Royals':'KC',
-      'Los Angeles Angels':'LAA','Los Angeles Dodgers':'LAD','Miami Marlins':'MIA',
-      'Milwaukee Brewers':'MIL','Minnesota Twins':'MIN','New York Mets':'NYM',
-      'New York Yankees':'NYY','Athletics':'ATH','Oakland Athletics':'ATH',
-      'Philadelphia Phillies':'PHI','Pittsburgh Pirates':'PIT','San Diego Padres':'SD',
-      'San Francisco Giants':'SF','Seattle Mariners':'SEA','St. Louis Cardinals':'STL',
-      'Tampa Bay Rays':'TB','Texas Rangers':'TEX','Toronto Blue Jays':'TOR',
-      'Washington Nationals':'WSH'
-    };
-    const awayCode = TEAM_CODES[awayTeam] || awayTeam.split(' ').pop().slice(0,3).toUpperCase();
-    const homeCode = TEAM_CODES[homeTeam] || homeTeam.split(' ').pop().slice(0,3).toUpperCase();
-
+    const awayCode = kalshiTeamCode(awayTeam);
+    const homeCode = kalshiTeamCode(homeTeam);
     const results = {};
 
-    // Fetch ML markets
-    const mlEvent = `KXMLBGAME-${yy}${mon}${dd}`;
-    try {
-      const mlRes = await fetch(`${KALSHI_PROXY}?path=/events/${mlEvent}/markets`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      if (mlRes.ok) {
-        const mlData = await mlRes.json();
-        for (const mkt of (mlData.markets || [])) {
-          if (!mkt.status || mkt.status !== 'active') continue;
-          const t = (mkt.ticker || '').toUpperCase();
-          if (t.endsWith('-' + awayCode)) results.awayML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-          if (t.endsWith('-' + homeCode)) results.homeML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-        }
+    // ── ML: search all today's KXMLBGAME markets, match by event_ticker containing both team codes ──
+    const mlMarkets = await fetchAllKalshiML(gameDate);
+    for (const mkt of mlMarkets) {
+      if (mkt.status !== 'active') continue;
+      const ev = (mkt.event_ticker || '').toUpperCase();
+      const tk = (mkt.ticker || '').toUpperCase();
+      // Event ticker contains both team codes e.g. KXMLBGAME-26JUN192210ANGATH
+      if (!ev.includes(awayCode) || !ev.includes(homeCode)) continue;
+      // ticker suffix is -TEAMCODE for the winning team
+      const sub = mkt.yes_sub_title || mkt.no_sub_title || '';
+      if (tk.endsWith('-' + awayCode) || (mkt.yes_sub_title && mkt.yes_sub_title.toLowerCase().includes(awayTeam.split(' ').pop().toLowerCase()))) {
+        results.awayML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+        results.awayML_ticker = mkt.ticker;
       }
-    } catch(e) {}
-
-    // Fetch Total market
-    if (total) {
-      const totLine = parseFloat(total);
-      const totN = Math.round(totLine + 0.5); // Over 8.5 → ticker -9
-      const totEvent = `KXMLBTOTAL-${yy}${mon}${dd}${awayCode}${homeCode}`;
-      try {
-        const totRes = await fetch(`${KALSHI_PROXY}?path=/events/${totEvent}/markets`, {
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-        });
-        if (totRes.ok) {
-          const totData = await totRes.json();
-          for (const mkt of (totData.markets || [])) {
-            if (!mkt.status || mkt.status !== 'active') continue;
-            const t = (mkt.ticker || '');
-            if (t.endsWith('-' + totN)) {
-              results.total_cents_yes = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-              results.total_cents_no  = parseFloat(mkt.no_ask_dollars  || 0) * 100;
-              results.total_ticker = mkt.ticker;
-              results.total_line = totLine;
-            }
-          }
-        }
-      } catch(e) {}
+      if (tk.endsWith('-' + homeCode) || (mkt.yes_sub_title && mkt.yes_sub_title.toLowerCase().includes(homeTeam.split(' ').pop().toLowerCase()))) {
+        results.homeML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+        results.homeML_ticker = mkt.ticker;
+      }
     }
 
-    // Fetch RL market
-    const rlEvent = `KXMLBSPREAD-${yy}${mon}${dd}${awayCode}${homeCode}`;
-    try {
-      const rlRes = await fetch(`${KALSHI_PROXY}?path=/events/${rlEvent}/markets`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      if (rlRes.ok) {
-        const rlData = await rlRes.json();
-        for (const mkt of (rlData.markets || [])) {
-          if (!mkt.status || mkt.status !== 'active') continue;
-          const t = (mkt.ticker || '').toUpperCase();
-          // N=2 = wins by over 1.5 (covers -1.5)
-          if (t.endsWith(awayCode + '2')) { results.awayRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100; results.rl_ticker_away = mkt.ticker; }
-          if (t.endsWith(homeCode + '2')) { results.homeRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100; results.rl_ticker_home = mkt.ticker; }
-        }
+    // ── RL: same approach for KXMLBSPREAD ──
+    const rlMarkets = await fetchAllKalshiRL(gameDate);
+    for (const mkt of rlMarkets) {
+      if (mkt.status !== 'active') continue;
+      const ev = (mkt.event_ticker || '').toUpperCase();
+      const tk = (mkt.ticker || '').toUpperCase();
+      if (!ev.includes(awayCode) || !ev.includes(homeCode)) continue;
+      if (tk.endsWith(awayCode + '2') || tk.endsWith(awayCode + '-2')) {
+        results.awayRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+        results.rl_ticker_away = mkt.ticker;
       }
-    } catch(e) {}
+      if (tk.endsWith(homeCode + '2') || tk.endsWith(homeCode + '-2')) {
+        results.homeRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+        results.rl_ticker_home = mkt.ticker;
+      }
+    }
 
     kalshiCache[cacheKey] = { ts: Date.now(), data: results };
     return results;
