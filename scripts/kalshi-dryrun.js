@@ -209,22 +209,24 @@ async function fetchPrice(ticker, action) {
   try {
     const d = await kGet(`/markets/${ticker}`);
     const m = d.market || d;
-    let cents = action === 'yes' ? num(m.yes_ask) : num(m.no_ask);
-    if (cents == null) {  // derive from the complementary bid on the market object
-      if (action === 'yes' && num(m.no_bid)  != null) cents = 100 - num(m.no_bid);
-      if (action === 'no'  && num(m.yes_bid) != null) cents = 100 - num(m.yes_bid);
+    const toC = (v) => { const n = num(v); return n == null ? null : Math.round(n * 100); };   // "0.5100" -> 51
+    // price to BUY our side = that side's ask
+    let cents = action === 'yes' ? toC(m.yes_ask_dollars) : toC(m.no_ask_dollars);
+    if (cents == null) {                       // derive from the complementary bid
+      if (action === 'yes') { const nb = toC(m.no_bid_dollars);  if (nb != null) cents = 100 - nb; }
+      else                  { const yb = toC(m.yes_bid_dollars); if (yb != null) cents = 100 - yb; }
     }
-    if (cents == null) {  // last resort: cross the live orderbook
+    if (cents == null) {                       // last resort: cross the live orderbook (prices in dollars)
       try {
         const ob = await kGet(`/markets/${ticker}/orderbook`);
-        const book = ob.orderbook || ob;
-        const best = (a) => (a && a.length) ? Math.max(...a.map(x => Array.isArray(x) ? x[0] : (x.price ?? x))) : null;
-        const noBid = best(book.no), yesBid = best(book.yes);
-        if (action === 'yes' && noBid  != null) cents = 100 - noBid;   // buy YES = cross best NO bid
-        if (action === 'no'  && yesBid != null) cents = 100 - yesBid;  // buy NO  = cross best YES bid
+        const book = ob.orderbook_fp || ob.orderbook || ob;
+        const bestC = (a) => (a && a.length) ? Math.round(Math.max(...a.map(x => parseFloat(Array.isArray(x) ? x[0] : x))) * 100) : null;
+        if (action === 'yes') { const nb = bestC(book.no_dollars  || book.no);  if (nb != null) cents = 100 - nb; }
+        else                  { const yb = bestC(book.yes_dollars || book.yes); if (yb != null) cents = 100 - yb; }
       } catch (e) {}
     }
-    return { cents, volume: m.volume ?? null, last: num(m.last_price) };
+    const volume = num(m.volume_fp) ?? num(m.volume_24h_fp) ?? num(m.volume) ?? null;
+    return { cents, volume, last: toC(m.last_price_dollars) };
   } catch (e) { return { cents: null, error: e.message }; }
 }
 
