@@ -704,8 +704,11 @@ function toggleKalshiPanel(gid, header) {
   const open = body.classList.toggle('open');
   const arr = header.querySelector('span:last-child span:last-child');
   if (arr) arr.textContent = open ? '▲' : '▾';
-  // Trigger fetch on first open
-  if (open) triggerAllKalshiFetches();
+  if (open) {
+    // Clear cache so we always get fresh prices on open
+    delete kalshiCache[gid];
+    triggerAllKalshiFetches();
+  }
 }
 
 function toggleKDrop(id, btn) {
@@ -1651,7 +1654,7 @@ async function saveEdit(){
   try{
     const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${pendingEdit.id}`,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`,'Prefer':'return=minimal'},body:JSON.stringify(updates)});
     if(res.ok){const b=bets.find(x=>x.id===pendingEdit.id);if(b){b.matchup=updates.matchup;b.date=updates.game_date;b.type=updates.bet_type;b.book=updates.book;b.odds=updates.odds;b.betLine=updates.bet_line;b.units=updates.units;b.maxJuice=updates.max_juice;b.result=updates.result;b.notes=updates.notes;}
-      try{delete _closeCache[b?.date];const cap=await captureClosing(b);if(b){b.closingOdds=cap.closing_odds;b.closingLine=cap.closing_line;b.clv=cap.clv;}if(cap.clv!=null||cap.closing_odds!=null){await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${pendingEdit.id}`,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`,'Prefer':'return=minimal'},body:JSON.stringify({closing_odds:cap.closing_odds,closing_line:cap.closing_line,clv:cap.clv})});}}catch(e){}
+      // CLV only captured when result is set, not on edit
       closeEditModal();renderTracker();updateNavRecord();}
   }catch(e){console.error('Edit error:',e);}
 }
@@ -1666,6 +1669,9 @@ function resolveBookKeyJS(userBook,cl){if(!userBook||!cl)return null;const n=nor
 async function captureClosing(bet){
   const keep={closing_odds:bet.closingOdds??null,closing_line:bet.closingLine??null,clv:(bet.clv!=null&&bet.clv!=='')?bet.clv:null};
   try{
+    // Don't capture CLV until game has started — find commence_time from games array
+    const gameRow=games.find(g=>{const aw=(bet.matchup||'').split(' @ ')[0],hm=(bet.matchup||'').split(' @ ')[1]||'';return(g.away_team||'').includes(aw.split(' ').pop())&&(g.home_team||'').includes(hm.split(' ').pop());});
+    if(gameRow&&gameRow.commence_time&&new Date(gameRow.commence_time)>new Date())return{...keep,status:'pre_game'};
     if(!bet.book||!String(bet.book).trim())return{...keep,status:'no_book'};
     const d=bet.date;
     if(!_closeCache[d]){const r=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${d}&select=away_team,home_team,closing_lines`,{headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}});_closeCache[d]=r.ok?await r.json():[];}
