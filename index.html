@@ -599,7 +599,7 @@ function kalshiTeamCode(fullName) {
 
 async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, commenceTime) {
   const cacheKey = gameId;
-  if (kalshiCache[cacheKey] && Date.now() - kalshiCache[cacheKey].ts < 300000) return kalshiCache[cacheKey].data;
+  if (kalshiCache[cacheKey]) return kalshiCache[cacheKey].data; // fetch once, refresh on demand
   try {
     const awayCode = kalshiTeamCode(awayTeam);
     const homeCode = kalshiTeamCode(homeTeam);
@@ -651,7 +651,7 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
       candidateRL.push(eventTicker.replace('KXMLBGAME-', 'KXMLBSPREAD-'));
       // Also try ±1 and ±2 minute variants
       if (commenceTime) {
-        for (const delta of [-1, 1, -2, 2, -5, 5]) {
+        for (const delta of [-1, 1]) {
           const ct2 = new Date(new Date(commenceTime).getTime() + delta * 60000);
           const etMs2 = ct2.getTime() + (-4 * 60) * 60000;
           const etDate2 = new Date(etMs2);
@@ -719,7 +719,7 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
       const tmm = String(etD.getUTCMinutes()).padStart(2,'0');
       // Try exact time and ±1,2,5 minute variants
       const totCandidates = [];
-      for (const delta of [0,-1,1,-2,2,-5,5]) {
+      for (const delta of [0,-1,1]) {
         const ct2 = new Date(td.getTime() + delta*60000);
         const em2 = ct2.getTime() + (-4*60)*60000;
         const ed2 = new Date(em2);
@@ -905,7 +905,9 @@ function kalshiPanelHTML(g, bets) {
   return '<div class="kalshi-panel" style="' + _pStyle + '">'
     + '<div class="kalshi-header" onclick="' + _hClick + '">'
     + '<div class="kalshi-title"><span class="k-dot" style="background:' + _dot + '"></span>' + _hLabel + '</div>'
-    + '<span style="display:flex;align-items:center;gap:8px"><span style="font-size:10px;font-family:DM Mono,monospace;color:var(--text)" id="kts-' + gid + '">' + _ts + '</span>' + _arr + '</span>'
+    + '<span style="display:flex;align-items:center;gap:8px"><span style="font-size:10px;font-family:DM Mono,monospace;color:var(--text)" id="kts-' + gid + '">' + _ts + '</span>'
+    + (gameStarted ? '' : '<button onclick="refreshKalshi(event,\'' + gid + '\')" style="background:none;border:none;cursor:pointer;color:var(--text);font-size:11px;padding:0 2px" title="Refresh prices">↻</button>')
+    + _arr + '</span>'
     + '</div>'
     + '<div class="kalshi-body" id="kbody-' + gid + '">' + rows + '</div>'
     + '<div id="kdata-' + gid + '"'
@@ -922,6 +924,14 @@ function kalshiPanelHTML(g, bets) {
     + '</div>';
 }
 
+function refreshKalshi(event, gid) {
+  event.stopPropagation(); // don't toggle panel
+  delete kalshiCache[gid];
+  const ts = document.getElementById('kts-' + gid);
+  if (ts) ts.textContent = 'refreshing…';
+  triggerAllKalshiFetches();
+}
+
 function toggleKalshiPanel(gid, header) {
   const body = document.getElementById('kbody-' + gid);
   if (!body) return;
@@ -930,8 +940,8 @@ function toggleKalshiPanel(gid, header) {
   if (arr) arr.textContent = open ? '▲' : '▾';
   if (open) {
     // Clear cache so we always get fresh prices on open
-    delete kalshiCache[gid];
-    triggerAllKalshiFetches();
+    // Clear cache for this game so next open triggers fresh fetch
+    // Don't auto-clear — only refetch when user clicks refresh button
   }
 }
 
