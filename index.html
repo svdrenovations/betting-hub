@@ -1617,11 +1617,18 @@ async function setKalshiResult(id,result){
 
 async function deleteKalshiBet(id){
   const b=kalshiBets.find(x=>x.id===id);if(!b)return;
-  if(!confirm('Delete this Kalshi bet?\n\n'+b.matchup+' — '+b.market+'\n\nThis cannot be undone.'))return;
+  if(!confirm('Delete this Kalshi bet?\n\n'+b.matchup+' - '+b.market+'\n\nThis cannot be undone.'))return;
   try{
-    const res=await fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper?id=eq.${id}`,{method:'DELETE',headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}});
-    if(res.ok){kalshiBets=kalshiBets.filter(x=>x.id!==id);renderKalshi();}
-    else alert('Could not delete: '+res.status);
+    const res=await fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper?id=eq.${id}`,{method:'DELETE',headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`,'Prefer':'return=minimal'}});
+    if(res.ok||res.status===204){
+      kalshiBets=kalshiBets.filter(x=>x.id!==id);
+      const matchupKey=(b.matchup+'|'+(b.market||'')).toLowerCase();
+      kalshiAcceptedMatchups.delete(matchupKey);
+      const g=games.find(gm=>(gm.away_team+' @ '+gm.home_team)===b.matchup);
+      if(g) kalshiAccepted.delete(g.id+'-'+(b.market||'').toLowerCase());
+      renderKalshi();
+      renderGames();
+    } else alert('Could not delete: '+res.status);
   }catch(e){console.error('deleteKalshiBet:',e);}
 }
 
