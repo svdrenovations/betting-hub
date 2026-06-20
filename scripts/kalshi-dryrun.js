@@ -210,11 +210,21 @@ async function fetchPrice(ticker, action) {
     const d = await kGet(`/markets/${ticker}`);
     const m = d.market || d;
     let cents = action === 'yes' ? num(m.yes_ask) : num(m.no_ask);
-    if (cents == null) {  // derive from the complementary bid if the ask isn't posted
+    if (cents == null) {  // derive from the complementary bid on the market object
       if (action === 'yes' && num(m.no_bid)  != null) cents = 100 - num(m.no_bid);
       if (action === 'no'  && num(m.yes_bid) != null) cents = 100 - num(m.yes_bid);
     }
-    return { cents, volume: m.volume ?? null };
+    if (cents == null) {  // last resort: cross the live orderbook
+      try {
+        const ob = await kGet(`/markets/${ticker}/orderbook`);
+        const book = ob.orderbook || ob;
+        const best = (a) => (a && a.length) ? Math.max(...a.map(x => Array.isArray(x) ? x[0] : (x.price ?? x))) : null;
+        const noBid = best(book.no), yesBid = best(book.yes);
+        if (action === 'yes' && noBid  != null) cents = 100 - noBid;   // buy YES = cross best NO bid
+        if (action === 'no'  && yesBid != null) cents = 100 - yesBid;  // buy NO  = cross best YES bid
+      } catch (e) {}
+    }
+    return { cents, volume: m.volume ?? null, last: num(m.last_price) };
   } catch (e) { return { cents: null, error: e.message }; }
 }
 
@@ -268,6 +278,21 @@ async function cmdTest(date) {
     console.log(`  ${desc}\n        -> ${r.kalshi_ticker || ''}  ${r.action || ''} ${px} ${ev}  [${r.status}]`);
   }
   console.log('\nDry read only — nothing logged. If the tickers and prices look right, say so and I\'ll switch on logging.');
+  if (res.some(r => r.status === 'no Kalshi event')) {
+    console.log('\nUnmatched game(s) — today\'s Kalshi events + team names (to fix the alias):');
+    const evs = await buildEventMap(date);
+    for (const [eb, teams] of Object.entries(evs)) console.log(`   ${eb}  [${teams.map(t => `${t.code}:${t.city}`).join('  ,  ')}]`);
+  }
+}
+
+// debug: dump the raw market object + live orderbook for one ticker (to find the price fields)
+async function cmdPrice(ticker) {
+  if (!ticker || !/^KXMLB/i.test(ticker)) { console.log('usage: price <KXMLB...-ticker>'); return; }
+  console.log(`raw Kalshi data for ${ticker}\n`);
+  try { const m  = await kGet(`/markets/${ticker}`);           console.log('--- /markets/<ticker> ---\n' + JSON.stringify(m,  null, 2).slice(0, 2600)); }
+  catch (e) { console.log('market fetch error: ' + e.message); }
+  try { const ob = await kGet(`/markets/${ticker}/orderbook`); console.log('\n--- /markets/<ticker>/orderbook ---\n' + JSON.stringify(ob, null, 2).slice(0, 1800)); }
+  catch (e) { console.log('orderbook fetch error: ' + e.message); }
 }
 
 async function cmdSettle(date) {
@@ -359,6 +384,7 @@ async function cmdDiscover(arg) {
   try {
     if (cmd === 'discover')    await cmdDiscover(date);
     else if (cmd === 'test')   await cmdTest(date);
+    else if (cmd === 'price')  await cmdPrice(date);
     else if (cmd === 'run')    await cmdRun(date);
     else if (cmd === 'settle') await cmdSettle(date);
     else { console.error(`unknown command "${cmd}"`); process.exit(1); }
