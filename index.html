@@ -152,7 +152,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .ov strong{color:var(--green)}
 .disc{font-size:11px;color:var(--text);font-family:DM Mono,monospace;line-height:1.6;padding:1.5rem 0;border-top:1px solid var(--border);margin-top:2rem}
 /* ── KALSHI PANEL ── */
-.kalshi-panel{border:1px solid var(--border2);border-radius:8px;overflow:hidden;margin-bottom:10px}
+.kalshi-panel{border:1px solid var(--border2);border-radius:8px;overflow:hidden;margin-bottom:10px}.kalshi-body{display:none}.kalshi-body.open{display:block}.kalshi-header{cursor:pointer}.kalshi-header:hover .kalshi-title{color:var(--green)}
 .kalshi-header{padding:8px 12px;display:flex;align-items:center;justify-content:space-between;background:var(--s2);border-bottom:1px solid var(--border)}
 .kalshi-title{font-size:11px;font-family:DM Mono,monospace;color:var(--text);text-transform:uppercase;letter-spacing:.06em;display:flex;align-items:center;gap:6px}
 .k-dot{width:7px;height:7px;border-radius:50%;background:var(--amber);flex-shrink:0}
@@ -677,11 +677,13 @@ function kalshiPanelHTML(g, bets) {
   })));
 
   return `<div class="kalshi-panel">
-    <div class="kalshi-header">
+    <div class="kalshi-header" onclick="toggleKalshiPanel('${gid}',this)">
       <div class="kalshi-title"><span class="k-dot"></span>Kalshi comparison</div>
-      <span style="font-size:10px;font-family:DM Mono,monospace;color:var(--text)" id="kts-${gid}">loading…</span>
+      <span style="display:flex;align-items:center;gap:8px"><span style="font-size:10px;font-family:DM Mono,monospace;color:var(--text)" id="kts-${gid}">loading…</span><span style="font-size:11px;color:var(--text)">▾</span></span>
     </div>
+    <div class="kalshi-body" id="kbody-${gid}">
     ${rows}
+    </div>
   </div>
   <div id="kdata-${gid}" 
     data-gid="${gid}"
@@ -694,6 +696,16 @@ function kalshiPanelHTML(g, bets) {
     data-matchup="${(g.away_team+' @ '+g.home_team).replace(/"/g,'&quot;')}"
     data-plays="${playsJson.replace(/"/g,'&quot;')}"
   ></div>`
+}
+
+function toggleKalshiPanel(gid, header) {
+  const body = document.getElementById('kbody-' + gid);
+  if (!body) return;
+  const open = body.classList.toggle('open');
+  const arr = header.querySelector('span:last-child span:last-child');
+  if (arr) arr.textContent = open ? '▲' : '▾';
+  // Trigger fetch on first open
+  if (open) triggerAllKalshiFetches();
 }
 
 function toggleKDrop(id, btn) {
@@ -1417,8 +1429,7 @@ function renderGames(){
   const sb=document.getElementById('game-sit-filters');if(sb)sb.innerHTML=gameSitFilterHTML();
   if(!filtered.length){document.getElementById('games-container').innerHTML=`<div class="empty-state"><div class="empty-title">No games match this filter</div></div>`;return;}
   document.getElementById('games-container').innerHTML=`<div class="games-grid">${filtered.map(gameCardHTML).join('')}</div>`;
-  // Trigger Kalshi fetches for all panels after DOM is ready
-  setTimeout(triggerAllKalshiFetches, 100);
+  // Kalshi panels are collapsed by default — fetch triggered on open
 }
 
 function renderBestPlays(){
