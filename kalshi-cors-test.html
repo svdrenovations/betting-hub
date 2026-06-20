@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head><title>Kalshi CORS Test</title></head>
+<body>
+<h2>Kalshi CORS Test</h2>
+<pre id="out">Running...</pre>
+<script>
+const out = document.getElementById('out');
+fetch('https://api.elections.kalshi.com/trade-api/v2/events?series_ticker=KXMLBGAME&limit=1')
+  .then(r => {
+    out.textContent = 'Status: ' + r.status + '\nCORS: GREEN ✅';
+    return r.json();
+  })
+  .then(d => {
+    out.textContent += '\nSample data received: ' + JSON.stringify(d).slice(0, 200);
+  })
+  .catch(e => {
+    out.textContent = 'CORS: RED ❌\nError: ' + e.message;
+  });
+</script>
+</body>
+</html>
