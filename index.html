@@ -2014,8 +2014,8 @@ function triggerAllKalshiFetches() {
           if (cents == null) { kjline.textContent = 'No Kalshi market found'; }
           else {
             const sideLabel = v.includes('OVER') || v.includes('AWAY') ? 'Yes' : 'No';
-            kjline.textContent = sideLabel + ' @ ' + Math.round(cents) + '¢ (≈ ' + equiv + ')';
-            kjline.style.color = better ? 'var(--green)' : worse ? 'var(--red)' : 'var(--amber)';
+            const kalshiLineLabel = (m.key === 'total' && kd.total_line) ? ' (Over ' + kd.total_line + ')' : '';
+            kjline.textContent = sideLabel + ' @ ' + Math.round(cents) + '¢ (≈ ' + equiv + ')' + kalshiLineLabel;
             if (kjcard) kjcard.style.borderColor = better ? 'var(--green-dim)' : worse ? 'var(--red-dim)' : 'var(--amber-dim)';
           }
         }
@@ -2023,14 +2023,15 @@ function triggerAllKalshiFetches() {
         if (kjnote) {
           if (cents == null) { kjnote.textContent = 'No active Kalshi market found for this play.'; }
           else if (!aboveGate) { kjnote.style.color = 'var(--red)'; kjnote.textContent = 'Kalshi has priced this tighter than DK — edge drops below 6%. Skip Kalshi on this play and use the book.'; }
+          else if (totalLineMismatch) { kjnote.textContent = 'Kalshi\'s closest line is ' + lineDir + ' ' + kalshiTotalLine + ' (DK is ' + lineDir + ' ' + dkTotalLine + '). Different lines — compare prices carefully. Kalshi: ' + Math.round(cents) + '¢ (≈' + equiv + ')'; }
           else if (better) { kjnote.textContent = 'Kalshi is cheaper than DK on this play. At $100 risked: Kalshi returns ' + kalshiPayout(cents) + ' vs DK\'s ' + americanPayout(m.dkOdds) + '. Bet Kalshi.'; }
           else { kjnote.textContent = 'Kalshi is more expensive than DK (' + equiv + ' vs ' + m.dkOdds + '). Still clears 6% EV on our model but DK is the better price. Hit DK first; use Kalshi if you need more action.'; }
         }
       }
     }).catch(() => {
       const ts = document.getElementById('kts-' + gid);
-      if (ts) ts.textContent = 'price fetch failed';
-    });
+      console.error('Kalshi fetch error for', gid, e);
+      if (ts) ts.textContent = 'fetch error: ' + e.message;
   });
 }
 
