@@ -641,9 +641,6 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
         } catch(e) {}
       }
     }
-        } catch(e) {}
-      }
-    }
 
     kalshiCache[cacheKey] = { ts: Date.now(), data: results };
     return results;
