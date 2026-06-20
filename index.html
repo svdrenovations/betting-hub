@@ -541,38 +541,46 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total) {
     const homeCode = kalshiTeamCode(homeTeam);
     const results = {};
 
-    // ── ML: search all today's KXMLBGAME markets, match by event_ticker containing both team codes ──
+    // Build date prefix for today e.g. "26JUN19"
+    const gd = new Date(gameDate + 'T12:00:00');
+    const gyy = String(gd.getFullYear()).slice(2);
+    const gmon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][gd.getMonth()];
+    const gdd = String(gd.getDate()).padStart(2,'0');
+    const datePrefix = ('KXMLBGAME-' + gyy + gmon + gdd).toUpperCase();
+    const rlDatePrefix = ('KXMLBSPREAD-' + gyy + gmon + gdd).toUpperCase();
+    // Kalshi concatenates away+home codes in the event ticker e.g. BOSSEA, ANGATH, BALLAA
+    const teamPair = (awayCode + homeCode).toUpperCase();
+
+    // ── ML ──
     const mlMarkets = await fetchAllKalshiML(gameDate);
     for (const mkt of mlMarkets) {
-      
       const ev = (mkt.event_ticker || '').toUpperCase();
       const tk = (mkt.ticker || '').toUpperCase();
-      // Event ticker contains both team codes e.g. KXMLBGAME-26JUN192210ANGATH
-      if (!ev.includes(awayCode) || !ev.includes(homeCode)) continue;
-      // ticker suffix is -TEAMCODE for the winning team
-      const sub = mkt.yes_sub_title || mkt.no_sub_title || '';
-      if (tk.endsWith('-' + awayCode) || (mkt.yes_sub_title && mkt.yes_sub_title.toLowerCase().includes(awayTeam.split(' ').pop().toLowerCase()))) {
+      if (!ev.startsWith(datePrefix)) continue;
+      if (!ev.includes(teamPair)) continue;
+      // yes_ask_dollars is e.g. 0.95 → multiply by 100 for cents
+      if (tk.endsWith('-' + awayCode)) {
         results.awayML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
         results.awayML_ticker = mkt.ticker;
       }
-      if (tk.endsWith('-' + homeCode) || (mkt.yes_sub_title && mkt.yes_sub_title.toLowerCase().includes(homeTeam.split(' ').pop().toLowerCase()))) {
+      if (tk.endsWith('-' + homeCode)) {
         results.homeML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
         results.homeML_ticker = mkt.ticker;
       }
     }
 
-    // ── RL: same approach for KXMLBSPREAD ──
+    // ── RL ──
     const rlMarkets = await fetchAllKalshiRL(gameDate);
     for (const mkt of rlMarkets) {
-      
       const ev = (mkt.event_ticker || '').toUpperCase();
       const tk = (mkt.ticker || '').toUpperCase();
-      if (!ev.includes(awayCode) || !ev.includes(homeCode)) continue;
-      if (tk.endsWith(awayCode + '2') || tk.endsWith(awayCode + '-2')) {
+      if (!ev.startsWith(rlDatePrefix)) continue;
+      if (!ev.includes(teamPair)) continue;
+      if (tk.endsWith(awayCode + '2')) {
         results.awayRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
         results.rl_ticker_away = mkt.ticker;
       }
-      if (tk.endsWith(homeCode + '2') || tk.endsWith(homeCode + '-2')) {
+      if (tk.endsWith(homeCode + '2')) {
         results.homeRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
         results.rl_ticker_home = mkt.ticker;
       }
