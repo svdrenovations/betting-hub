@@ -1,0 +1,17 @@
+name: Kalshi price (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: 'Kalshi market ticker'
+        required: true
+        default: 'KXMLBGAME-26JUN192210BOSSEA-SEA'
+jobs:
+  price:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/kalshi-dryrun.js price "${{ inputs.ticker }}"
