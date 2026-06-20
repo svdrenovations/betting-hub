@@ -609,24 +609,32 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
           if (!res.ok) continue;
           const data = await res.json();
           const mkts = data.markets || [];
-          // Match the market whose line is closest to our total line
-          // Kalshi total tickers end in the run total e.g. -85 = over/under 8.5
-          let bestDiff = 99;
+          // Match Kalshi total line to our DK line
+          // Kalshi ticker ends in e.g. -85 = 8.5 runs
+          // Only use lines that actually exist (8.5, 9.5 etc) — not the DK line itself
+          // Pick the line closest to our DK total; on a tie pick lower for OVER, higher for UNDER
+          let bestDiff = 99, bestLine = null, bestMkt = null;
           for (const mkt of mkts) {
             const tk = (mkt.ticker || '');
-            // Extract number from end of ticker e.g. KXMLBTOTAL-26JUN201310CWSDET-85
             const numMatch = tk.match(/-(\d+)$/);
             if (!numMatch) continue;
-            const kalshiLine = parseInt(numMatch[1]) / 10; // 85 → 8.5
+            const kalshiLine = parseInt(numMatch[1]) / 10;
             const diff = Math.abs(kalshiLine - totLine);
-            if (diff < bestDiff) {
-              bestDiff = diff;
-              // yes = over, no = under
-              results.total_cents_yes = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-              results.total_cents_no  = parseFloat(mkt.no_ask_dollars || 0) * 100;
-              results.total_ticker = mkt.ticker;
-              results.total_line = kalshiLine;
+            if (diff < bestDiff || (diff === bestDiff && bestLine != null)) {
+              // On tie: prefer lower line for OVER plays, higher for UNDER
+              const isTie = diff === bestDiff;
+              if (!isTie || (kalshiLine < bestLine)) {
+                bestDiff = diff;
+                bestLine = kalshiLine;
+                bestMkt = mkt;
+              }
             }
+          }
+          if (bestMkt) {
+            results.total_cents_yes = parseFloat(bestMkt.yes_ask_dollars || bestMkt.last_price_dollars || 0) * 100;
+            results.total_cents_no  = parseFloat(bestMkt.no_ask_dollars || 0) * 100;
+            results.total_ticker = bestMkt.ticker;
+            results.total_line = bestLine;
           }
           if (results.total_cents_yes != null) break;
         } catch(e) {}
@@ -792,7 +800,7 @@ function toggleKDrop(id, btn) {
   if (arr) arr.textContent = open ? '▲' : '▾';
 }
 
-async function acceptKalshi(gameId, market, label, verdict, cents, kalshiEv, modelProb, sbEv, matchup, gameDate, situations, ticker) {
+async function acceptKalshi(gameId, market, label, verdict, cents, kalshiEv, modelProb, sbEv, matchup, gameDate, situations, ticker, kalshiLine) {
   const side = (verdict||'').toUpperCase().includes('AWAY')||verdict.toUpperCase().includes('OVER') ? 'AWAY_OVER' : 'HOME_UNDER';
   const sideClean = (verdict||'').replace(/^(BET|LEAN)\s+/i,'').trim();
   try {
@@ -807,6 +815,7 @@ async function acceptKalshi(gameId, market, label, verdict, cents, kalshiEv, mod
       sb_ev: sbEv,
       kalshi_ev: kalshiEv,
       kalshi_ticker: ticker || null,
+      kalshi_line: kalshiLine || null,
       action: verdict,
       situations: situations || null,
       result: 'pending',
@@ -1928,7 +1937,8 @@ function triggerAllKalshiFetches() {
             kact.innerHTML = '<div class="no-edge-label">' + (cents == null ? 'no market' : 'no Kalshi edge') + '</div>';
           } else {
             const ticker = m.key === 'total' ? kd.total_ticker : (m.key === 'rl' ? (v.includes('AWAY') ? kd.rl_ticker_away : kd.rl_ticker_home) : (v.includes('AWAY') ? kd.awayML_ticker : kd.homeML_ticker));
-            kact.innerHTML = '<button class="k-accept" onclick="acceptKalshi(\''+gid+'\',\''+m.key+'\',\''+m.label+'\',\''+m.verdict+'\','+Math.round(cents)+','+kev.toFixed(1)+','+m.p.toFixed(4)+','+dkEv.toFixed(1)+',\''+matchup+'\',\''+gameDate+'\',\''+situations+'\',\''+( ticker||'')+'\')">Accept</button>';
+            const kalshiLine = m.key==='total' ? (kd.total_line||'') : '';
+            kact.innerHTML = '<button class="k-accept" onclick="acceptKalshi(\''+gid+'\',\''+m.key+'\',\''+m.label+'\',\''+m.verdict+'\','+Math.round(cents)+','+kev.toFixed(1)+','+m.p.toFixed(4)+','+dkEv.toFixed(1)+',\''+matchup+'\',\''+gameDate+'\',\''+situations+'\',\''+( ticker||'')+'\',\''+kalshiLine+'\')">Accept</button>';
           }
         }
         const kjline = document.getElementById('kjline-' + gid + '-' + m.key);
