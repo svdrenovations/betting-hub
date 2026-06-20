@@ -513,50 +513,85 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
       eventTicker = `KXMLBGAME-${yy}${mon}${dd}${hh}${mm}${teamPair}`;
     }
 
-    // ── ML: fetch by exact event_ticker ──
-    if (eventTicker) {
-      const path = `/markets%3Fevent_ticker%3D${encodeURIComponent(eventTicker)}%26limit%3D10`;
-      try {
-        const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          for (const mkt of (data.markets || [])) {
-            const tk = (mkt.ticker || '').toUpperCase();
-            if (tk.endsWith('-' + awayCode)) {
-              results.awayML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-              results.awayML_ticker = mkt.ticker;
-            }
-            if (tk.endsWith('-' + homeCode)) {
-              results.homeML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-              results.homeML_ticker = mkt.ticker;
-            }
-          }
-        }
-      } catch(e) {}
+    // ── ML: try exact event_ticker first, fall back to team pair search ──
+    const tryFetchML = async (ticker) => {
+      const path = `/markets%3Fevent_ticker%3D${encodeURIComponent(ticker)}%26limit%3D10`;
+      const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.markets || [];
+    };
 
-      // ── RL: same with KXMLBSPREAD ──
-      const rlTicker = eventTicker.replace('KXMLBGAME-', 'KXMLBSPREAD-');
-      const rlPath = `/markets%3Fevent_ticker%3D${encodeURIComponent(rlTicker)}%26limit%3D10`;
+    const tryFetchRL = async (ticker) => {
+      const path = `/markets%3Fevent_ticker%3D${encodeURIComponent(ticker)}%26limit%3D10`;
+      const res = await fetch(`${KALSHI_PROXY}?path=${path}`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.markets || [];
+    };
+
+    // Build candidate tickers: try exact time ±2 min to handle Supabase/Kalshi discrepancy
+    const candidateML = [], candidateRL = [];
+    if (eventTicker) {
+      candidateML.push(eventTicker);
+      candidateRL.push(eventTicker.replace('KXMLBGAME-', 'KXMLBSPREAD-'));
+      // Also try ±1 and ±2 minute variants
+      if (commenceTime) {
+        for (const delta of [-1, 1, -2, 2, -5, 5]) {
+          const ct2 = new Date(new Date(commenceTime).getTime() + delta * 60000);
+          const etMs2 = ct2.getTime() + (-4 * 60) * 60000;
+          const etDate2 = new Date(etMs2);
+          const yy2 = String(etDate2.getUTCFullYear()).slice(2);
+          const mon2 = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][etDate2.getUTCMonth()];
+          const dd2 = String(etDate2.getUTCDate()).padStart(2,'0');
+          const hh2 = String(etDate2.getUTCHours()).padStart(2,'0');
+          const mm2 = String(etDate2.getUTCMinutes()).padStart(2,'0');
+          const alt = `KXMLBGAME-${yy2}${mon2}${dd2}${hh2}${mm2}${teamPair}`;
+          candidateML.push(alt);
+          candidateRL.push(alt.replace('KXMLBGAME-', 'KXMLBSPREAD-'));
+        }
+      }
+    }
+
+    // Try each ML candidate until we get results
+    for (const ticker of candidateML) {
       try {
-        const res = await fetch(`${KALSHI_PROXY}?path=${rlPath}`, {
-          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          for (const mkt of (data.markets || [])) {
-            const tk = (mkt.ticker || '').toUpperCase();
-            if (tk.endsWith(awayCode + '2')) {
-              results.awayRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-              results.rl_ticker_away = mkt.ticker;
-            }
-            if (tk.endsWith(homeCode + '2')) {
-              results.homeRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-              results.rl_ticker_home = mkt.ticker;
-            }
+        const mkts = await tryFetchML(ticker);
+        for (const mkt of mkts) {
+          const tk = (mkt.ticker || '').toUpperCase();
+          if (tk.endsWith('-' + awayCode)) {
+            results.awayML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+            results.awayML_ticker = mkt.ticker;
+          }
+          if (tk.endsWith('-' + homeCode)) {
+            results.homeML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+            results.homeML_ticker = mkt.ticker;
           }
         }
+        if (results.awayML_cents != null || results.homeML_cents != null) break;
+      } catch(e) {}
+    }
+
+    // Try each RL candidate until we get results
+    for (const ticker of candidateRL) {
+      try {
+        const mkts = await tryFetchRL(ticker);
+        for (const mkt of mkts) {
+          const tk = (mkt.ticker || '').toUpperCase();
+          if (tk.endsWith(awayCode + '2')) {
+            results.awayRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+            results.rl_ticker_away = mkt.ticker;
+          }
+          if (tk.endsWith(homeCode + '2')) {
+            results.homeRL_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+            results.rl_ticker_home = mkt.ticker;
+          }
+        }
+        if (results.awayRL_cents != null || results.homeRL_cents != null) break;
       } catch(e) {}
     }
 
