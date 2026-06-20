@@ -667,7 +667,7 @@ async function loadDepth(gid, marketKey) {
   }
 
   // Build interactive table — one row per price level
-  // Columns: Your cost | Equiv American | EV at this price | Available contracts | Qty input | Accept
+  // Columns: Your cost | Equiv American | EV at this price | Available (contracts + $ to risk + $ to win) | Qty input | Accept
   const modelP = m.p;
 
   const rows = levels.map((l, i) => {
@@ -679,24 +679,27 @@ async function loadDepth(gid, marketKey) {
     const rowBg = isBest ? 'background:var(--green-bg);' : '';
     const betterThanDK = ev > dkEv;
     const priceFlagStyle = betterThanDK ? 'color:var(--green);font-weight:600' : 'color:var(--amber)';
-    const rowId = `depth-row-${gid}-${marketKey}-${i}`;
     const qtyId = `depth-qty-${gid}-${marketKey}-${i}`;
+    // Dollar amounts: risk = contracts × (cents/100), win = contracts × ((100-cents)/100)
+    const riskDollars = Math.round(l.size * cents / 100);
+    const winDollars  = Math.round(l.size * (100 - cents) / 100);
 
     return `<tr style="${rowBg}border-bottom:1px solid var(--border)">
       <td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:12px;${priceFlagStyle}">${cents}¢${betterThanDK ? ' ★' : ''}</td>
       <td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:11px;color:var(--text)">${equiv}</td>
       <td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:11px;color:${evColor}">${ev != null ? (ev >= 0 ? '+' : '') + ev.toFixed(1) + '%' : '—'}</td>
-      <td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:11px;color:var(--text)">${l.size} contracts</td>
+      <td style="padding:5px 8px;font-family:DM Mono,monospace;font-size:11px;color:var(--text);line-height:1.5">${l.size.toLocaleString()} contracts<br><span style="color:var(--red)">risk $${riskDollars.toLocaleString()}</span> · <span style="color:var(--green)">win $${winDollars.toLocaleString()}</span></td>
       <td style="padding:3px 6px"><input id="${qtyId}" type="number" min="1" max="${l.size}" value="1" style="width:56px;padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;background:var(--s2);border:1px solid var(--border2);border-radius:4px;color:var(--text)"></td>
       <td style="padding:3px 8px"><button onclick="acceptDepthOrder('${gid}','${marketKey}','${m.label}','${m.verdict}',${cents},${(ev||0).toFixed(1)},${modelP.toFixed(4)},${dkEv.toFixed(1)},'${matchup}','${gameDate}','${situations}','${primaryTicker}','${qtyId}')" style="padding:4px 10px;font-size:11px;font-weight:500;border-radius:5px;border:1px solid var(--amber-dim);background:var(--amber-bg);color:var(--amber);cursor:pointer;font-family:DM Sans,sans-serif;white-space:nowrap">Accept</button></td>
     </tr>`;
   }).join('');
 
-  const cheapest = levels[0].yesCents;
-  const bestEv = evFromCents(modelP, cheapest);
-  const header = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-    <div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-transform:uppercase;letter-spacing:.04em">${sideLabel} · best available price · ★ = beats DK</div>
-    <div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text)">${levels.length} price levels · ${levels.reduce((s,l) => s + l.size, 0)} contracts total</div>
+  const totalContracts = levels.reduce((s, l) => s + l.size, 0);
+  const totalRisk = Math.round(levels.reduce((s, l) => s + l.size * l.yesCents / 100, 0));
+  const totalWin  = Math.round(levels.reduce((s, l) => s + l.size * (100 - l.yesCents) / 100, 0));
+  const header = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:4px">
+    <div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-transform:uppercase;letter-spacing:.04em">${sideLabel} · best price first · ★ = beats DK</div>
+    <div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text)">${levels.length} levels · ${totalContracts.toLocaleString()} contracts · <span style="color:var(--red)">risk $${totalRisk.toLocaleString()}</span> · <span style="color:var(--green)">win $${totalWin.toLocaleString()}</span></div>
   </div>`;
 
   tableDiv.innerHTML = header
@@ -2330,11 +2333,14 @@ function triggerAllKalshiFetches() {
         const kev = cents != null ? evFromCents(m.p, cents) : null;
         const equiv = cents != null ? centsToAmerican(cents) : '—';
         const dkEv = parseFloat(m.ev);
-        // For totals: only compare EV if Kalshi line matches DK line exactly
+        // For totals: DK may be flat (9.0) while Kalshi uses .5 lines (8.5/9.5)
+        // We intentionally target the favorable .5 line — this is NOT a mismatch, it's better odds
         const dkTotalLine = parseFloat(m.line || 0);
         const kalshiTotalLine = kd.total_line || null;
-        const totalLineMismatch = m.key === 'total' && kalshiTotalLine != null && Math.abs(kalshiTotalLine - dkTotalLine) > 0.1;
-        const delta = (kev != null && !totalLineMismatch) ? +(kev - dkEv).toFixed(1) : null;
+        // Only flag as true mismatch if lines differ by more than 1 run (unexpected)
+        const totalLineMismatch = m.key === 'total' && kalshiTotalLine != null && Math.abs(kalshiTotalLine - dkTotalLine) > 1.0;
+        // For .5 line differences (intentional), still compare EV — it's a better line so EV should be higher
+        const delta = kev != null ? +(kev - dkEv).toFixed(1) : null;
         const better = delta != null && delta > 0;
         const worse = delta != null && delta < 0;
         const aboveGate = kev != null && kev >= 6;
@@ -2343,9 +2349,9 @@ function triggerAllKalshiFetches() {
         const pill = document.getElementById('kpill-' + gid + '-' + m.key);
         if (pill) {
           if (cents == null) { pill.textContent = 'No Kalshi market'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--s2);color:var(--text);border:1px solid var(--border)'; }
-          if (cents == null) { pill.textContent = 'No Kalshi market'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--s2);color:var(--text);border:1px solid var(--border)'; }
-          else if (totalLineMismatch) { pill.textContent = lineDir + ' ' + kalshiTotalLine + ' on Kalshi'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-dim)'; }
-          else if (worse) { pill.textContent = 'Kalshi is worse −' + Math.abs(delta) + '%'; pill.className = 'vs-pill vs-worse'; }
+          else if (totalLineMismatch) { pill.textContent = 'Line gap > 1 run'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--red-bg);color:var(--red);border:1px solid var(--red-dim)'; }
+          else if (better) { pill.textContent = 'Kalshi better +' + Math.abs(delta) + '%'; pill.className = 'vs-pill vs-better'; }
+          else if (worse) { pill.textContent = 'Kalshi worse −' + Math.abs(delta) + '%'; pill.className = 'vs-pill vs-worse'; }
           else { pill.textContent = 'Same as DK'; pill.className = 'vs-pill'; pill.style.cssText = 'background:var(--s2);color:var(--text);border:1px solid var(--border)'; }
         }
           // Update size display
@@ -2370,7 +2376,10 @@ function triggerAllKalshiFetches() {
           if (kev != null) { kevEl.textContent = (kev >= 0 ? '+' : '') + kev.toFixed(1) + '% EV'; kevEl.style.color = kev >= 6 ? 'var(--green)' : kev >= 0 ? 'var(--amber)' : 'var(--red)'; }
           else { kevEl.textContent = '—'; }
         }
-        if (kequiv) kequiv.textContent = cents != null ? (totalLineMismatch ? (lineDir + ' ' + kalshiTotalLine + ' · ') : '') + '≈ ' + equiv + ' equiv' : '—';
+        if (kequiv) {
+          const kalshiLineLabel = (m.key === 'total' && kalshiTotalLine != null && Math.abs(kalshiTotalLine - dkTotalLine) > 0.1) ? lineDir + ' ' + kalshiTotalLine + ' · ' : '';
+          kequiv.textContent = cents != null ? kalshiLineLabel + '≈ ' + equiv + ' equiv' : '—';
+        }
         if (kact) {
           const matchupKey = (matchup + '|' + m.key).toLowerCase();
           if (kalshiAccepted.has(gid + '-' + m.key) || kalshiAcceptedMatchups.has(matchupKey)) {
@@ -2399,9 +2408,16 @@ function triggerAllKalshiFetches() {
         if (kjdetail && cents != null) kjdetail.textContent = 'Implied ' + centsToImplied(cents) + ' · win ' + kalshiPayout(cents) + ' per $100';
         if (kjnote) {
           if (cents == null) { kjnote.textContent = 'No active Kalshi market found for this play.'; }
-          else if (totalLineMismatch) { kjnote.textContent = 'Kalshi line: ' + lineDir + ' ' + kalshiTotalLine + ' vs DK ' + lineDir + ' ' + dkTotalLine + '. Different lines — Kalshi: ' + Math.round(cents) + '¢ (≈ ' + equiv + ')'; }
+          else if (totalLineMismatch) { kjnote.textContent = 'Warning: Kalshi line ' + lineDir + ' ' + kalshiTotalLine + ' differs significantly from DK ' + lineDir + ' ' + dkTotalLine + '. Verify before accepting.'; kjnote.style.color = 'var(--red)'; }
+          else if (m.key === 'total' && kalshiTotalLine != null && Math.abs(kalshiTotalLine - dkTotalLine) > 0.1) {
+            // Intentional .5 line — show as a positive
+            const lineNote = lineDir + ' ' + kalshiTotalLine + ' on Kalshi vs ' + lineDir + ' ' + dkTotalLine + ' on DK — easier line to cover.';
+            if (kev != null && kev < 0) { kjnote.style.color = 'var(--red)'; kjnote.textContent = lineNote + ' However Kalshi is still overpriced at ' + Math.round(cents) + '¢ — use the book.'; }
+            else if (better) { kjnote.style.color = 'var(--green)'; kjnote.textContent = lineNote + ' Kalshi returns ' + kalshiPayout(cents) + ' per $100 — better than DK\'s ' + americanPayout(m.dkOdds) + '.'; }
+            else { kjnote.style.color = ''; kjnote.textContent = lineNote + ' DK is still the better price but Kalshi gives you the easier line.'; }
+          }
           else if (kev != null && kev < 0) { kjnote.style.color = 'var(--red)'; kjnote.textContent = 'Kalshi has priced out your edge (' + equiv + ' vs DK ' + m.dkOdds + '). Kalshi EV is negative — use the book.'; }
-          else if (better) { kjnote.style.color = ''; kjnote.textContent = 'Kalshi is cheaper than DK. At $100 risked: Kalshi returns ' + kalshiPayout(cents) + ' vs DK\'s ' + americanPayout(m.dkOdds) + '. Kalshi is the better price.'; }
+          else if (better) { kjnote.style.color = 'var(--green)'; kjnote.textContent = 'Kalshi is cheaper than DK. At $100 risked: Kalshi returns ' + kalshiPayout(cents) + ' vs DK\'s ' + americanPayout(m.dkOdds) + '. Kalshi is the better price.'; }
           else { kjnote.style.color = ''; kjnote.textContent = 'Kalshi is more expensive than DK (' + equiv + ' vs ' + m.dkOdds + '). DK is the better price, but Kalshi still has positive EV on your model.'; }
         }
       }
