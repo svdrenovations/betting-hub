@@ -158,16 +158,16 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .k-dot{width:7px;height:7px;border-radius:50%;background:var(--amber);flex-shrink:0}
 .k-row{background:var(--s1);border-bottom:1px solid var(--border)}
 .k-row:last-of-type{border-bottom:none}
-.k-main{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;padding:13px 16px;align-items:center}
+.k-main{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;padding:10px 12px;align-items:center;min-width:0}.k-main>*{min-width:0;overflow:hidden}
 .k-col{display:flex;flex-direction:column;align-items:center;gap:3px}
 .k-col-label{font-size:9px;font-family:DM Mono,monospace;color:var(--text);text-transform:uppercase;letter-spacing:.05em}
-.k-col-price{font-size:18px;font-weight:600;font-family:DM Mono,monospace}
+.k-col-price{font-size:16px;font-weight:600;font-family:DM Mono,monospace;white-space:nowrap}
 .k-col-ev{font-size:11px;font-family:DM Mono,monospace}
 .k-col-sub{font-size:10px;font-family:DM Mono,monospace;color:var(--text)}
 .k-col-max{font-size:9px;font-family:DM Mono,monospace;color:var(--amber)}
 .k-mid{display:flex;flex-direction:column;align-items:center;gap:7px}
 .k-verdict-tag{font-size:10px;font-family:DM Mono,monospace;color:var(--text)}
-.vs-pill{font-size:12px;font-weight:500;font-family:DM Mono,monospace;padding:4px 11px;border-radius:20px;text-align:center;white-space:nowrap}
+.vs-pill{font-size:11px;font-weight:500;font-family:DM Mono,monospace;padding:4px 8px;border-radius:20px;text-align:center;white-space:normal;word-break:break-word;max-width:120px}
 .vs-better{background:var(--green-bg);color:var(--green);border:1px solid var(--green-dim)}
 .vs-worse{background:var(--red-bg);color:var(--red);border:1px solid var(--red-dim)}
 .k-accept{padding:5px 14px;font-size:11px;font-weight:500;border-radius:5px;border:1px solid var(--amber-dim);background:var(--amber-bg);color:var(--amber);cursor:pointer;font-family:'DM Sans',sans-serif}
@@ -466,6 +466,7 @@ function evFromCents(p, cents) {
 }
 
 const kalshiCache = {};
+const kalshiAccepted = new Set(); // tracks 'gameId-market' pairs that have been accepted
 // Day-level cache: all markets for a given date, fetched once and shared across all games
 const kalshiDayCache = {};
 
@@ -822,6 +823,7 @@ async function acceptKalshi(gameId, market, label, verdict, cents, kalshiEv, mod
       body: JSON.stringify(row)
     });
     if (res.ok) {
+      kalshiAccepted.add(gameId + '-' + market);
       const btn = document.querySelector(`#kact-${gameId}-${market} button`);
       if (btn) { btn.textContent = 'Accepted ✓'; btn.style.borderColor='var(--green-dim)'; btn.style.background='var(--green-bg)'; btn.style.color='var(--green)'; btn.disabled=true; }
       // Refresh kalshi page if visible
@@ -1920,7 +1922,9 @@ function triggerAllKalshiFetches() {
         if (kequiv) kequiv.textContent = cents != null ? '≈ ' + equiv + ' equiv' : '—';
         const kact = document.getElementById('kact-' + gid + '-' + m.key);
         if (kact) {
-          if (cents == null || !aboveGate) {
+          if (kalshiAccepted.has(gid + '-' + m.key)) {
+            kact.innerHTML = '<button class="k-accept" disabled style="border-color:var(--green-dim);background:var(--green-bg);color:var(--green);opacity:.7">Accepted ✓</button>';
+          } else if (cents == null || !aboveGate) {
             kact.innerHTML = '<div class="no-edge-label">' + (cents == null ? 'no market' : 'no Kalshi edge') + '</div>';
           } else {
             const ticker = m.key === 'total' ? kd.total_ticker : (m.key === 'rl' ? (v.includes('AWAY') ? kd.rl_ticker_away : kd.rl_ticker_home) : (v.includes('AWAY') ? kd.awayML_ticker : kd.homeML_ticker));
