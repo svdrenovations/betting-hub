@@ -465,7 +465,7 @@ function evFromCents(p, cents) {
   // EV per dollar risked: (p * payout - (1-p)) / cost
   // payout on win = (1-c)/c dollars per dollar risked
   return +(( p * (1 - c) / c - (1 - p)) * 100).toFixed(1);
-
+}
 const kalshiCache = {};
 const kalshiAccepted = new Set(); // tracks 'gameId-market' pairs that have been accepted
 // Day-level cache: all markets for a given date, fetched once and shared across all games
