@@ -845,7 +845,7 @@ async function acceptKalshi(gameId, market, label, verdict, cents, kalshiEv, mod
       sb_ev: sbEv,
       kalshi_ev: kalshiEv,
       kalshi_ticker: ticker || null,
-      kalshi_line: kalshiLine || null,
+      // kalshi_line: kalshiLine || null, // column not yet in schema
       action: verdict,
       situations: situations || null,
       result: 'pending',
