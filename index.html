@@ -1410,6 +1410,7 @@ const TRACKER_COLS = [
   {key:'type',label:'Type',w:0,t:'str'},{key:'odds',label:'Odds',w:52,t:'num'},
   {key:'betLine',label:'Spread/Tot',w:60,t:'num'},
   {key:'book',label:'Book',w:80,t:'str'},{key:'units',label:'Units',w:46,t:'num'},
+  {key:'pnl',label:'P&L',w:58,t:'num'},
   {key:'ev',label:'EV%',w:58,t:'num'},{key:'confidence',label:'Conf',w:52,t:'rank'},
   {key:'situations',label:'Situation',w:0,t:'str'},
   {key:'result',label:'Result',w:0,t:'rank'},
@@ -1420,6 +1421,7 @@ function sortVal(b,col){
   switch(col){
     case 'odds':return parseFloat(b.odds);case 'betLine':return parseFloat(b.betLine);
     case 'maxJuice':return parseFloat(b.maxJuice);case 'units':return parseFloat(b.units);
+    case 'pnl':{const u=parseFloat(b.units)||1,n=parseFloat(b.odds);if(b.result==='win')return n>0?+(u*n/100).toFixed(2):+(u*100/Math.abs(n)).toFixed(2);if(b.result==='loss')return -u;if(b.result==='push')return 0;return null;}
     case 'ev':return parseFloat(b.ev);case 'clv':return parseFloat(b.clv);
     case 'score':return(b.awayScore!=null&&b.homeScore!=null)?(Number(b.awayScore)+Number(b.homeScore)):null;
     case 'model_pred':return(b.modelAwayRuns!=null&&b.modelHomeRuns!=null)?(Number(b.modelAwayRuns)+Number(b.modelHomeRuns)):null;
@@ -1999,6 +2001,7 @@ function renderKalshi(){
       <td style="font-size:11px;font-family:DM Mono,monospace">${b.market||'—'} · ${b.side||'—'}</td>
       <td style="font-size:11px">${sits||'—'}</td>
       <td class="mono" style="color:var(--amber)">${b.entry_cents!=null?Math.round(b.entry_cents)+'¢':'—'}</td>
+      <td class="mono" style="font-size:11px">${(()=>{if(!b.entry_cents)return'—';const c=parseFloat(b.entry_cents);const win=+((100-c)/c).toFixed(2);if(b.result==='win')return`<span style="color:var(--green)">+${win}u</span>`;if(b.result==='loss')return`<span style="color:var(--red)">-1u</span>`;if(b.result==='push')return`<span style="color:var(--text)">0u</span>`;return`<span style="color:var(--text)">—</span>`;})()}</td>
       <td class="mono" style="color:var(--text)">${b.model_prob!=null?b.model_prob.toFixed(1)+'%':'—'}</td>
       <td class="mono" style="color:${evColor}">${b.kalshi_ev!=null?'+'+parseFloat(b.kalshi_ev).toFixed(1)+'%':'—'}</td>
       <td class="mono" style="color:${sbEvColor}">${b.sb_ev!=null?'+'+parseFloat(b.sb_ev).toFixed(1)+'%':'—'}</td>
@@ -2009,7 +2012,7 @@ function renderKalshi(){
   }).join('');
   el.innerHTML=`<div class="scroll-mirror" id="kmirror"><div class="scroll-mirror-inner" id="kmi"></div></div><div class="t-table-wrap" id="kwrap"><table class="t-table"><thead><tr>
     <th style="width:32px"></th><th>Date</th><th>Matchup</th><th>Market</th><th>Situation</th>
-    <th>Entry</th><th>Model %</th><th>Kalshi EV</th><th>SB EV</th>
+    <th>Entry</th><th>P&L</th><th>Model %</th><th>Kalshi EV</th><th>SB EV</th>
     <th>Result</th><th>Status</th><th>P&L/contract</th>
   </tr></thead><tbody>${rows}</tbody></table></div>`;
   setTimeout(()=>{
@@ -2175,6 +2178,7 @@ function renderTracker(){
       <td class="mono" style="font-size:11px">${b.betLine||'—'}</td>
       <td style="font-size:11px">${b.book||'—'}</td>
       <td class="mono">${b.units}</td>
+      <td class="mono" style="font-size:11px">${(()=>{const u=parseFloat(b.units)||1,n=parseFloat(b.odds);if(b.result==='win'){const p=n>0?+(u*n/100).toFixed(2):+(u*100/Math.abs(n)).toFixed(2);return`<span style="color:var(--green)">+${p}u</span>`;}if(b.result==='loss')return`<span style="color:var(--red)">-${u}u</span>`;if(b.result==='push')return`<span style="color:var(--text)">0u</span>`;return`<span style="color:var(--text)">—</span>`;})()}</td>
       <td>${ev}</td>
       <td style="font-size:11px">${b.confidence||'—'}</td>
       <td style="font-size:11px">${b.situations||'—'}${b.fadeReason?` <span style="color:var(--amber)">· ${b.fadeReason}</span>`:''}</td>
