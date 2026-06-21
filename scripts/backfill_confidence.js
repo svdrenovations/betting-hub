@@ -184,7 +184,7 @@ async function run() {
 
   // Preview changes
   console.log('\nSample changes (first 20):');
-  console.log(`${'Date':<12} ${'Matchup':<42} ${'Old':<8} ${'New'}`);
+  console.log('Date'.padEnd(12) + ' ' + 'Matchup'.padEnd(42) + ' ' + 'Old'.padEnd(8) + ' New');
   console.log('-'.repeat(75));
   for (const u of updates.slice(0, 20)) {
     console.log(`${u.game_date.padEnd(12)} ${u.matchup.slice(0, 40).padEnd(42)} ${(u.oldConf||'null').padEnd(8)} ${u.confidence}`);
