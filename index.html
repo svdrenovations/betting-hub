@@ -763,6 +763,7 @@ async function loadDepth(gid, marketKey) {
 }
 
 async function acceptDepthOrder(gameId, market, label, verdict, cents, kalshiEv, modelProb, sbEv, matchup, gameDate, situations, ticker, qtyInputId) {
+  if(!requireUnlocked()) return;
   const qtyEl = document.getElementById(qtyInputId);
   const qty = qtyEl ? parseInt(qtyEl.value) || 1 : 1;
   const side = (verdict||'').replace(/^(BET|LEAN)\s+/i,'').trim();
@@ -1240,6 +1241,7 @@ function toggleKDrop(id, btn) {
 }
 
 async function acceptKalshi(gameId, market, label, verdict, cents, kalshiEv, modelProb, sbEv, matchup, gameDate, situations, ticker, kalshiLine) {
+  if(!requireUnlocked()) return;
   const side = (verdict||'').toUpperCase().includes('AWAY')||verdict.toUpperCase().includes('OVER') ? 'AWAY_OVER' : 'HOME_UNDER';
   const sideClean = (verdict||'').replace(/^(BET|LEAN)\s+/i,'').trim();
   try {
@@ -1618,6 +1620,7 @@ function sbExportCSV(){
   const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='model_vs_sim_plays_'+isoDate(new Date())+'.csv';a.click();
 }
 async function sbDeletePlay(keyEnc,labelEnc){
+  if(!requireUnlocked()) return;
   const key=decodeURIComponent(keyEnc),label=decodeURIComponent(labelEnc);
   if(!confirm(`Remove this play from the Model vs Sim log?\n\n${label}`))return;
   const[game_date,matchup,market,side,source]=key.split('|');
@@ -2018,6 +2021,7 @@ function renderKalshi(){
 }
 
 async function setKalshiResult(id,result){
+  if(!requireUnlocked()) return;
   try{
     const res=await fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper?id=eq.${id}`,{method:'PATCH',headers:{'Content-Type':'application/json','apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`,'Prefer':'return=minimal'},body:JSON.stringify({result,settled_at:new Date().toISOString()})});
     if(res.ok){const b=kalshiBets.find(x=>x.id===id);if(b)b.result=result;renderKalshi();}
@@ -2025,6 +2029,7 @@ async function setKalshiResult(id,result){
 }
 
 async function deleteKalshiBet(id){
+  if(!requireUnlocked()) return;
   const b=kalshiBets.find(x=>x.id===id);if(!b)return;
   if(!confirm('Delete this Kalshi bet?\n\n'+b.matchup+' - '+b.market+'\n\nThis cannot be undone.'))return;
   try{
@@ -2052,6 +2057,7 @@ function exportKalshiCSV(){
 
 // ── LOG BET MODAL ─────────────────────────────────────────────────────────────
 function quickLog(gameId,market,verdict,line,breakeven){
+  if(!requireUnlocked()) return;
   const g=games.find(x=>x.id===gameId);if(!g)return;
   pendingLog=g;
   document.getElementById('log-matchup').value=`${g.away_team} @ ${g.home_team}`;
@@ -2094,6 +2100,7 @@ function calcLiveEV(){
 }
 
 function openLog(id){
+  if(!requireUnlocked()) return;
   const g=games.find(x=>x.id===id);if(!g)return;
   pendingLog=g;
   document.getElementById('log-matchup').value=`${g.away_team} @ ${g.home_team}`;
@@ -2111,6 +2118,7 @@ function openLog(id){
 function closeModal(){document.getElementById('log-modal').classList.remove('show');pendingLog=null;}
 
 async function saveBet(){
+  if(!requireUnlocked()) return;
   if(!pendingLog)return;
   const g=pendingLog;
   const type=document.getElementById('log-type').value;
@@ -2133,11 +2141,13 @@ async function saveBet(){
 }
 
 async function setResult(id,r){
+  if(!requireUnlocked()) return;
   const b=bets.find(x=>x.id===id);
   if(b){b.result=r;let extra={};if(r==='win'||r==='loss'||r==='push'){const cap=await captureClosing(b);b.closingOdds=cap.closing_odds;b.closingLine=cap.closing_line;b.clv=cap.clv;extra={closing_odds:cap.closing_odds,closing_line:cap.closing_line,clv:cap.clv};}await updateBetResult(id,r,extra);renderTracker();updateNavRecord();}
 }
 
 async function deleteBet(id){
+  if(!requireUnlocked()) return;
   const i=bets.findIndex(x=>x.id===id);if(i<0)return;
   const b=bets[i];
   if(!confirm(`Delete this bet?\n\n${b.matchup} — ${b.type}\n${b.odds} · ${b.units}u\n\nThis cannot be undone.`))return;
@@ -2190,12 +2200,14 @@ function renderTracker(){
 // ── EDIT BET ──────────────────────────────────────────────────────────────────
 let pendingEdit=null;
 function openEdit(id){
+  if(!requireUnlocked()) return;
   const b=bets.find(x=>x.id===id);if(!b)return;pendingEdit=b;
   document.getElementById('edit-matchup').value=b.matchup||'';document.getElementById('edit-date').value=b.date||'';document.getElementById('edit-type').value=b.type||'Game total over';document.getElementById('edit-book').value=b.book||'';document.getElementById('edit-odds').value=b.odds||'';document.getElementById('edit-line').value=b.betLine||'';document.getElementById('edit-units').value=b.units||1;document.getElementById('edit-max-juice').value=b.maxJuice||'';document.getElementById('edit-result').value=b.result||'pending';document.getElementById('edit-notes').value=b.notes||'';
   document.getElementById('edit-modal').classList.add('show');
 }
 function closeEditModal(){document.getElementById('edit-modal').classList.remove('show');pendingEdit=null;}
 async function saveEdit(){
+  if(!requireUnlocked()) return;
   if(!pendingEdit)return;
   const updates={matchup:document.getElementById('edit-matchup').value,game_date:document.getElementById('edit-date').value,bet_type:document.getElementById('edit-type').value,book:document.getElementById('edit-book').value,odds:document.getElementById('edit-odds').value,bet_line:document.getElementById('edit-line').value,units:parseFloat(document.getElementById('edit-units').value)||1,max_juice:document.getElementById('edit-max-juice').value,result:document.getElementById('edit-result').value,notes:document.getElementById('edit-notes').value};
   try{
@@ -2236,6 +2248,7 @@ async function captureClosing(bet){
 
 // ── SETTLE ────────────────────────────────────────────────────────────────────
 async function settleBets(){
+  if(!requireUnlocked()) return;
   const btn=document.querySelector('#settle-btn')||document.querySelectorAll('[onclick="settleBets()"]')[0];
   const pending=bets.filter(b=>b.result==='pending');
   if(!pending.length){alert('No pending bets to settle.');return;}
