@@ -463,6 +463,76 @@ function deriveRunModel(a, lines) {
   return a;
 }
 
+// ── ROOF STATUS SCRAPER ───────────────────────────────────────────────────────
+// For teams that publish roof status publicly, scrape the actual status.
+// For others, apply climate-based defaults from historical data.
+const ROOF_STATUS_URLS = {
+  'Arizona Diamondbacks': 'https://www.mlb.com/dbacks/ballpark/information/roof',
+  'Milwaukee Brewers':    'https://www.mlb.com/brewers/ballpark/roof-status',
+};
+
+// Climate defaults for teams that DON'T publish status (based on historical open % data)
+// Houston & Texas: close when temp >82°F or humid or rain — ~80-90% of summer games closed
+// Miami: almost always closed — close when temp >75°F or rain
+// Toronto: open most games except rain/cold
+// Seattle: open when no rain and temp >55°F
+const ROOF_CLIMATE_DEFAULTS = {
+  'Houston Astros':      (temp, rainy) => temp > 82 || rainy ? 'closed' : 'open',
+  'Texas Rangers':       (temp, rainy) => temp > 82 || rainy ? 'closed' : 'open',
+  'Miami Marlins':       (temp, rainy) => temp > 75 || rainy ? 'closed' : 'open',
+  'Toronto Blue Jays':   (temp, rainy) => rainy || temp < 50 ? 'closed' : 'open',
+  'Seattle Mariners':    (temp, rainy) => rainy ? 'closed' : 'open',
+};
+
+async function fetchRoofStatus(homeTeam, gameDate, temp, rainy) {
+  // 1. Try to scrape actual status for ARI and MIL
+  const url = ROOF_STATUS_URLS[homeTeam];
+  if (url) {
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+      if (res.ok) {
+        const html = await res.text();
+        // Look for the game date in the page (format: "June 21" or "Jun 21" or "6/21")
+        const d = new Date(gameDate);
+        const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+        const monthShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const month = monthNames[d.getMonth()];
+        const monthS = monthShort[d.getMonth()];
+        const day = d.getDate();
+        // Build regex to find date row and capture roof status nearby
+        const datePatterns = [
+          `${month}\\s+${day}`,
+          `${monthS}\\.?\\s+${day}`,
+          `${d.getMonth()+1}\\/${day}`,
+        ];
+        for (const pat of datePatterns) {
+          const re = new RegExp(pat + '[^<]{0,200}?(open|closed)', 'i');
+          const match = html.match(re);
+          if (match) {
+            const status = match[1].toLowerCase();
+            console.log(`  Roof status for ${homeTeam} on ${gameDate}: ${status} (scraped)`);
+            return status; // 'open' or 'closed'
+          }
+        }
+        console.log(`  Roof page found for ${homeTeam} but no match for ${gameDate}`);
+      }
+    } catch(e) {
+      console.log(`  Roof scrape error for ${homeTeam}:`, e.message);
+    }
+  }
+
+  // 2. Apply climate default for teams without public status pages
+  const defaultFn = ROOF_CLIMATE_DEFAULTS[homeTeam];
+  if (defaultFn) {
+    const status = defaultFn(temp, rainy);
+    console.log(`  Roof status for ${homeTeam} on ${gameDate}: ${status} (climate default)`);
+    return status;
+  }
+
+  // 3. No retractable roof — return null (non-retractable teams never reach this)
+  return null;
+}
+
 // Fetch weather for home park
 async function fetchWeather(homeTeam, gameTime, venue) {
   try {
@@ -493,15 +563,27 @@ async function fetchWeather(homeTeam, gameTime, venue) {
     const windSpeed = Math.round(wind.speed);
     const windDeg = wind.deg;
 
-    // Retractable roof: estimate the chance it's open (warm & dry & daytime -> likely open).
+    // Retractable roof: get actual status or climate default
     let roofOpenProb = 1;
+    let roofStatusSource = 'n/a';
     if (park.dome && pf.retractable) {
       const rainy = /rain|storm|snow|drizzle/.test(desc);
-      roofOpenProb = (!rainy && temp >= 68 && temp <= 95) ? 0.7 : 0.2;
+      const gameDate = new Date(gameTime).toISOString().slice(0, 10);
+      const actualStatus = await fetchRoofStatus(homeTeam, gameDate, temp, rainy);
+      if (actualStatus === 'closed') {
+        roofOpenProb = 0;
+        roofStatusSource = 'confirmed closed';
+      } else if (actualStatus === 'open') {
+        roofOpenProb = 1;
+        roofStatusSource = 'confirmed open';
+      } else {
+        // Fallback to weather heuristic
+        roofOpenProb = (!rainy && temp >= 68 && temp <= 85) ? 0.6 : 0.15;
+        roofStatusSource = 'estimated';
+      }
     }
-    // If a retractable roof is likely CLOSED, the game plays effectively indoors: outside
-    // wind/rain never reach the field, so weather is not a real factor (don't tag it "weather").
-    const roofClosed = !!(park.dome && pf.retractable && roofOpenProb <= 0.3);
+    // If roof is confirmed/estimated closed, weather is not a factor
+    const roofClosed = !!(park.dome && pf.retractable && roofOpenProb <= 0.1);
     // Effective wind = raw wind x how much THIS park plays the wind x roof-open chance.
     const effWind = Math.round(windSpeed * (pf.windFactor || 1) * roofOpenProb);
 
@@ -550,15 +632,22 @@ async function fetchWeather(homeTeam, gameTime, venue) {
     if (effWind >= 18 && windImpact === 'under') windImpact = 'significant under';
     if (roofClosed) windImpact = 'neutral';   // closed roof -> no wind effect regardless of the outside reading
 
-    // Flag significant weather
+    // Flag significant weather — suppress all flags if roof is closed
     const flags = [];
-    if (effWind >= 15) flags.push(effWind >= 20 ? 'HIGH WIND' : 'WIND FACTOR');
-    if (temp <= 45) flags.push('COLD WEATHER');
-    if (temp >= 90) flags.push('HOT WEATHER');
-    if (desc.includes('rain') || desc.includes('storm')) flags.push('RAIN RISK');
-    if (park.dome && pf.retractable) flags.push(`RETRACTABLE ROOF (~${Math.round(roofOpenProb*100)}% open)`);
-    if (effWind >= 10 && (fieldWindDir === 'OUT to CF' || fieldWindDir === 'IN from CF')) {
-      flags.push(windImpact.toUpperCase());
+    if (!roofClosed) {
+      if (effWind >= 15) flags.push(effWind >= 20 ? 'HIGH WIND' : 'WIND FACTOR');
+      if (temp <= 45) flags.push('COLD WEATHER');
+      if (temp >= 90) flags.push('HOT WEATHER');
+      if (desc.includes('rain') || desc.includes('storm')) flags.push('RAIN RISK');
+      if (effWind >= 10 && (fieldWindDir === 'OUT to CF' || fieldWindDir === 'IN from CF')) {
+        flags.push(windImpact.toUpperCase());
+      }
+    }
+    if (park.dome && pf.retractable) {
+      const statusLabel = roofStatusSource === 'confirmed closed' ? 'CLOSED'
+        : roofStatusSource === 'confirmed open' ? 'OPEN'
+        : `~${Math.round(roofOpenProb*100)}% open (est.)`;
+      flags.push(`RETRACTABLE ROOF (${statusLabel})`);
     }
 
     return {
@@ -577,7 +666,9 @@ async function fetchWeather(homeTeam, gameTime, venue) {
       roofOpenProb,
       weatherNeutralized: roofClosed,
       flags,
-      summary: `${temp}°F, ${desc}, wind ${windSpeed}mph ${windCard} (${windArrow} ${fieldWindDir})${flags.length ? ' — ' + flags.join(', ') : ''}`
+      summary: roofClosed
+        ? `${temp}°F, ${desc} (roof ${roofStatusSource} — weather neutralized)`
+        : `${temp}°F, ${desc}, wind ${windSpeed}mph ${windCard} (${windArrow} ${fieldWindDir})${flags.length ? ' — ' + flags.join(', ') : ''}`
     };
   } catch(e) {
     console.log(`  Weather error for ${homeTeam}:`, e.message);
