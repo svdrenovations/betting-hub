@@ -2001,7 +2001,7 @@ function renderKalshi(){
       <td style="font-size:11px;font-family:DM Mono,monospace">${b.market||'—'} · ${b.side||'—'}</td>
       <td style="font-size:11px">${sits||'—'}</td>
       <td class="mono" style="color:var(--amber)">${b.entry_cents!=null?Math.round(b.entry_cents)+'¢':'—'}</td>
-      <td class="mono" style="font-size:11px">${(()=>{if(!b.entry_cents)return'—';const c=parseFloat(b.entry_cents);const win=+((100-c)/c).toFixed(2);if(b.result==='win')return`<span style="color:var(--green)">+${win}u</span>`;if(b.result==='loss')return`<span style="color:var(--red)">-1u</span>`;if(b.result==='push')return`<span style="color:var(--text)">0u</span>`;return`<span style="color:var(--text)">—</span>`;})()}</td>
+      <td class="mono" style="font-size:11px">${(()=>{if(!b.entry_cents)return'—';const c=parseFloat(b.entry_cents);const win=+((100-c)/c).toFixed(2);if(b.result==='win')return`<span style="color:var(--green)">+${win}</span>`;if(b.result==='loss')return`<span style="color:var(--red)">-1</span>`;if(b.result==='push')return`<span style="color:var(--text)">0</span>`;return`<span style="color:var(--text)">—</span>`;})()}</td>
       <td class="mono" style="color:var(--text)">${b.model_prob!=null?b.model_prob.toFixed(1)+'%':'—'}</td>
       <td class="mono" style="color:${evColor}">${b.kalshi_ev!=null?'+'+parseFloat(b.kalshi_ev).toFixed(1)+'%':'—'}</td>
       <td class="mono" style="color:${sbEvColor}">${b.sb_ev!=null?'+'+parseFloat(b.sb_ev).toFixed(1)+'%':'—'}</td>
@@ -2178,7 +2178,7 @@ function renderTracker(){
       <td class="mono" style="font-size:11px">${b.betLine||'—'}</td>
       <td style="font-size:11px">${b.book||'—'}</td>
       <td class="mono">${b.units}</td>
-      <td class="mono" style="font-size:11px">${(()=>{const u=parseFloat(b.units)||1,n=parseFloat(b.odds);if(b.result==='win'){const p=n>0?+(u*n/100).toFixed(2):+(u*100/Math.abs(n)).toFixed(2);return`<span style="color:var(--green)">+${p}u</span>`;}if(b.result==='loss')return`<span style="color:var(--red)">-${u}u</span>`;if(b.result==='push')return`<span style="color:var(--text)">0u</span>`;return`<span style="color:var(--text)">—</span>`;})()}</td>
+      <td class="mono" style="font-size:11px">${(()=>{const u=parseFloat(b.units)||1,n=parseFloat(b.odds);if(b.result==='win'){const p=n>0?+(u*n/100).toFixed(2):+(u*100/Math.abs(n)).toFixed(2);return`<span style="color:var(--green)">+${p}</span>`;}if(b.result==='loss')return`<span style="color:var(--red)">-${u}</span>`;if(b.result==='push')return`<span style="color:var(--text)">0</span>`;return`<span style="color:var(--text)">—</span>`;})()}</td>
       <td>${ev}</td>
       <td style="font-size:11px">${b.confidence||'—'}</td>
       <td style="font-size:11px">${b.situations||'—'}${b.fadeReason?` <span style="color:var(--amber)">· ${b.fadeReason}</span>`:''}</td>
