@@ -1460,6 +1460,106 @@ The projTotal and f5ProjTotal are the most important numbers you produce — the
   }
 }
 
+// ── DETERMINISTIC CONFIDENCE FORMULA ─────────────────────────────────────────
+// Replaces LLM subjective confidence with a rule-based score.
+// Based on 160-bet sample analysis (June 11-20, 2026):
+//   - Model LEAN outperforms BET (71% vs 64%) — strength label not reliable
+//   - Agreed BET is strongest signal (73%, +53.5% ROI)
+//   - Agreed LEAN is negative — penalize
+//   - LOW confidence anywhere: 1-3 (33%) — don't bet
+//   - Big dogs inflate EV artificially — cap confidence
+//   - 6-9% EV on standalone plays: 75% win rate — best calibrated bucket
+//   - 15-19% EV: 54% — overconfident range, no bonus
+//   - Totals underside: 83% win rate
+//
+// Score → Label:  ≥7 = HIGH | 4-6 = MEDIUM | 1-3 = LOW | 0 = SKIP (don't bet)
+function computeConfidence(analysis, lines) {
+  if (!analysis) return 'LOW';
+
+  let score = 0;
+
+  // ── 1. Best play EV tier ──────────────────────────────────────────────────
+  // Use the highest EV market that has a verdict
+  const markets = [
+    { verdict: analysis.ml,    ev: parseFloat(analysis.mlEV    || 0) },
+    { verdict: analysis.rl,    ev: parseFloat(analysis.rlEV    || 0) },
+    { verdict: analysis.total, ev: parseFloat(analysis.totalEV || 0) },
+  ].filter(m => m.verdict && m.verdict !== 'SKIP' && m.ev >= 6);
+
+  if (!markets.length) return 'LOW'; // no qualifying play
+
+  const bestEV = Math.max(...markets.map(m => m.ev));
+
+  if      (bestEV >= 20)  score += 4;
+  else if (bestEV >= 10)  score += 3;
+  else if (bestEV >= 6)   score += 2;
+  // 15-19% gets same as 10-14% — no bonus for that range based on data
+
+  // ── 2. Model / Sim agreement ──────────────────────────────────────────────
+  // Check each qualifying market for agreement
+  const mkts = ['ml','rl','total'];
+  let anyAgree = false, anyDisagree = false;
+
+  for (const mkt of mkts) {
+    const modelV = analysis[mkt];
+    const simV   = analysis['sim' + mkt.charAt(0).toUpperCase() + mkt.slice(1)];
+    if (!modelV || modelV === 'SKIP') continue;
+    if (!simV   || simV   === 'SKIP') continue;
+    // Extract side from verdict e.g. "BET AWAY" → "AWAY"
+    const modelSide = (modelV.match(/(AWAY|HOME|OVER|UNDER)/)||[])[1];
+    const simSide   = (simV.match(  /(AWAY|HOME|OVER|UNDER)/)||[])[1];
+    if (!modelSide || !simSide) continue;
+    if (modelSide === simSide) anyAgree = true;
+    else anyDisagree = true;
+  }
+
+  if (anyAgree && !anyDisagree)  score += 3; // full agreement = biggest boost
+  else if (anyAgree)             score += 1; // partial agreement
+  else if (anyDisagree)          score -= 1; // disagreement = penalty
+
+  // ── 3. BET vs LEAN strength ───────────────────────────────────────────────
+  // Data shows LEAN outperforms BET — no penalty for LEAN, but BET on agreed plays gets a boost
+  const bestMkt = markets.sort((a,b) => b.ev - a.ev)[0];
+  const isBet = bestMkt && bestMkt.verdict && bestMkt.verdict.startsWith('BET');
+  if (isBet && anyAgree && !anyDisagree) score += 1; // agreed BET = strongest signal
+
+  // ── 4. Situation flags ────────────────────────────────────────────────────
+  const sits = (analysis.situations || []).map(s => (s||'').toLowerCase().trim());
+  const fadePresent = sits.includes('fade');
+  const sitCount = sits.filter(s => ['revenge','travel','sharp','weather','rest','series','fade'].includes(s)).length;
+
+  if (sitCount >= 2) score += 2;
+  else if (sitCount === 1) score += 1;
+
+  // ── 5. Price range guard — big dogs inflate EV artificially ──────────────
+  // Cap confidence on extreme underdogs regardless of EV
+  const bestOdds = (() => {
+    const v = bestMkt?.verdict || '';
+    const side = (v.match(/(AWAY|HOME|OVER|UNDER)/)||[])[1];
+    if (!side) return null;
+    if (bestMkt.verdict.includes('AWAY') && analysis.ml?.includes('AWAY')) return parseFloat(lines?.awayML || 0);
+    if (bestMkt.verdict.includes('HOME') && analysis.ml?.includes('HOME')) return parseFloat(lines?.homeML || 0);
+    if (bestMkt.verdict.includes('AWAY') && analysis.rl?.includes('AWAY')) return parseFloat(lines?.awayRLOdds || 0);
+    if (bestMkt.verdict.includes('HOME') && analysis.rl?.includes('HOME')) return parseFloat(lines?.homeRLOdds || 0);
+    if (bestMkt.verdict.includes('OVER'))  return parseFloat(lines?.overOdds || 0);
+    if (bestMkt.verdict.includes('UNDER')) return parseFloat(lines?.underOdds || 0);
+    return null;
+  })();
+
+  if (bestOdds && bestOdds >= 200)  score -= 2; // big dog +200 or more
+  else if (bestOdds && bestOdds >= 150) score -= 1; // dog +150 to +199
+
+  // ── 6. Under plays get a small boost (83% hit rate) ───────────────────────
+  const hasUnder = markets.some(m => m.verdict && m.verdict.includes('UNDER'));
+  if (hasUnder) score += 1;
+
+  // ── Final label ───────────────────────────────────────────────────────────
+  if (score >= 7) return 'HIGH';
+  if (score >= 4) return 'MEDIUM';
+  if (score >= 1) return 'LOW';
+  return 'LOW'; // never return SKIP — let EV gate handle play selection
+}
+
 async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData, pitcherStatus, gamePk) {
   const row = {
     id: game.id,
@@ -1584,7 +1684,7 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       away_win_pct: analysis.awayWinPct,
       home_win_pct: analysis.homeWinPct,
       edge_pct: analysis.edgePct,
-      confidence: analysis.confidence,
+      confidence: computeConfidence(analysis, lines),
       line_sharp: analysis.lineSharp,
       sharp_side: analysis.sharpSide,
       line_note: analysis.lineNote,
