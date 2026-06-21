@@ -1324,6 +1324,7 @@ function betPasses(b){
   if(g.sit.length){const tags=betSitTags(b);if(!g.sit.some(v=>tags.includes(v)))return false;}
   if(g.price.length){const a=parseFloat(b.odds);const ok=!isNaN(a)&&g.price.some(v=>v==='chalk'?(a<=-150):v==='fav'?(a<0&&a>-150):v==='dog'?(a>0&&a<150):v==='bigdog'?(a>=150):false);if(!ok)return false;}
   if(g.conf.length&&!g.conf.includes((b.confidence||'').toUpperCase()))return false;
+  if(g.from&&b.date&&String(b.date)<g.from)return false;
   if(g.to&&b.date&&String(b.date)>g.to)return false;
   // Stats book/market filters
   if(gStatsBooks.length&&b.book&&!gStatsBooks.includes(b.book))return false;
@@ -1601,7 +1602,7 @@ async function renderScoreboard(){
   if(sbGames===null){
     el.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
     try{
-      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev';
+      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev,confidence';
       const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?analyzed=eq.true&select=${cols}&order=game_date.desc&limit=2000`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
       if(!res.ok)throw new Error('Supabase '+res.status);
       sbGames=await res.json();
@@ -1653,8 +1654,8 @@ function scoreboardHTML(){
   const srcBadge=s=>s==='agreed'?'<span style="color:var(--green)">agreed</span>':s==='model'?'<span style="color:var(--text)">model</span>':'<span style="color:var(--amber)">sim</span>';
   const resCell=x=>{const c=x.result==='win'?'var(--green)':x.result==='loss'?'var(--red)':x.result==='push'?'var(--text)':'var(--text)';const t=x.result==='win'?'W':x.result==='loss'?'L':x.result==='push'?'P':'·';return`<span style="color:${c};font-weight:600">${t}</span>`;};
   const uCell=x=>{if(x.result==='pending')return'<span style="color:var(--text)">—</span>';const c=x.units>0?'var(--green)':x.units<0?'var(--red)':'var(--text)';return`<span class="mono" style="color:${c}">${x.units>0?'+':''}${x.units.toFixed(2)}</span>`;};
-  const rows=plays.map(x=>`<tr><td class="mono" style="font-size:11px">${x.date}</td><td style="font-size:12px">${x.matchup}</td><td style="font-size:11px">${srcBadge(x.source)}${x.disagreed?' <span style="color:var(--red);font-size:9px">⇄</span>':''}</td><td style="font-size:11px">${x.lbl}</td><td class="mono" style="font-size:11px">${x.side.toLowerCase()}</td><td class="mono" style="font-size:11px">${x.line}</td><td class="mono" style="font-size:11px;color:var(--amber)">${x.ev!=null?`+${x.ev.toFixed(1)}%`:'—'}</td><td>${resCell(x)}</td><td>${uCell(x)}</td><td style="text-align:center">${isUnlocked()?`<button onclick="sbDeletePlay('${encodeURIComponent(sbKey(x.date,x.matchup,x.mk,x.side,x.source))}','${encodeURIComponent(x.date+' · '+x.matchup+' · '+x.source+' '+x.lbl+' '+x.side.toLowerCase())}')" style="background:none;border:1px solid var(--border);color:var(--text);border-radius:5px;cursor:pointer;font-size:11px;line-height:1;padding:3px 7px">✕</button>`:''}</td></tr>`).join('');
-  const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr><th>Date</th><th>Matchup</th><th>Source</th><th>Mkt</th><th>Side</th><th>Line</th><th>EV</th><th>Res</th><th>Units</th><th></th></tr></thead><tbody>${rows||`<tr><td colspan="10" style="color:var(--text);padding:18px;text-align:center">No plays match these filters.</td></tr>`}</tbody></table></div>`;
+  const rows=plays.map(x=>`<tr><td class="mono" style="font-size:11px">${x.date}</td><td style="font-size:12px">${x.matchup}</td><td style="font-size:11px">${srcBadge(x.source)}${x.disagreed?' <span style="color:var(--red);font-size:9px">⇄</span>':''}</td><td style="font-size:11px">${x.lbl}</td><td class="mono" style="font-size:11px">${x.side.toLowerCase()}</td><td class="mono" style="font-size:11px">${x.line}</td><td class="mono" style="font-size:11px;color:var(--amber)">${x.ev!=null?`+${x.ev.toFixed(1)}%`:'—'}</td><td style="font-size:11px;color:${x.confidence==='HIGH'?'var(--green)':x.confidence==='MEDIUM'?'var(--amber)':'var(--text)'}">${x.confidence||'—'}</td><td>${resCell(x)}</td><td>${uCell(x)}</td><td style="text-align:center">${isUnlocked()?`<button onclick="sbDeletePlay('${encodeURIComponent(sbKey(x.date,x.matchup,x.mk,x.side,x.source))}','${encodeURIComponent(x.date+' · '+x.matchup+' · '+x.source+' '+x.lbl+' '+x.side.toLowerCase())}')" style="background:none;border:1px solid var(--border);color:var(--text);border-radius:5px;cursor:pointer;font-size:11px;line-height:1;padding:3px 7px">✕</button>`:''}</td></tr>`).join('');
+  const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr><th>Date</th><th>Matchup</th><th>Source</th><th>Mkt</th><th>Side</th><th>Line</th><th>EV</th><th>Conf</th><th>Res</th><th>Units</th><th></th></tr></thead><tbody>${rows||`<tr><td colspan="11" style="color:var(--text);padding:18px;text-align:center">No plays match these filters.</td></tr>`}</tbody></table></div>`;
   return filterBar+statsPanel+table;
 }
 
@@ -1667,7 +1668,7 @@ function goPage(name,btn){
   if(btn)btn.classList.add('on');
   if(name==='tracker')renderTracker();
   if(name==='stats')renderStats();
-  if(name==='scoreboard')renderScoreboard();
+  if(name==='scoreboard'){sbGames=null;renderScoreboard();}
   if(name==='kalshi'){loadKalshiBets().then(()=>renderKalshi());}
 }
 
