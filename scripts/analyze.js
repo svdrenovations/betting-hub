@@ -1304,40 +1304,42 @@ function parseOddsData(game, opts = {}) {
     const lu = bm.last_update ? new Date(bm.last_update) : null;
     if (commence && lu && lu.getTime() > commence.getTime()) { inPlaySkipped = true; continue; }
 
+    // Extract all markets from this book
+    let bmAwayML=null,bmHomeML=null,bmTotal=null,bmOverOdds=null,bmUnderOdds=null,bmAwayRL=null,bmHomeRL=null,bmAwayRLOdds=null,bmHomeRLOdds=null;
     for (const mkt of (bm.markets||[])) {
-      if (mkt.key==='h2h'&&!awayML) {
+      if (mkt.key==='h2h') {
         for (const o of mkt.outcomes) {
-          if (o.name===game.away_team) awayML=o.price>0?`+${o.price}`:`${o.price}`;
-          if (o.name===game.home_team) homeML=o.price>0?`+${o.price}`:`${o.price}`;
+          if (o.name===game.away_team) bmAwayML=o.price>0?`+${o.price}`:`${o.price}`;
+          if (o.name===game.home_team) bmHomeML=o.price>0?`+${o.price}`:`${o.price}`;
         }
-        if (awayML && !bookUsed) { bookUsed = bm.title || bm.key; lastUpdate = lu ? lu.toISOString() : null; }
       }
       if (mkt.key==='totals') {
         const over=mkt.outcomes.find(o=>o.name==='Over');
         const under=mkt.outcomes.find(o=>o.name==='Under');
         if (over) {
           const pt = parseFloat(over.point);
-          // Only use if within realistic MLB range AND better than current
           if (pt >= 6.5 && pt <= 13.5) {
-            if (!total) {
-              total=`${over.point}`;
-              overOdds=over.price>0?`+${over.price}`:`${over.price}`;
-              underOdds=under?(under.price>0?`+${under.price}`:`${under.price}`):null;
-            }
-          } else if (!total) {
-            // Store unrealistic total temporarily
-            total=`${over.point}`;
-            overOdds=over.price>0?`+${over.price}`:`${over.price}`;
-            underOdds=under?(under.price>0?`+${under.price}`:`${under.price}`):null;
+            bmTotal=`${over.point}`;
+            bmOverOdds=over.price>0?`+${over.price}`:`${over.price}`;
+            bmUnderOdds=under?(under.price>0?`+${under.price}`:`${under.price}`):null;
           }
         }
       }
-      if (mkt.key==='spreads'&&!awayRL) {
+      if (mkt.key==='spreads') {
         for (const o of mkt.outcomes) {
-          if (o.name===game.away_team) { awayRL=o.point>0?`+${o.point}`:`${o.point}`; awayRLOdds=o.price>0?`+${o.price}`:`${o.price}`; }
-          if (o.name===game.home_team) { homeRL=o.point>0?`+${o.point}`:`${o.point}`; homeRLOdds=o.price>0?`+${o.price}`:`${o.price}`; }
+          if (o.name===game.away_team) { bmAwayRL=o.point>0?`+${o.point}`:`${o.point}`; bmAwayRLOdds=o.price>0?`+${o.price}`:`${o.price}`; }
+          if (o.name===game.home_team) { bmHomeRL=o.point>0?`+${o.point}`:`${o.point}`; bmHomeRLOdds=o.price>0?`+${o.price}`:`${o.price}`; }
         }
       }
+    }
+    // Only use this book if it has at minimum the ML — fill in what it has, skip what it doesn't
+    if (!bmAwayML || !bmHomeML) continue;
+    // Take ML from this book always (first valid book wins for ML)
+    if (!awayML) { awayML=bmAwayML; homeML=bmHomeML; bookUsed=bm.title||bm.key; lastUpdate=lu?lu.toISOString():null; }
+    // Only fill in RL and Total from the SAME book that gave us ML — never mix books
+    if (bookUsed===(bm.title||bm.key)) {
+      if (!total && bmTotal) { total=bmTotal; overOdds=bmOverOdds; underOdds=bmUnderOdds; }
+      if (!awayRL && bmAwayRL) { awayRL=bmAwayRL; homeRL=bmHomeRL; awayRLOdds=bmAwayRLOdds; homeRLOdds=bmHomeRLOdds; }
     }
     if (awayML&&homeML&&total&&awayRL) break;
   }
@@ -2187,18 +2189,14 @@ async function snapshotGameClose(g, f5Map, f5Raw, today, now) {
   const url = g.id
     ? `${SUPABASE_URL}/rest/v1/mlb_games?id=eq.${encodeURIComponent(g.id)}`
     : `${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&away_team=eq.${encodeURIComponent(g.away_team)}&home_team=eq.${encodeURIComponent(g.home_team)}`;
-  // GUARD the CLV basis: a late pull near first pitch can return an empty or thinner per-book
-  // snapshot while a single stale book still yields a parseable ML (passing the guards above).
-  // Never replace a populated closing_lines with an emptier one, or we lose CLV for that game.
+  // GUARD: always prefer the most recent pre-game snapshot.
+  // The last analyze run before first pitch has the truest closing line.
+  // Only keep prior if current pull has zero books (empty/failed fetch).
   const newCount = closing_lines ? Object.keys(closing_lines).length : 0;
-  try {
-    const exRes = await fetch(`${url}&select=closing_lines`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` } });
-    if (exRes.ok) {
-      const ex = (await exRes.json())[0];
-      const exCount = ex && ex.closing_lines ? Object.keys(ex.closing_lines).length : 0;
-      if (exCount > newCount) { delete payload.closing_lines; console.log(`  ↩ ${g.away_team} @ ${g.home_team} — keeping prior ${exCount}-book close (new pull had ${newCount})`); }
-    }
-  } catch(e){ /* if we can't check, fall through to the empty-guard below */ }
+  if (newCount === 0) {
+    console.log(`  ⊘ ${g.away_team} @ ${g.home_team} — empty closing snapshot, keeping prior`);
+    delete payload.closing_lines;
+  }
   if (newCount === 0) delete payload.closing_lines; // never write an empty snapshot over anything
   try {
     const res = await fetch(url, { method:'PATCH', headers:{ 'Content-Type':'application/json','apikey':SUPABASE_SERVICE_KEY,'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}`,'Prefer':'return=minimal' }, body: JSON.stringify(payload) });
@@ -2218,6 +2216,13 @@ async function refreshClosingOdds() {
   let updated = 0;
   for (const g of games) {
     if (new Date(g.commence_time).toLocaleDateString('en-CA', {timeZone:'America/New_York'}) !== today) continue;
+    const minsToStart = (new Date(g.commence_time) - now) / 60000;
+    // Only snapshot closing lines within 75 minutes of first pitch
+    // Earlier runs would write stale analysis-time odds as the "close" which is wrong
+    if (minsToStart > 75) {
+      console.log(`  ⏭  ${g.away_team} @ ${g.home_team} — ${Math.round(minsToStart)}m to first pitch, skipping close snapshot`);
+      continue;
+    }
     const st = await snapshotGameClose(g, f5Map, f5Raw, today, now);
     if (st === 'updated') updated++;
     await new Promise(r => setTimeout(r, 300));
