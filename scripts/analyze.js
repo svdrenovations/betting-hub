@@ -1013,14 +1013,19 @@ async function fetchMatchupStats(batterId, pitcherId) {
     );
     if (!res.ok) return null;
     const data = await res.json();
-    const stats = data.stats?.[0]?.splits?.[0]?.stat;
-    if (!stats) return null;
+    // API returns multiple splits — find one with actual AB data (career aggregate)
+    const allSplits = (data.stats || []).flatMap(s => s.splits || []);
+    const stat = allSplits.find(s => (s.stat?.atBats || 0) > 0)?.stat;
+    if (!stat || !stat.atBats) return null;
     return {
-      ab: stats.atBats || 0,
-      avg: stats.avg || '.000',
-      ops: stats.ops || '.000',
-      hr: stats.homeRuns || 0,
-      so: stats.strikeOuts || 0
+      ab:  stat.atBats      || 0,
+      avg: stat.avg         || '.000',
+      ops: stat.ops         || '.000',
+      hr:  stat.homeRuns    || 0,
+      so:  stat.strikeOuts  || 0,
+      bb:  stat.baseOnBalls || 0,
+      obp: stat.obp         || '.000',
+      slg: stat.slg         || '.000',
     };
   } catch(e) { return null; }
 }
@@ -2433,9 +2438,9 @@ async function main() {
       }
       if (homeStatcast) console.log(`  Statcast ${homePitcherInfo.name}: velo ${homeStatcast.avgVelo} (${homeStatcast.veloTrend}), whiff ${homeStatcast.whiffRate}%, barrel ${homeStatcast.barrelRate}%`);
       if (awayMatchups?.avgOPS != null) console.log(`  Away lineup vs ${homePitcherInfo?.name}: OPS ${awayMatchups.avgOPS}, K% ${awayMatchups.kRate}`);
-      else if (awayMatchups) console.log(`  Away lineup vs ${homePitcherInfo?.name}: no batter-vs-pitcher sample (using season stats)`);
+      else if (awayMatchups) console.log(`  Away lineup vs ${homePitcherInfo?.name}: no batter-vs-pitcher sample (using season stats) — ${awayMatchups.meaningful || 0} batters with 10+ AB found`);
       if (homeMatchups?.avgOPS != null) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: OPS ${homeMatchups.avgOPS}, K% ${homeMatchups.kRate}`);
-      else if (homeMatchups) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: no batter-vs-pitcher sample (using season stats)`);
+      else if (homeMatchups) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: no batter-vs-pitcher sample (using season stats) — ${homeMatchups.meaningful || 0} batters with 10+ AB found`);
 
       // Real starter stats (ERA/WHIP/avg IP/hand) + bullpen quality & fatigue
       const [awayDetail, homeDetail, awayBullpen, homeBullpen] = await Promise.all([
