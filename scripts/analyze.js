@@ -827,7 +827,7 @@ async function fetchProbablePitchers(gameDate) {
 // Series sweep-spot detector. Looks at the prior games of THIS series (the seriesGameNumber-1 most
 // recent head-to-head finals before today) and returns the side in position to sweep ('AWAY'|'HOME')
 // if one team has won every one of them, else null. Best-effort: any hiccup returns null = no fade.
-async function fetchSeriesSweepSide(awayId, homeId, dateStr, seriesGameNumber) {
+async function fetchSeriesSweepSide(awayId, homeId, dateStr, seriesGameNumber, currentGamePk = null) {
   const priorNeeded = (seriesGameNumber || 0) - 1;
   if (priorNeeded < 2) return null;                       // need games 1 & 2 already played (this is game 3+)
   try {
@@ -840,9 +840,10 @@ async function fetchSeriesSweepSide(awayId, homeId, dateStr, seriesGameNumber) {
       const aId = g.teams?.away?.team?.id, hId = g.teams?.home?.team?.id;
       const pair = (aId === awayId && hId === homeId) || (aId === homeId && hId === awayId);
       if (!pair) continue;
+      if (currentGamePk && g.gamePk === currentGamePk) continue; // skip the current game
       if (g.status?.abstractGameState !== 'Final') continue;
       const od = g.officialDate || (g.gameDate || '').slice(0, 10);
-      if (!od || od >= dateStr) continue;                 // only games strictly before today
+      if (!od || od > dateStr) continue;                  // only games up to and including today
       const aS = g.teams?.away?.score, hS = g.teams?.home?.score;
       if (aS == null || hS == null) continue;
       h2h.push({ date: od, winnerId: aS > hS ? aId : hId });
@@ -2559,7 +2560,7 @@ async function main() {
       let sweepSide = null;
       const sgn = sg?.seriesGameNumber || 0;
       if (sgn >= 3 && awayTeamId && homeTeamId) {
-        try { sweepSide = await fetchSeriesSweepSide(awayTeamId, homeTeamId, _gd, sgn); }
+        try { sweepSide = await fetchSeriesSweepSide(awayTeamId, homeTeamId, _gd, sgn, sg?.gamePk || null); }
         catch(e) { /* best-effort */ }
         if (sweepSide) console.log(`  ⚑ sweep spot: ${sweepSide} in position to complete the sweep (series G${sgn}) — fading their +EV ML/RL`);
       }
