@@ -1323,7 +1323,7 @@ async function acceptKalshi(gameId, market, label, verdict, cents, kalshiEv, mod
     });
     if (res.ok) {
       kalshiAccepted.add(gameId + '-' + market);
-      kalshiAcceptedMatchups.add((matchup + '|' + market).toLowerCase());
+      kalshiAcceptedMatchups.add((matchup + '|' + market + '|' + (gameDate||'')).toLowerCase());
       const btn = document.querySelector(`#kact-${gameId}-${market} button`);
       if (btn) { btn.textContent = 'Accepted ✓'; btn.style.borderColor='var(--green-dim)'; btn.style.background='var(--green-bg)'; btn.style.color='var(--green)'; btn.disabled=true; }
       // Refresh kalshi page if visible
@@ -2522,7 +2522,7 @@ function triggerAllKalshiFetches() {
           kequiv.textContent = cents != null ? kalshiLineLabel + '≈ ' + equiv + ' equiv' : '—';
         }
         if (kact) {
-          const matchupKey = (matchup + '|' + m.key).toLowerCase();
+          const matchupKey = (matchup + '|' + m.key + '|' + (gameDate||'')).toLowerCase();
           if (kalshiAccepted.has(gid + '-' + m.key) || kalshiAcceptedMatchups.has(matchupKey)) {
             kact.innerHTML = '<button class="k-accept" disabled style="border-color:var(--green-dim);background:var(--green-bg);color:var(--green);opacity:.7">Accepted ✓</button>';
           } else if (cents == null) {
@@ -2667,7 +2667,7 @@ setTimeout(applyLockState, 0);
 fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper?select=matchup,market,game_date`,{headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}})
   .then(r=>r.ok?r.json():[]).then(rows=>{
     // Store as matchup+market keys; matched against gid in triggerAllKalshiFetches
-    rows.forEach(r=>{if(r.matchup&&r.market)kalshiAcceptedMatchups.add((r.matchup+'|'+r.market).toLowerCase());});
+    rows.forEach(r=>{if(r.matchup&&r.market)kalshiAcceptedMatchups.add((r.matchup+'|'+r.market+'|'+(r.game_date||'')).toLowerCase());});
   }).catch(()=>{});
 loadBetsFromSupabase().then(()=>{updateNavRecord();renderGames();});
 if(new URLSearchParams(location.search).get('game')){openDeepLinkGame();}else{loadGames();}
