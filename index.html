@@ -893,7 +893,7 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
       candidateRL.push(eventTicker.replace('KXMLBGAME-', 'KXMLBSPREAD-'));
       // Also try ±1 and ±2 minute variants
       if (commenceTime) {
-        for (const delta of [-1, 1]) {
+        for (const delta of [-1, 1, -2, 2]) {
           const ct2 = new Date(new Date(commenceTime).getTime() + delta * 60000);
           const etMs2 = ct2.getTime() + (-4 * 60) * 60000;
           const etDate2 = new Date(etMs2);
@@ -905,6 +905,35 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
           const alt = `KXMLBGAME-${yy2}${mon2}${dd2}${hh2}${mm2}${teamPair}`;
           candidateML.push(alt);
           candidateRL.push(alt.replace('KXMLBGAME-', 'KXMLBSPREAD-'));
+        }
+        // Makeup/doubleheader fallback: try same time on prior 1-2 days
+        // Kalshi keeps the original postponed date in the ticker (e.g. rained out Jun 22 → ticker still uses Jun 22)
+        for (const dayDelta of [-1, -2]) {
+          const ct3 = new Date(new Date(commenceTime).getTime() + dayDelta * 24 * 60 * 60000);
+          const etMs3 = ct3.getTime() + (-4 * 60) * 60000;
+          const etDate3 = new Date(etMs3);
+          const yy3 = String(etDate3.getUTCFullYear()).slice(2);
+          const mon3 = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][etDate3.getUTCMonth()];
+          const dd3 = String(etDate3.getUTCDate()).padStart(2,'0');
+          const hh3 = String(etDate3.getUTCHours()).padStart(2,'0');
+          const mm3 = String(etDate3.getUTCMinutes()).padStart(2,'0');
+          const alt3 = `KXMLBGAME-${yy3}${mon3}${dd3}${hh3}${mm3}${teamPair}`;
+          candidateML.push(alt3);
+          candidateRL.push(alt3.replace('KXMLBGAME-', 'KXMLBSPREAD-'));
+          // Also ±1 min on prior days
+          for (const delta of [-1, 1]) {
+            const ct4 = new Date(ct3.getTime() + delta * 60000);
+            const etMs4 = ct4.getTime() + (-4 * 60) * 60000;
+            const etDate4 = new Date(etMs4);
+            const yy4 = String(etDate4.getUTCFullYear()).slice(2);
+            const mon4 = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][etDate4.getUTCMonth()];
+            const dd4 = String(etDate4.getUTCDate()).padStart(2,'0');
+            const hh4 = String(etDate4.getUTCHours()).padStart(2,'0');
+            const mm4 = String(etDate4.getUTCMinutes()).padStart(2,'0');
+            const alt4 = `KXMLBGAME-${yy4}${mon4}${dd4}${hh4}${mm4}${teamPair}`;
+            candidateML.push(alt4);
+            candidateRL.push(alt4.replace('KXMLBGAME-', 'KXMLBSPREAD-'));
+          }
         }
       }
     }
