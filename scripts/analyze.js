@@ -29,7 +29,7 @@ const STALE_MIN = 30;
 // minutes before first pitch (each tick re-captures; the last pre-pitch one becomes the close).
 // Outside this window an already-analyzed game costs nothing — no odds pull. Tune vs cadence:
 // a game analyzed closer to pitch than this still gets caught on the next tick before start.
-const REFRESH_WINDOW_MIN = 60;
+const REFRESH_WINDOW_MIN = 30;
 
 const { simulateGame } = require('./sim-data.js'); // Monte Carlo run sim (shadow mode)
 
@@ -2217,9 +2217,9 @@ async function refreshClosingOdds() {
   for (const g of games) {
     if (new Date(g.commence_time).toLocaleDateString('en-CA', {timeZone:'America/New_York'}) !== today) continue;
     const minsToStart = (new Date(g.commence_time) - now) / 60000;
-    // Only snapshot closing lines within 75 minutes of first pitch
+    // Only snapshot closing lines within 30 minutes of first pitch
     // Earlier runs would write stale analysis-time odds as the "close" which is wrong
-    if (minsToStart > 75) {
+    if (minsToStart > 30) {
       console.log(`  ⏭  ${g.away_team} @ ${g.home_team} — ${Math.round(minsToStart)}m to first pitch, skipping close snapshot`);
       continue;
     }
@@ -2477,8 +2477,39 @@ async function main() {
             awayStarterId: awayPitcherInfo.id,
             homeStarterId: homePitcherInfo.id,
             awayTeamId, homeTeamId,
-            ctx: {},                         // park/weather neutral for now
-            totalLine: lines.total,
+            // Pitcher handedness for platoon splits
+            awayStarterHand: awayPitcherInfo?.throwHand || 'R',
+            homeStarterHand: homePitcherInfo?.throwHand || 'R',
+            // Statcast data for pitcher quality adjustments
+            awayStarterStatcast: awayStatcast || null,
+            homeStarterStatcast: homeStatcast || null,
+            // Pitcher info for starter innings estimation
+            awayStarterInfo: awayPitcherInfo || null,
+            homeStarterInfo: homePitcherInfo || null,
+            // Batter handedness for platoon splits — use summary or fetch per-batter in sim
+            awayLineupHandedness: awayMatchups.handedness || null,
+            homeLineupHandedness: homeMatchups.handedness || null,
+            // Park factors
+            parkFactors: getParkFactors(game.home_team, venueName),
+            // Weather context — calculate wxHR from wind/temp
+            weather: weather ? {
+              wxHR: (() => {
+                if (!weather || weather.dome) return 1.0;
+                let mult = 1.0;
+                const temp = weather.temp || 72;
+                const effWind = weather.effWind || 0;
+                const flags = weather.flags || [];
+                // Hot weather boosts HRs slightly
+                if (temp >= 85) mult *= 1.05;
+                if (temp <= 50) mult *= 0.95;
+                // Wind out to CF boosts HRs
+                if (flags.some(f => (f||'').includes('OUT to CF'))) mult *= 1 + Math.min(effWind * 0.008, 0.15);
+                // Wind in from CF reduces HRs
+                if (flags.some(f => (f||'').includes('IN from CF'))) mult *= 1 - Math.min(effWind * 0.008, 0.12);
+                return mult;
+              })()
+            } : null,
+            totalLine: parseFloat(lines.total) || null,
             f5Line: f5Lines?.f5Total || null,
           });
           analysis.simAwayRuns = +simProbs.meanAway.toFixed(2);
