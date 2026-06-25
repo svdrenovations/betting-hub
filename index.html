@@ -1984,8 +1984,8 @@ function gameCardHTML(g){
   const marketsHTML=g.analyzed
     ?`${playRowLabel('MODEL',false,projInline(g.proj_away_runs,g.proj_home_runs,false))}
       <div class="markets">
-        ${marketCell('ML',g.ml_verdict,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged.ML, plays.find(p=>p.key==='ml')?.suppressed, false)}
-        ${marketCell('RL',g.rl_verdict,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged.RL, false, plays.find(p=>p.key==='rl')?.noMLConfirmation)}
+        ${marketCell('ML',g.ml_verdict,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged.ML, (() => { const ev=parseFloat(g.ml_ev||0); const v=(g.ml_verdict||'').toUpperCase(); if(!v||v==='SKIP'||ev<10||ev>=15) return false; const odds=parseFloat(v.includes('AWAY')?g.away_ml:g.home_ml||0); return odds<-100; })(), false)}
+        ${marketCell('RL',g.rl_verdict,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged.RL, false, (() => { const v=(g.rl_verdict||'').toUpperCase(); if(!v||v==='SKIP') return false; const rlLine=parseFloat((g.away_rl||'0').toString().replace('+','')); const isMinusSide=v.includes('AWAY')?rlLine<0:rlLine>0; if(!isMinusSide) return false; const mlV=(g.ml_verdict||'').toUpperCase(); return !mlV||mlV==='SKIP'||parseFloat(g.ml_ev||0)<6; })())}
         ${marketCell('TOTAL',g.total_verdict,g.total_ev,g.best_market==='total',g.total_line,g.proj_total,g.total_breakeven,g.id,logged.TOTAL)}
       </div>
       ${playRowLabel('SIM',true,projInline(g.sim_away_runs,g.sim_home_runs,true))}
