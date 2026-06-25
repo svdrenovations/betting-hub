@@ -260,7 +260,9 @@ function computePitcherFactor(pitcherDetail, statcast, lineupMatchups, arsenalMa
 
   // ── ERA component — use home/away split when available ────────────────────
   const seasonERA = parseFloat(pitcherDetail.era || LEAGUE_AVG_ERA);
-  const recentERA = parseFloat(pitcherDetail.recentERA || seasonERA);
+  const rawRecentERA = parseFloat(pitcherDetail.recentERA || seasonERA);
+  // Cap recent ERA at 3x season ERA — prevents 1-2 bad starts from dominating projection
+  const recentERA = Math.min(rawRecentERA, Math.max(seasonERA * 3.0, 9.0));
 
   // Home/away ERA split: pitcher at home vs on road
   let splitERA = seasonERA;
