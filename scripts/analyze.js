@@ -3045,6 +3045,8 @@ async function main() {
 
   // Pre-load Statcast cache from Supabase before game analysis begins
   await loadStatcastCache();
+  // Expose globally for sim-data.js access
+  global._statcastCache = _statcastCache;
 
   // Use ET timezone for date
   const etDate = new Date().toLocaleDateString('en-US', {timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'});
@@ -3283,21 +3285,24 @@ async function main() {
             awayStarterId: awayPitcherInfo.id,
             homeStarterId: homePitcherInfo.id,
             awayTeamId, homeTeamId,
-            // Pitcher handedness for platoon splits
             awayStarterHand: awayPitcherInfo?.throwHand || 'R',
             homeStarterHand: homePitcherInfo?.throwHand || 'R',
-            // Statcast data for pitcher quality adjustments
             awayStarterStatcast: awayStatcast || null,
             homeStarterStatcast: homeStatcast || null,
-            // Pitcher info for starter innings estimation
             awayStarterInfo: awayPitcherInfo || null,
             homeStarterInfo: homePitcherInfo || null,
-            // Batter handedness for platoon splits — use summary or fetch per-batter in sim
             awayLineupHandedness: awayMatchups.handedness || null,
             homeLineupHandedness: homeMatchups.handedness || null,
-            // Park factors
+            // Pitcher detail for home/away splits
+            awayPitcherDetail: awayPitcherInfo || null,
+            homePitcherDetail: homePitcherInfo || null,
+            // Batter Statcast cache — pitch type stats per batter
+            awayBatterStatcast: awayMatchups.lineup.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null),
+            homeBatterStatcast: homeMatchups.lineup.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null),
+            // Arsenal data for matchup adjustments
+            awayArsenal: awayArsenal || null,
+            homeArsenal: homeArsenal || null,
             parkFactors: getParkFactors(game.home_team, venueName),
-            // Weather context — calculate wxHR from wind/temp
             weather: weather ? {
               wxHR: (() => {
                 if (!weather || weather.dome) return 1.0;
@@ -3305,12 +3310,9 @@ async function main() {
                 const temp = weather.temp || 72;
                 const effWind = weather.effWind || 0;
                 const flags = weather.flags || [];
-                // Hot weather boosts HRs slightly
                 if (temp >= 85) mult *= 1.05;
                 if (temp <= 50) mult *= 0.95;
-                // Wind out to CF boosts HRs
                 if (flags.some(f => (f||'').includes('OUT to CF'))) mult *= 1 + Math.min(effWind * 0.008, 0.15);
-                // Wind in from CF reduces HRs
                 if (flags.some(f => (f||'').includes('IN from CF'))) mult *= 1 - Math.min(effWind * 0.008, 0.12);
                 return mult;
               })()
