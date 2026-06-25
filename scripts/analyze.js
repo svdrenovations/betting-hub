@@ -1500,7 +1500,7 @@ ANALYSIS INSTRUCTIONS — CRITICAL:
 - EXPECTED STARTER LENGTH: a starter averaging under ~5 IP exposes the bullpen earlier — weight the bullpen more heavily for that team.
 - SHARP / LINE ACTION IS INFORMATIONAL ONLY. Report any sharp or line-movement read in lineNote / sharpSide / lineSharp for display, but DO NOT let public or sharp money move your run projections or probabilities. Project independently of the market.
 - The "situations" array must ONLY contain these exact lowercase values: revenge, travel, sharp, weather, rest, series, fade, mustwin, debut. DO NOT add any other values. DO NOT use situations to flag data availability issues. If data is missing just work with what you have.
-- fadeReason: WHENEVER you tag "fade", also populate fadeReason with the specific reason(s) that drove it, using ONLY these values: velo (starter velocity trending DOWN vs season), coldarm (starter recent ERA worse than season), contact (starter hard-hit >=42% or high barrel / low whiff), form (team 2-8 or worse in last 10). Multiple allowed. This is ANNOTATION ONLY — it does NOT change whether or how you fade, it only records why you faded. Leave it [] if you did not tag "fade" (or if the fade was for a reason outside this list).
+- fadeReason: WHENEVER you tag "fade", you MUST populate fadeReason — never leave it empty if fade is in situations. Use ONLY these values: velo (starter velocity trending DOWN vs season average by 1+ mph), coldarm (starter recent ERA or WHIP significantly worse than season average — last 3 starts), contact (starter hard-hit rate >=42% OR barrel rate above league avg with low whiff), form (team 2-8 or worse in last 10 games). Multiple allowed. If you tagged "fade" but cannot identify a specific reason from this list, remove "fade" from situations entirely. This is ANNOTATION ONLY — it records why you faded.
 - USE ONLY 2026 SEASON STATS for all projections. IGNORE all prior year data entirely.
 - STATCAST IS CRITICAL: A pitcher with velocity DOWN trend is significantly worse than ERA suggests — fade. A pitcher with low barrel rate and high whiff rate is elite regardless of ERA — back. Hard hit rate above 42% means the pitcher is getting hit hard even if runs haven't scored yet.
 - LINEUP MATCHUPS OVERRIDE SEASON STATS: if the opposing lineup has OPS below .600 vs this pitcher with 25%+ K rate, project that team's runs 20-25% lower than season average. If lineup has OPS above .850 vs this pitcher, project 20-25% higher.
@@ -1725,7 +1725,20 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       analyzed_at: new Date().toISOString(),
       situations: (analysis.situations||[])
         .filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase().trim()))
-        .filter(s => !(weather?.weatherNeutralized && (s||'').toLowerCase().trim() === 'weather')),
+        .filter(s => !(weather?.weatherNeutralized && (s||'').toLowerCase().trim() === 'weather'))
+        .filter(s => {
+          // Remove fade tag if no specific reason can be identified
+          if ((s||'').toLowerCase().trim() !== 'fade') return true;
+          const faded = (analysis.situations||[]).map(x => (x||'').toLowerCase().trim()).includes('fade');
+          if (!faded) return false;
+          // Check if any fade reason exists from LLM or Statcast
+          const llmReasons = (analysis.fadeReason||[]).map(r => (r||'').toLowerCase().trim()).filter(r => ['velo','coldarm','contact','form'].includes(r));
+          const hasVelo = awayStatcastData && String(awayStatcastData.veloTrend||'').toUpperCase() === 'DOWN' || homeStatcastData && String(homeStatcastData.veloTrend||'').toUpperCase() === 'DOWN';
+          const hasContact = awayStatcastData && parseFloat(awayStatcastData.hardHitRate) >= 42 || homeStatcastData && parseFloat(homeStatcastData.hardHitRate) >= 42;
+          const hasCold = awayPitcherData && String(awayPitcherData.trending||'').toUpperCase() === 'COLD' || homePitcherData && String(homePitcherData.trending||'').toUpperCase() === 'COLD';
+          const hasForm = llmReasons.includes('form');
+          return llmReasons.length > 0 || hasVelo || hasContact || hasCold || hasForm;
+        }),
       fade_reason: (() => {
         // The model self-reports fadeReason but collapses to the dominant narrative (coldarm/form),
         // dropping velo/contact even when the Statcast numbers it was shown clearly meet the bar.
