@@ -905,60 +905,59 @@ async function fetchStatcast(pitcherName, pitcherId) {
     const endDate = new Date().toISOString().split('T')[0];
     const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    // Fetch pitch-by-pitch data AND expected stats in parallel
-    const [pitchRes, xStatsRes] = await Promise.all([
-      fetch(
-        'https://baseballsavant.mlb.com/statcast_search/csv?player_type=pitcher&pitchers_lookup[]=' + pitcherId +
-        '&game_date_gt=' + startDate + '&game_date_lt=' + endDate +
-        '&type=details&hfSea=2026%7C&group_by=name&sort_col=pitches&sort_order=desc&min_abs=0',
-        { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } }
-      ),
-      fetch(
-        `https://baseballsavant.mlb.com/expected_statistics?type=pitcher&year=2026&position=&team=&min=10&csv=true`,
-        { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } }
-      )
-    ]);
+    // Fetch pitch-by-pitch data only — xStats is a huge file, fetch separately with timeout
+    const pitchRes = await fetch(
+      'https://baseballsavant.mlb.com/statcast_search/csv?player_type=pitcher&pitchers_lookup[]=' + pitcherId +
+      '&game_date_gt=' + startDate + '&game_date_lt=' + endDate +
+      '&type=details&hfSea=2026%7C&group_by=name&sort_col=pitches&sort_order=desc&min_abs=0',
+      { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } }
+    );
 
-    // Parse expected stats (xERA, xFIP, xwOBA)
+    // Fetch xERA/xFIP/xwOBA separately — non-blocking, won't delay analysis if it fails
     let xERA = null, xFIP = null, xwOBA = null;
-    if (xStatsRes.ok) {
-      const xCsv = await xStatsRes.text();
-      const xLines = xCsv.trim().split('\n');
-      if (xLines.length > 1) {
-        const xHeaders = xLines[0].split(',');
-        const getX = (row, col) => { const i = xHeaders.indexOf(col); return i >= 0 ? row.split(',')[i] : null; };
-        for (let i = 1; i < xLines.length; i++) {
-          const row = xLines[i];
-          const pid = getX(row, 'player_id') || getX(row, 'pitcher');
-          if (String(pid).trim() === String(pitcherId).trim()) {
-            xERA  = getX(row, 'xera')  || getX(row, 'est_era')  || null;
-            xFIP  = getX(row, 'xfip')  || getX(row, 'est_fip')  || null;
-            xwOBA = getX(row, 'xwoba') || getX(row, 'est_woba') || null;
-            break;
+    try {
+      const xStatsRes = await fetch(
+        `https://baseballsavant.mlb.com/expected_statistics?type=pitcher&year=2026&position=&team=&min=10&pitchers_lookup[]=${pitcherId}&csv=true`,
+        { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } }
+      );
+      if (xStatsRes.ok) {
+        const xCsv = await xStatsRes.text();
+        const xLines = xCsv.trim().split('\n');
+        if (xLines.length > 1) {
+          const xHeaders = xLines[0].split(',');
+          const getX = (row, col) => { const i = xHeaders.indexOf(col); return i >= 0 ? row.split(',')[i]?.trim() : null; };
+          for (let i = 1; i < xLines.length; i++) {
+            const row = xLines[i];
+            const pid = getX(row, 'player_id') || getX(row, 'pitcher');
+            if (String(pid).trim() === String(pitcherId).trim()) {
+              xERA  = getX(row, 'xera')  || getX(row, 'est_era')  || null;
+              xFIP  = getX(row, 'xfip')  || getX(row, 'est_fip')  || null;
+              xwOBA = getX(row, 'xwoba') || getX(row, 'est_woba') || null;
+              break;
+            }
           }
         }
       }
-    }
+    } catch(xe) { /* xStats optional — don't fail if unavailable */ }
 
     if (!pitchRes.ok) return { xERA, xFIP, xwOBA };
     const csv = await pitchRes.text();
-    const lines = csv.trim().split('\n');
-    if (lines.length < 2) return { xERA, xFIP, xwOBA };
+    const csvLines = csv.trim().split('\n');
+    if (csvLines.length < 2) return { xERA, xFIP, xwOBA };
 
-    const headers = lines[0].split(',');
+    const headers = csvLines[0].split(',');
     const getCol = (row, name) => {
       const idx = headers.indexOf(name);
       return idx >= 0 ? row.split(',')[idx] : null;
     };
 
-    // Parse all pitches — track by game date for per-start stats
     let totalPitches = 0, totalVelo = 0, swings = 0, whiffs = 0;
     let barrels = 0, hardHits = 0, batted = 0;
     const startVelos = {};
-    const startStats = {}; // per-start: {ks, bbs, hrs, bf}
+    const startStats = {};
 
-    for (let i = 1; i < lines.length; i++) {
-      const row = lines[i];
+    for (let i = 1; i < csvLines.length; i++) {
+      const row = csvLines[i];
       if (!row.trim()) continue;
       const velo = parseFloat(getCol(row, 'release_speed'));
       const gameDate = getCol(row, 'game_date');
@@ -2688,9 +2687,9 @@ async function main() {
         fetchWeather(game.home_team, game.commence_time, venueName),
         fetchTeamStats(game.away_team),
         fetchTeamStats(game.home_team),
-        gamePk ? fetchUmpireTendency(gamePk) : Promise.resolve(null),
-        gamePk && awayTeamId ? fetchLineupOrder(gamePk, awayTeamId) : Promise.resolve(null),
-        gamePk && homeTeamId ? fetchLineupOrder(gamePk, homeTeamId) : Promise.resolve(null)
+        resolvedGamePk ? fetchUmpireTendency(resolvedGamePk) : Promise.resolve(null),
+        resolvedGamePk && awayTeamId ? fetchLineupOrder(resolvedGamePk, awayTeamId) : Promise.resolve(null),
+        resolvedGamePk && homeTeamId ? fetchLineupOrder(resolvedGamePk, homeTeamId) : Promise.resolve(null)
       ]);
 
       if (anData?.total) lines.total = validateTotal(lines.total, anData.total);
