@@ -1512,6 +1512,7 @@ ANALYSIS INSTRUCTIONS — CRITICAL:
 - APPLY THE PARK RUN FACTOR to your run projections: multiply the run environment by it (e.g. 1.06 = project ~6% more runs, 0.92 = ~8% fewer). This is a real number — use it instead of recalling park reputations.
 - DAY-GAME SHADOW: if a shadow profile is given, apply it as a SCORING-DISTRIBUTION shift, not a flat under — add its early-innings runs to your F5 projection and its late-innings runs to the full game. It is a small, approximate effect; do not let it swing a play on its own.
 - Current season form only — a team 2-8 in last 10 is a fade regardless of brand
+- PROJECTION CALIBRATION: Historical tracking across 241 games shows your total projections run high by an average of 0.14 runs (actual avg 8.80 vs projected avg 8.95). More importantly, 63% of games come in UNDER your projection vs 37% over. This means when your edge on a total is marginal, lean toward under. Do NOT force under calls — only call under when the data genuinely supports it. But when the game projects to 8.8 and the line is 8.5, consider whether the true projection after calibration is closer to 8.66 (8.80 - 0.14), which changes the edge calculation meaningfully.
 
 Return ONLY this JSON (no markdown, no code fences). Return ONLY these fields — every EV, breakeven, win-probability, and juice table is recomputed downstream from your projections, so do NOT include them:
 {
