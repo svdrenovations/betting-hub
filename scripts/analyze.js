@@ -419,17 +419,77 @@ function computePlatoonRunFactor(pitcherHand, lineupHandedness) {
 }
 
 function projectRuns({ offenseStats, offenseMatchups, offenseOrder, offenseHandedness, isOffenseHome, defPitcher, defStatcast, defPitcherHand, isPitcherHome, defBullpen, parkFactors, weather, umpire, arsenalMatchup }) {
-  const pf   = computePitcherFactor(defPitcher, defStatcast, offenseMatchups, arsenalMatchup, isPitcherHome, offenseHandedness);
+  // ── Starter expected runs ─────────────────────────────────────────────────
+  // ERA per 9 × expected IP / 9 = starter runs allowed
+  const avgIP   = parseFloat(defPitcher?.avgIP || 6.0);
+  const starterERA = (() => {
+    if (!defPitcher) return LEAGUE_AVG_ERA;
+    const seasonERA = parseFloat(defPitcher.era || LEAGUE_AVG_ERA);
+    const rawRecent = parseFloat(defPitcher.recentERA || seasonERA);
+    const recentERA = Math.min(rawRecent, Math.max(seasonERA * 3.0, 9.0));
+    const splitERA  = isPitcherHome && defPitcher.homeERA ? parseFloat(defPitcher.homeERA)
+                    : !isPitcherHome && defPitcher.awayERA ? parseFloat(defPitcher.awayERA)
+                    : seasonERA;
+    return (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20);
+  })();
+  const starterRuns = (starterERA / 9) * avgIP;
+
+  // ── Bullpen expected runs ─────────────────────────────────────────────────
+  const bullpenIP   = Math.max(0, 9 - avgIP);
+  const bullpenERA  = parseFloat(defBullpen?.weightedERA || LEAGUE_AVG_ERA);
+  const bullpenRuns = (bullpenERA / 9) * bullpenIP;
+
+  // ── Total baseline runs allowed ───────────────────────────────────────────
+  const baselineRuns = starterRuns + bullpenRuns;
+
+  // ── Offense factor ────────────────────────────────────────────────────────
   const of_  = computeOffenseFactor(offenseStats, offenseMatchups, offenseOrder, isOffenseHome);
+
+  // ── Context factors ───────────────────────────────────────────────────────
   const park = parseFloat(parkFactors?.runFactor || 1.0);
   const wx   = computeWeatherRunFactor(weather, parkFactors);
   const ump  = computeUmpireRunFactor(umpire);
-  const bp   = computeBullpenRunFactor(defBullpen, defPitcher);
   const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
-  const raw  = LEAGUE_AVG_RUNS * pf * of_ * park * wx * ump * bp * plat;
+
+  // ── Statcast adjustments on starter ──────────────────────────────────────
+  let statcastAdj = 1.0;
+  if (defStatcast) {
+    if (defStatcast.whiffRate != null) {
+      const w = parseFloat(defStatcast.whiffRate);
+      if (!isNaN(w)) statcastAdj *= Math.min(Math.max(1 - ((w - 25) * 0.010), 0.85), 1.15);
+    }
+    if (defStatcast.hardHitRate != null) {
+      const hh = parseFloat(defStatcast.hardHitRate);
+      if (!isNaN(hh)) statcastAdj *= Math.min(Math.max(1 + ((hh - 38) * 0.008), 0.88), 1.12);
+    }
+    if (defStatcast.veloTrend === 'DOWN') statcastAdj *= 1.06;
+    else if (defStatcast.veloTrend === 'UP') statcastAdj *= 0.96;
+  }
+
+  // ── Arsenal matchup adjustment ────────────────────────────────────────────
+  let arsenalAdj = 1.0;
+  if (arsenalMatchup?.overallEdge === 'PITCHER DOMINATES') arsenalAdj = 0.92;
+  else if (arsenalMatchup?.overallEdge === 'LINEUP ADVANTAGE') arsenalAdj = 1.08;
+
+  // ── Final projection ──────────────────────────────────────────────────────
+  const raw = baselineRuns * of_ * park * wx * ump * plat * statcastAdj * arsenalAdj;
+
+  const factors = {
+    starterERA: +starterERA.toFixed(2),
+    starterRuns: +starterRuns.toFixed(2),
+    bullpenRuns: +bullpenRuns.toFixed(2),
+    avgIP: +avgIP.toFixed(1),
+    offense: +of_.toFixed(3),
+    park: +park.toFixed(3),
+    weather: +wx.toFixed(3),
+    statcast: +statcastAdj.toFixed(3),
+    arsenal: +arsenalAdj.toFixed(3),
+    platoon: +plat.toFixed(3)
+  };
+
   return {
-    runs: +Math.max(3.0, Math.min(raw, 8.5)).toFixed(2),
-    factors: { pitcher: +pf.toFixed(3), offense: +of_.toFixed(3), park: +park.toFixed(3), weather: +wx.toFixed(3), umpire: +ump.toFixed(3), bullpen: +bp.toFixed(3), platoon: +plat.toFixed(3) }
+    runs: +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2),
+    factors
   };
 }
 // ─── END DETERMINISTIC PROJECTION ENGINE ─────────────────────────────────────
