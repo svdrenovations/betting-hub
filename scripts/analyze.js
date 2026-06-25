@@ -277,9 +277,9 @@ function computePitcherFactor(pitcherDetail, statcast, lineupMatchups, arsenalMa
     splitERA = (splitERA + parseFloat(pitcherDetail.venueERA)) / 2;
   }
 
-  // Three-way blend: season (30%) + split (20%) + recent (50%)
-  // Recent is most predictive, split captures venue/home-away tendency
-  const blendedERA = (seasonERA * 0.30) + (splitERA * 0.20) + (recentERA * 0.50);
+  // Three-way blend: season (60%) + split (20%) + recent (20%)
+  // Recent ERA is a small signal only — arsenal vs lineup matchup does the heavy lifting
+  const blendedERA = (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20);
   let eraFactor = Math.min(Math.max(blendedERA / LEAGUE_AVG_ERA, 0.65), 1.65);
 
   // ── vs Batter handedness split ────────────────────────────────────────────
