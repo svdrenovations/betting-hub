@@ -1278,16 +1278,31 @@ async function fetchBullpen(teamId) {
       const st = d?.stats?.[0]?.splits?.[0]?.stat;
       if (!st) return;
       const gp = parseInt(st.gamesPitched || 0), gs = parseInt(st.gamesStarted || 0);
-      if (gp >= 5 && gs / Math.max(1, gp) < 0.5) {
+      if (gp >= 3 && gs / Math.max(1, gp) < 0.4) {
         relievers.push({
-          id: ids[i], name: pitchers[i].person.fullName,
-          era: parseFloat(st.era), ip: parseFloat(st.inningsPitched) || 0,
-          k: parseInt(st.strikeOuts || 0), bb: parseInt(st.baseOnBalls || 0),
-          bf: parseInt(st.battersFaced || st.atBats || 0)
+          id: ids[i],
+          name: pitchers[i].person.fullName,
+          era: parseFloat(st.era) || 99,
+          ip: parseFloat(st.inningsPitched) || 0,
+          k: parseInt(st.strikeOuts || 0),
+          bb: parseInt(st.baseOnBalls || 0),
+          bf: parseInt(st.battersFaced || st.atBats || 0),
+          saves: parseInt(st.saves || 0),
+          holds: parseInt(st.holds || 0),
+          blownSaves: parseInt(st.saveOpportunities || 0) - parseInt(st.saves || 0),
+          gp
         });
       }
     });
     if (!relievers.length) return null;
+
+    // Sort by high-leverage role: saves first, then holds
+    relievers.sort((a, b) => (b.saves + b.holds) - (a.saves + a.holds));
+
+    // Identify closer and depth chart
+    const closer = relievers[0];
+    const setupMan = relievers[1] || null;
+    const depthChart = relievers.slice(0, 5);
 
     const totIP = relievers.reduce((s, r) => s + r.ip, 0) || 1;
     const wERA = relievers.reduce((s, r) => s + (isNaN(r.era) ? 4.5 : r.era) * r.ip, 0) / totIP;
@@ -1296,7 +1311,27 @@ async function fetchBullpen(teamId) {
     const totBF = relievers.reduce((s, r) => s + r.bf, 0) || 1;
     const kbbPct = (((totK - totBB) / totBF) * 100).toFixed(1);
 
+    // Fetch fatigue with individual availability
     const fatigue = await bullpenFatigue(teamId, relievers);
+
+    // Build closer availability assessment
+    const closerIP = fatigue?.ipByName?.[closer?.name] || 0;
+    let closerStatus = 'AVAILABLE';
+    if (closerIP >= 1.0 && closerIP < 2.0) closerStatus = 'QUESTIONABLE (pitched recently)';
+    else if (closerIP >= 2.0) closerStatus = 'LIKELY UNAVAILABLE (heavy usage last 3d)';
+
+    // Fill-in closer if primary is unavailable
+    let fillInCloser = null;
+    if (closerStatus !== 'AVAILABLE' && setupMan) {
+      const setupIP = fatigue?.ipByName?.[setupMan?.name] || 0;
+      const setupStatus = setupIP >= 2.0 ? 'also tired' : 'available';
+      fillInCloser = { name: setupMan.name, era: setupMan.era, status: setupStatus };
+    }
+
+    const closerInfo = closer
+      ? `Closer: ${closer.name} (ERA ${closer.era}, ${closer.saves}SV/${closer.saves+Math.max(0,closer.blownSaves)}opp, ${closer.blownSaves > 0 ? closer.blownSaves+'BS' : '0BS'}) — ${closerStatus}` +
+        (fillInCloser ? ` | Fill-in: ${fillInCloser.name} (ERA ${fillInCloser.era}, ${fillInCloser.status})` : '')
+      : 'Closer: unknown';
 
     return {
       count: relievers.length,
@@ -1304,7 +1339,10 @@ async function fetchBullpen(teamId) {
       kbbPct,
       fatigueNote: fatigue?.note || 'fresh',
       tired: fatigue?.tired || [],
-      summary: `${relievers.length} arms, pen ERA ${wERA.toFixed(2)}, K-BB% ${kbbPct} — ${fatigue?.note || 'fresh'}`
+      closerInfo,
+      closer,
+      fillInCloser,
+      summary: `${relievers.length} arms, pen ERA ${wERA.toFixed(2)}, K-BB% ${kbbPct} — ${fatigue?.note || 'fresh'} | ${closerInfo}`
     };
   } catch(e) { console.log('  Bullpen error:', e.message); return null; }
 }
@@ -1321,6 +1359,7 @@ async function bullpenFatigue(teamId, relievers) {
       .filter(g => g.status?.abstractGameState === 'Final').slice(-3);
 
     const ipById = {};
+    const ipByName = {};
     for (const g of games) {
       const box = await fetch(`https://statsapi.mlb.com/api/v1/game/${g.gamePk}/boxscore`)
         .then(r => r.ok ? r.json() : null).catch(() => null);
@@ -1329,8 +1368,27 @@ async function bullpenFatigue(teamId, relievers) {
       const players = box.teams?.[side]?.players || {};
       Object.values(players).forEach(pl => {
         const ip = parseFloat(pl.stats?.pitching?.inningsPitched || 0);
-        if (ip > 0) ipById[pl.person.id] = (ipById[pl.person.id] || 0) + ip;
+        if (ip > 0) {
+          ipById[pl.person.id] = (ipById[pl.person.id] || 0) + ip;
+          ipByName[pl.person.fullName] = (ipByName[pl.person.fullName] || 0) + ip;
+        }
       });
+    }
+
+    // Check yesterday specifically — pitched yesterday = higher concern
+    const yesterday = new Date(Date.now() - 864e5).toISOString().split('T')[0];
+    const pitchedYesterday = [];
+    const lastGame = games[games.length - 1];
+    if (lastGame && (lastGame.officialDate || '').slice(0,10) === yesterday) {
+      const box = await fetch(`https://statsapi.mlb.com/api/v1/game/${lastGame.gamePk}/boxscore`)
+        .then(r => r.ok ? r.json() : null).catch(() => null);
+      if (box) {
+        const side = box.teams?.home?.team?.id === teamId ? 'home' : 'away';
+        Object.values(box.teams?.[side]?.players || {}).forEach(pl => {
+          const ip = parseFloat(pl.stats?.pitching?.inningsPitched || 0);
+          if (ip >= 0.1) pitchedYesterday.push(pl.person.fullName);
+        });
+      }
     }
 
     const tired = relievers.filter(r => (ipById[r.id] || 0) >= 2.0).map(r => r.name);
@@ -1339,7 +1397,9 @@ async function bullpenFatigue(teamId, relievers) {
     if (tired.length >= 2) note = `TAXED (${tired.length} arms heavy last 3d)`;
     else if (tired.length === 1) note = `${tired[0]} taxed`;
     else if (usedCount >= 4) note = 'worked recently';
-    return { note, tired };
+    if (pitchedYesterday.length >= 3) note += ` | ${pitchedYesterday.length} arms pitched yesterday`;
+
+    return { note, tired, ipById, ipByName, pitchedYesterday };
   } catch(e) { return null; }
 }
 
@@ -1646,6 +1706,8 @@ ANALYSIS INSTRUCTIONS — CRITICAL:
 - PROJECT EACH TEAM'S EXPECTED RUNS separately as projAwayRuns and projHomeRuns. These are the most important numbers you produce: the downstream math derives ML (who wins), RL (margin), and the total (their sum) all from these two numbers via a run-margin model. Project them carefully from 2026 run rates, the pitching matchup, Statcast, bullpens, platoon edges, lineup matchups, park, and weather.
 - ML / RL come from the projected run MARGIN (projAwayRuns - projHomeRuns), not a gut feel. A bigger projected margin = bigger favorite and better run-line cover odds. Do not hand-tune mlAwayProb; just project the runs accurately.
 - BULLPEN matters for who WINS, not just totals: a TAXED or high-ERA pen is more likely to blow a late lead — shade the run margin toward the team with the stronger/fresher pen, especially in tight projected games.
+- CLOSER AVAILABILITY: If the closer is LIKELY UNAVAILABLE or QUESTIONABLE, the fill-in closer is typically less reliable. Reduce confidence in that team holding a late lead. If both the closer AND setup man are taxed, treat the pen as significantly degraded for save situations.
+- BLOWN SAVE RISK: A closer with 2+ blown saves on the season, pitching on back-to-back days, or listed as QUESTIONABLE is a meaningful risk factor. Do not eliminate a play because of this alone, but factor it into the run margin — a degraded closer means tighter projected margins.
 - PLATOON: a lineup stacked opposite-handed to the starter (e.g. many R bats vs a LHP) should score more; same-handed heavy lineups score less. Fold this into the run projections.
 - EXPECTED STARTER LENGTH: a starter averaging under ~5 IP exposes the bullpen earlier — weight the bullpen more heavily for that team.
 - SHARP / LINE ACTION IS INFORMATIONAL ONLY. Report any sharp or line-movement read in lineNote / sharpSide / lineSharp for display, but DO NOT let public or sharp money move your run projections or probabilities. Project independently of the market.
