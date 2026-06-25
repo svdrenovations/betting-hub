@@ -1122,9 +1122,34 @@ function kalshiPanelHTML(g, bets) {
   for (const m of mkts) {
     if (!m.verdict || m.verdict === 'SKIP') continue;
     if (m.ev == null || parseFloat(m.ev) < 6) continue;
+    // ── RULE: ML favorites at 10-14% EV → force SKIP (data shows 48% win rate) ──
+    if (m.key === 'ml') {
+      const ev = parseFloat(m.ev);
+      const v = (m.verdict||'').toUpperCase();
+      const side = v.includes('AWAY') ? g.away_ml : g.home_ml;
+      const odds = parseFloat(side||0);
+      if (ev >= 10 && ev < 15 && odds < -100) {
+        m.suppressed = true; // show as SKIP on card but keep in data
+      }
+    }
+    // ── FLAG: RL -1.5 with no corresponding ML bet ────────────────────────────
+    if (m.key === 'rl') {
+      const v = (m.verdict||'').toUpperCase();
+      const rlLine = parseFloat((g.away_rl||'0').toString().replace('+',''));
+      // Determine if this is a -1.5 bet (RL line for the bet side is negative)
+      const isMinusSide = v.includes('AWAY') ? rlLine < 0 : rlLine > 0;
+      if (isMinusSide) {
+        // Check if there's an ML play on same game
+        const mlVerdict = (g.ml_verdict||'').toUpperCase();
+        const mlEV = parseFloat(g.ml_ev||0);
+        const hasMLPlay = mlVerdict && mlVerdict !== 'SKIP' && mlEV >= 6;
+        if (!hasMLPlay) m.noMLConfirmation = true;
+      }
+    }
     plays.push(m);
   }
   if (!plays.length) return '';
+  const activePlays = plays.filter(p => !p.suppressed);
   const gid = g.id;
   const prob = (m) => {
     const v = (m.verdict||'').toUpperCase();
@@ -1151,7 +1176,7 @@ function kalshiPanelHTML(g, bets) {
     return null;
   };
 
-  const rows = plays.map(m => {
+  const rows = activePlays.map(m => {
     const p = prob(m);
     const dk = dkOdds(m);
     const maxC = kalshiMaxCents(p);
@@ -1220,7 +1245,7 @@ function kalshiPanelHTML(g, bets) {
   }).join('');
 
   // Store play metadata for async fill
-  const playsJson = JSON.stringify(plays.map(m=>({
+  const playsJson = JSON.stringify(activePlays.map(m=>({
     key:m.key, label:m.label, verdict:m.verdict, ev:m.ev,
     dkOdds: dkOdds(m), dkLine: dkLine(m),
     rawAwayRL: m.key==='rl' ? parseFloat(g.away_rl||0) : null,
@@ -1781,7 +1806,19 @@ async function loadGames(forceRefresh=false){
 
 function getTopEdge(g){
   if(!g.analyzed)return'none';
-  const verdicts=[g.ml_verdict,g.rl_verdict,g.total_verdict];
+  // Check ML — suppress if favorite at 10-14% EV
+  const mlSuppressed = (() => {
+    const ev = parseFloat(g.ml_ev||0);
+    const v = (g.ml_verdict||'').toUpperCase();
+    if (!v || v === 'SKIP' || ev < 10 || ev >= 15) return false;
+    const side = v.includes('AWAY') ? g.away_ml : g.home_ml;
+    return parseFloat(side||0) < -100;
+  })();
+  const verdicts = [
+    mlSuppressed ? null : g.ml_verdict,
+    g.rl_verdict,
+    g.total_verdict
+  ];
   if(verdicts.some(v=>v&&v.startsWith('BET')))return'high';
   if(verdicts.some(v=>v&&v.startsWith('LEAN')))return'med';
   return'skip';
@@ -1796,15 +1833,17 @@ function sitFlagHTML(sits,fadeReason){
   return validFlags.map(f=>{const key=f.toLowerCase().replace(/[^a-z_]/g,'');const info=map[key]||['sf-none',f.toLowerCase().replace(/_/g,' ').substring(0,20)];let label=info[1];if(key==='fade'&&fr)label+=' · '+fr.replace(/,/g,', ');return`<span class="sit-flag ${info[0]}">${label}</span>`;}).join('');
 }
 
-function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged){
-  const v=verdict||'SKIP';
+function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged,suppressed,noMLConfirm){
+  // ML favorite 10-14% suppression — show as SKIP on card
+  const v = suppressed ? 'SKIP' : (verdict||'SKIP');
   const cls=v.startsWith('BET')?'mv-bet':v.includes('LEAN')?'mv-lean':v.includes('OVER')?'mv-over':v.includes('UNDER')?'mv-under':'mv-skip';
-  const evHtml=ev!=null&&ev!==0?`<div class="ev-val ${ev>=0?'ev-pos':'ev-neg'}">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV</div>`:'';
+  const evHtml=ev!=null&&ev!==0?`<div class="ev-val ${ev>=0?'ev-pos':'ev-neg'}">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV${suppressed?' <span style="color:var(--amber);font-size:9px">(suppressed)</span>':''}</div>`:'';
   const lineHtml=line!=null&&projTotal!=null&&v!=='SKIP'?`<div style="font-size:9px;color:var(--text);font-family:DM Mono,monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>`:'';
   const breakHtml=breakeven&&v!=='SKIP'?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>`:'';
-  const clickable=v!=='SKIP'&&ev>0?`style="cursor:pointer" onclick="quickLog('${gId}','${label}','${v}','${line||''}','${breakeven||''}')"` :'';
+  const flagHtml=noMLConfirm?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:2px">⚠️ no ML confirmation</div>`:'';
+  const clickable=!suppressed&&v!=='SKIP'&&ev>0?`style="cursor:pointer" onclick="quickLog('${gId}','${label}','${v}','${line||''}','${breakeven||''}')"` :'';
   const check=logged?` <span style="color:var(--green);font-weight:700" title="Logged: ${String(logged).replace(/"/g,'&quot;')}">✓</span>`:'';
-  return`<div class="market-cell${isBest?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}</div>`;
+  return`<div class="market-cell${isBest&&!suppressed?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}${flagHtml}</div>`;
 }
 
 function projInline(a,h,isSim){
@@ -1945,8 +1984,8 @@ function gameCardHTML(g){
   const marketsHTML=g.analyzed
     ?`${playRowLabel('MODEL',false,projInline(g.proj_away_runs,g.proj_home_runs,false))}
       <div class="markets">
-        ${marketCell('ML',g.ml_verdict,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged.ML)}
-        ${marketCell('RL',g.rl_verdict,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged.RL)}
+        ${marketCell('ML',g.ml_verdict,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged.ML, plays.find(p=>p.key==='ml')?.suppressed, false)}
+        ${marketCell('RL',g.rl_verdict,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged.RL, false, plays.find(p=>p.key==='rl')?.noMLConfirmation)}
         ${marketCell('TOTAL',g.total_verdict,g.total_ev,g.best_market==='total',g.total_line,g.proj_total,g.total_breakeven,g.id,logged.TOTAL)}
       </div>
       ${playRowLabel('SIM',true,projInline(g.sim_away_runs,g.sim_home_runs,true))}
@@ -2429,13 +2468,13 @@ function triggerAllKalshiFetches() {
     const situations = el.dataset.sits;
     const matchup = el.dataset.matchup;
 
-    const totalPlay = plays.find(p => p.key === 'total');
+    const totalPlay = activePlays.find(p => p.key === 'total');
     const totalVerdict = totalPlay ? totalPlay.verdict : '';
 
     fetchKalshiPrices(gid, awayTeam, homeTeam, gameDate, total, commenceTime, totalVerdict).then(kd => {
       const ts = document.getElementById('kts-' + gid);
       if (ts) ts.textContent = 'live · just now';
-      for (const m of plays) {
+      for (const m of activePlays) {
         let cents = null;
         const v = (m.verdict || '').toUpperCase();
         if (m.key === 'ml') cents = v.includes('AWAY') ? kd.awayML_cents : kd.homeML_cents;
