@@ -62,26 +62,38 @@ WHIFF_EVENTS = ['swinging_strike', 'swinging_strike_blocked']
 def supabase_upsert(records):
     """Upsert records to statcast_cache table"""
     if not records:
-        return
-    url = f"{SUPABASE_URL}/rest/v1/statcast_cache"
-    data = json.dumps(records).encode('utf-8')
+        return 0
+    base_url = SUPABASE_URL.rstrip('/')
+    url = f"{base_url}/rest/v1/statcast_cache"
+    # data field must be a dict (JSONB), not a string
+    clean = []
+    for r in records:
+        rec = dict(r)
+        if isinstance(rec.get('data'), str):
+            rec['data'] = json.loads(rec['data'])
+        clean.append(rec)
+    payload = json.dumps(clean, default=str).encode('utf-8')
     req = urllib.request.Request(
         url,
-        data=data,
+        data=payload,
         headers={
             'Content-Type': 'application/json',
             'apikey': SUPABASE_KEY,
             'Authorization': f'Bearer {SUPABASE_KEY}',
-            'Prefer': 'resolution=merge-duplicates'
+            'Prefer': 'resolution=merge-duplicates,return=minimal'
         },
         method='POST'
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status
+            return len(clean)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8')[:300]
+        print(f"  Supabase upsert error: HTTP {e.code} | URL: {url} | {body}")
+        return 0
     except Exception as e:
         print(f"  Supabase upsert error: {e}")
-        return None
+        return 0
 
 def supabase_upsert_batch(records, batch_size=50):
     """Upsert in batches to avoid payload limits"""
@@ -90,9 +102,28 @@ def supabase_upsert_batch(records, batch_size=50):
     for i in range(0, total, batch_size):
         batch = records[i:i+batch_size]
         result = supabase_upsert(batch)
-        if result:
-            saved += len(batch)
+        saved += (result or 0)
     return saved
+
+def test_supabase():
+    """Test Supabase connection at startup"""
+    base_url = SUPABASE_URL.rstrip('/')
+    url = f"{base_url}/rest/v1/statcast_cache?limit=1"
+    req = urllib.request.Request(url, headers={
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}'
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            print(f"✅ Supabase connection OK (status {r.status}) | URL: {url}")
+            return True
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8')[:200]
+        print(f"❌ Supabase connection failed: HTTP {e.code} | URL: {url} | {body}")
+        return False
+    except Exception as e:
+        print(f"❌ Supabase connection failed: {e} | URL: {url}")
+        return False
 
 # ── MLB Stats API helpers ────────────────────────────────────────────────────
 
@@ -291,6 +322,11 @@ def fetch_batter_statcast(pid, name):
 
 def main():
     print(f"\n=== Statcast Cache — mode={mode} | {today} ===\n")
+
+    # Test Supabase connection first
+    if not test_supabase():
+        print("Aborting — cannot connect to Supabase")
+        sys.exit(1)
 
     # Always fetch today's pitchers
     pitcher_ids = get_todays_pitchers()
