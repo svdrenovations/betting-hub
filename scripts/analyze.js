@@ -1161,7 +1161,186 @@ async function fetchPitcherDetail(pitcherId) {
   } catch(e) { return null; }
 }
 
-// Fetch home plate umpire for a game and their run-scoring tendency
+// Fetch pitcher's pitch arsenal from Baseball Savant
+// Returns pitch type usage, whiff rate, velo, movement, arm slot per pitch
+async function fetchPitchArsenal(pitcherId, season = 2026) {
+  try {
+    if (!pitcherId) return null;
+    const url = `https://baseballsavant.mlb.com/statcast_search/csv?player_type=pitcher&pitchers_lookup[]=${pitcherId}&game_date_gt=${season}-01-01&game_date_lt=${new Date().toISOString().split('T')[0]}&type=details&hfSea=${season}%7C&min_abs=0&group_by=name-pitch_type`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } });
+    if (!res.ok) return null;
+    const csv = await res.text();
+    const csvLines = csv.trim().split('\n');
+    if (csvLines.length < 2) return null;
+
+    const headers = csvLines[0].split(',');
+    const get = (row, col) => { const i = headers.indexOf(col); return i >= 0 ? row.split(',')[i]?.trim() : null; };
+
+    // Aggregate pitch type data
+    const pitchMap = {}; // key = pitch_type
+
+    for (let i = 1; i < csvLines.length; i++) {
+      const row = csvLines[i];
+      if (!row.trim()) continue;
+      const pt = get(row, 'pitch_type');
+      if (!pt || pt === 'null' || pt === '') continue;
+
+      if (!pitchMap[pt]) pitchMap[pt] = { count: 0, velos: [], whiffs: 0, swings: 0, hx: [], hz: [], relX: [], relZ: [] };
+      const p = pitchMap[pt];
+      p.count++;
+
+      const velo = parseFloat(get(row, 'release_speed'));
+      if (!isNaN(velo) && velo > 0) p.velos.push(velo);
+
+      const desc = get(row, 'description') || '';
+      if (desc.includes('swing') || desc.includes('foul') || desc.includes('hit')) p.swings++;
+      if (desc.includes('swinging_strike')) p.whiffs++;
+
+      const hBreak = parseFloat(get(row, 'pfx_x'));
+      const vBreak = parseFloat(get(row, 'pfx_z'));
+      if (!isNaN(hBreak)) p.hx.push(hBreak);
+      if (!isNaN(vBreak)) p.hz.push(vBreak);
+
+      const rx = parseFloat(get(row, 'release_pos_x'));
+      const rz = parseFloat(get(row, 'release_pos_z'));
+      if (!isNaN(rx)) p.relX.push(rx);
+      if (!isNaN(rz)) p.relZ.push(rz);
+    }
+
+    const totalPitches = Object.values(pitchMap).reduce((s, p) => s + p.count, 0);
+    if (!totalPitches) return null;
+
+    const pitchNames = {
+      'FF': '4-Seam FB', 'SI': 'Sinker', 'FC': 'Cutter', 'SL': 'Slider',
+      'SW': 'Sweeper', 'CU': 'Curveball', 'KC': 'Knuckle-Curve', 'CH': 'Changeup',
+      'FS': 'Splitter', 'KN': 'Knuckleball', 'ST': 'Sweeper', 'SV': 'Screwball'
+    };
+
+    const arsenal = Object.entries(pitchMap)
+      .filter(([, p]) => p.count >= 10)
+      .map(([pt, p]) => ({
+        type: pt,
+        name: pitchNames[pt] || pt,
+        pct: ((p.count / totalPitches) * 100).toFixed(1),
+        velo: p.velos.length ? (p.velos.reduce((a, b) => a + b, 0) / p.velos.length).toFixed(1) : null,
+        whiffPct: p.swings > 0 ? ((p.whiffs / p.swings) * 100).toFixed(1) : null,
+        hBreak: p.hx.length ? (p.hx.reduce((a, b) => a + b, 0) / p.hx.length).toFixed(1) : null,
+        vBreak: p.hz.length ? (p.hz.reduce((a, b) => a + b, 0) / p.hz.length).toFixed(1) : null,
+        armSlotX: p.relX.length ? (p.relX.reduce((a, b) => a + b, 0) / p.relX.length).toFixed(2) : null,
+        armSlotZ: p.relZ.length ? (p.relZ.reduce((a, b) => a + b, 0) / p.relZ.length).toFixed(2) : null,
+      }))
+      .sort((a, b) => parseFloat(b.pct) - parseFloat(a.pct));
+
+    // Arm slot classification
+    const avgRelX = arsenal.length ? arsenal.reduce((s, p) => s + parseFloat(p.armSlotX || 0), 0) / arsenal.length : 0;
+    const avgRelZ = arsenal.length ? arsenal.reduce((s, p) => s + parseFloat(p.armSlotZ || 0), 0) / arsenal.length : 0;
+    let armSlot = 'over-the-top';
+    if (avgRelZ < 5.5) armSlot = 'sidearm';
+    else if (avgRelZ < 6.2) armSlot = 'low three-quarter';
+    else if (avgRelZ < 6.8) armSlot = 'three-quarter';
+    else armSlot = 'over-the-top';
+
+    return { arsenal, armSlot, totalPitches };
+  } catch(e) {
+    console.log(`  Arsenal fetch error:`, e.message);
+    return null;
+  }
+}
+
+// Fetch batter's performance vs specific pitch types from Baseball Savant
+async function fetchBatterVsPitchType(batterId, pitcherHand, season = 2026) {
+  try {
+    if (!batterId) return null;
+    const url = `https://baseballsavant.mlb.com/statcast_search/csv?player_type=batter&batters_lookup[]=${batterId}&game_date_gt=${season}-01-01&game_date_lt=${new Date().toISOString().split('T')[0]}&type=details&hfSea=${season}%7C&pitchHand=${pitcherHand || ''}&min_abs=0&group_by=name-pitch_type`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } });
+    if (!res.ok) return null;
+    const csv = await res.text();
+    const csvLines = csv.trim().split('\n');
+    if (csvLines.length < 2) return null;
+
+    const headers = csvLines[0].split(',');
+    const get = (row, col) => { const i = headers.indexOf(col); return i >= 0 ? row.split(',')[i]?.trim() : null; };
+
+    const pitchMap = {};
+    for (let i = 1; i < csvLines.length; i++) {
+      const row = csvLines[i];
+      if (!row.trim()) continue;
+      const pt = get(row, 'pitch_type');
+      if (!pt || pt === 'null' || pt === '') continue;
+      if (!pitchMap[pt]) pitchMap[pt] = { pa: 0, swings: 0, whiffs: 0, inZone: 0, chases: 0, hardHits: 0, batted: 0 };
+      const p = pitchMap[pt];
+      p.pa++;
+      const desc = get(row, 'description') || '';
+      const zone = parseInt(get(row, 'zone') || 0);
+      const inZone = zone >= 1 && zone <= 9;
+      if (inZone) p.inZone++;
+      if (desc.includes('swing') || desc.includes('foul') || desc.includes('hit')) {
+        p.swings++;
+        if (!inZone) p.chases++;
+      }
+      if (desc.includes('swinging_strike')) p.whiffs++;
+      const exitVelo = parseFloat(get(row, 'launch_speed'));
+      if (!isNaN(exitVelo) && exitVelo > 0) {
+        p.batted++;
+        if (exitVelo >= 95) p.hardHits++;
+      }
+    }
+
+    return Object.entries(pitchMap)
+      .filter(([, p]) => p.pa >= 10)
+      .map(([pt, p]) => ({
+        type: pt,
+        whiffPct: p.swings > 0 ? ((p.whiffs / p.swings) * 100).toFixed(1) : null,
+        chasePct: p.chases > 0 && p.swings > 0 ? ((p.chases / p.swings) * 100).toFixed(1) : null,
+        hardHitPct: p.batted > 0 ? ((p.hardHits / p.batted) * 100).toFixed(1) : null,
+        pa: p.pa
+      }))
+      .sort((a, b) => b.pa - a.pa);
+  } catch(e) { return null; }
+}
+
+// Match pitcher arsenal vs lineup swing tendencies
+// Returns a matchup score and narrative for each key pitch type
+function analyzeArsenalMatchup(arsenal, lineupPitchStats, pitcherHand) {
+  if (!arsenal?.arsenal?.length || !lineupPitchStats?.length) return null;
+
+  const matchups = [];
+  for (const pitch of arsenal.arsenal.slice(0, 4)) { // top 4 pitches
+    // Find how lineup performs vs this pitch type
+    const lineupVsPitch = lineupPitchStats
+      .map(batter => batter?.find(p => p.type === pitch.type))
+      .filter(Boolean);
+
+    if (!lineupVsPitch.length) continue;
+
+    const avgWhiff = lineupVsPitch.reduce((s, p) => s + parseFloat(p.whiffPct || 0), 0) / lineupVsPitch.length;
+    const avgChase = lineupVsPitch.reduce((s, p) => s + parseFloat(p.chasePct || 0), 0) / lineupVsPitch.length;
+    const avgHH = lineupVsPitch.reduce((s, p) => s + parseFloat(p.hardHitPct || 0), 0) / lineupVsPitch.length;
+
+    // Pitcher's own whiff rate on this pitch
+    const pitcherWhiff = parseFloat(pitch.whiffPct || 0);
+
+    // Edge: if lineup whiffs a lot on pitch type AND pitcher also has high whiff = pitcher advantage
+    // If lineup makes hard contact on pitch type = batter advantage
+    const edge = pitcherWhiff > avgWhiff ? 'pitcher' : avgHH > 38 ? 'batter' : 'neutral';
+
+    matchups.push({
+      pitch: pitch.name,
+      usage: pitch.pct,
+      pitcherWhiff: pitch.whiffPct,
+      lineupWhiff: avgWhiff.toFixed(1),
+      lineupChase: avgChase.toFixed(1),
+      lineupHardHit: avgHH.toFixed(1),
+      edge
+    });
+  }
+
+  const pitcherEdges = matchups.filter(m => m.edge === 'pitcher').length;
+  const batterEdges = matchups.filter(m => m.edge === 'batter').length;
+  const overallEdge = pitcherEdges > batterEdges ? 'PITCHER DOMINATES' : batterEdges > pitcherEdges ? 'LINEUP ADVANTAGE' : 'EVEN';
+
+  return { matchups, overallEdge, armSlot: arsenal.armSlot };
+}
 async function fetchUmpireTendency(gamePk) {
   try {
     if (!gamePk) return null;
@@ -1568,7 +1747,7 @@ function validateTotal(oddsTotal, anTotal) {
   return oddsTotal;
 }
 
-async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName, umpire, awayLineupOrder, homeLineupOrder) {
+async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName, umpire, awayLineupOrder, homeLineupOrder, awayArsenal, homeArsenal, awayVsHomeArsenal, homeVsAwayArsenal) {
   console.log(`  Analyzing ${game.away_team} @ ${game.home_team}...`);
 
   const weatherInfo = weather
@@ -1670,6 +1849,12 @@ BATTING ORDER:
 ${formatLineupOrder(awayLineupOrder, game.away_team)}
 ${formatLineupOrder(homeLineupOrder, game.home_team)}
 
+PITCH ARSENAL & ARM SLOT vs LINEUP SWING TENDENCIES:
+${awayArsenal ? `${awayPitcher?.name||'Away'} (${awayArsenal.armSlot}): ${awayArsenal.arsenal.slice(0,4).map(p=>`${p.name} ${p.pct}% velo ${p.velo}mph whiff ${p.whiffPct}%`).join(' | ')}` : `${awayPitcher?.name||'Away'} arsenal: unavailable`}
+${homeArsenal ? `${homePitcher?.name||'Home'} (${homeArsenal.armSlot}): ${homeArsenal.arsenal.slice(0,4).map(p=>`${p.name} ${p.pct}% velo ${p.velo}mph whiff ${p.whiffPct}%`).join(' | ')}` : `${homePitcher?.name||'Home'} arsenal: unavailable`}
+${awayVsHomeArsenal ? `${game.away_team} vs ${homePitcher?.name||'home'}: ${awayVsHomeArsenal.overallEdge} | ${awayVsHomeArsenal.matchups.map(m=>`${m.pitch}: lineup whiff ${m.lineupWhiff}% chase ${m.lineupChase}% hardHit ${m.lineupHardHit}% (pitcher whiff ${m.pitcherWhiff}%) → ${m.edge}`).join(' | ')}` : `${game.away_team} vs home arsenal matchup: unavailable`}
+${homeVsAwayArsenal ? `${game.home_team} vs ${awayPitcher?.name||'away'}: ${homeVsAwayArsenal.overallEdge} | ${homeVsAwayArsenal.matchups.map(m=>`${m.pitch}: lineup whiff ${m.lineupWhiff}% chase ${m.lineupChase}% hardHit ${m.lineupHardHit}% (pitcher whiff ${m.pitcherWhiff}%) → ${m.edge}`).join(' | ')}` : `${game.home_team} vs away arsenal matchup: unavailable`}
+
 PARK FACTORS:
 ${parkInfo}
 
@@ -1723,6 +1908,7 @@ ANALYSIS INSTRUCTIONS — CRITICAL:
 - APPLY THE PARK RUN FACTOR to your run projections: multiply the run environment by it (e.g. 1.06 = project ~6% more runs, 0.92 = ~8% fewer). This is a real number — use it instead of recalling park reputations.
 - DAY-GAME SHADOW: if a shadow profile is given, apply it as a SCORING-DISTRIBUTION shift, not a flat under — add its early-innings runs to your F5 projection and its late-innings runs to the full game. It is a small, approximate effect; do not let it swing a play on its own.
 - Current season form only — a team 2-8 in last 10 is a fade regardless of brand
+- PITCH ARSENAL vs SWING PATH: This is the most important matchup factor. If a pitcher's primary pitch (40%+ usage) has a high whiff rate AND the opposing lineup also whiffs at high rates on that pitch type, the pitcher has a dominant edge — project lower runs for that lineup. If the lineup makes hard contact (38%+) on the pitcher's primary pitch, project higher runs. Arm slot matters: over-the-top pitchers with heavy breaking balls are harder for same-handed batters; sidearm/low three-quarter pitchers are more effective against same-handed batters due to movement angle. Use PITCHER DOMINATES / LINEUP ADVANTAGE / EVEN classification directly in your run projection.
 - UMPIRE IMPACT: HP umpires with runs/game significantly above 8.8 (league avg) have tight zones — more walks, more baserunners, more scoring. Factor this into totals projection (HIGH_SCORER umpire = +0.3 to +0.5 runs, LOW_SCORER = -0.3 to -0.5 runs). Do not let it swing a ML/RL call on its own.
 - LINEUP ORDER MATTERS: A team with their best hitters in slots 3-5 with weak 1-2 hitters scores fewer early runs. A balanced lineup (good hitters spread across 1-6) generates more consistent scoring. Factor batting order quality into run projections especially for F5.
 - xERA vs ERA: If a pitcher's xERA is significantly higher than their ERA (by 0.75+), they are overperforming and regression is likely — treat them as worse than ERA suggests. If xERA is lower than ERA, they have been unlucky and are better than ERA suggests.
@@ -2670,17 +2856,33 @@ async function main() {
       if (homeMatchups?.avgOPS != null) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: OPS ${homeMatchups.avgOPS}, K% ${homeMatchups.kRate}`);
       else if (homeMatchups) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: no batter-vs-pitcher sample (using season stats) — ${homeMatchups.meaningful || 0} batters with 10+ AB found`);
 
-      // Real starter stats (ERA/WHIP/avg IP/hand) + bullpen quality & fatigue
-      const [awayDetail, homeDetail, awayBullpen, homeBullpen] = await Promise.all([
+      // Real starter stats (ERA/WHIP/avg IP/hand) + bullpen quality & fatigue + pitch arsenal
+      const [awayDetail, homeDetail, awayBullpen, homeBullpen, awayArsenal, homeArsenal] = await Promise.all([
         awayPitcherInfo?.id ? fetchPitcherDetail(awayPitcherInfo.id) : Promise.resolve(null),
         homePitcherInfo?.id ? fetchPitcherDetail(homePitcherInfo.id) : Promise.resolve(null),
         awayTeamId ? fetchBullpen(awayTeamId) : Promise.resolve(null),
-        homeTeamId ? fetchBullpen(homeTeamId) : Promise.resolve(null)
+        homeTeamId ? fetchBullpen(homeTeamId) : Promise.resolve(null),
+        awayPitcherInfo?.id ? fetchPitchArsenal(awayPitcherInfo.id) : Promise.resolve(null),
+        homePitcherInfo?.id ? fetchPitchArsenal(homePitcherInfo.id) : Promise.resolve(null)
       ]);
       if (awayPitcherInfo && awayDetail) Object.assign(awayPitcherInfo, awayDetail);
       if (homePitcherInfo && homeDetail) Object.assign(homePitcherInfo, homeDetail);
       if (awayBullpen) console.log(`  ${game.away_team} pen: ${awayBullpen.summary}`);
       if (homeBullpen) console.log(`  ${game.home_team} pen: ${homeBullpen.summary}`);
+      if (awayArsenal) console.log(`  ${awayPitcherInfo?.name} arsenal: ${awayArsenal.arsenal.slice(0,3).map(p=>`${p.name} ${p.pct}% (whiff ${p.whiffPct}%)`).join(', ')} | arm slot: ${awayArsenal.armSlot}`);
+      if (homeArsenal) console.log(`  ${homePitcherInfo?.name} arsenal: ${homeArsenal.arsenal.slice(0,3).map(p=>`${p.name} ${p.pct}% (whiff ${p.whiffPct}%)`).join(', ')} | arm slot: ${homeArsenal.armSlot}`);
+
+      // Fetch batter vs pitch type for each lineup — cross with pitcher arsenal
+      const awayBatterPitchStats = awayArsenal ? await Promise.all(
+        awayMatchups.lineup.slice(0,9).map(b => fetchBatterVsPitchType(b.id, homePitcherInfo?.throwHand))
+      ) : null;
+      const homeBatterPitchStats = homeArsenal ? await Promise.all(
+        homeMatchups.lineup.slice(0,9).map(b => fetchBatterVsPitchType(b.id, awayPitcherInfo?.throwHand))
+      ) : null;
+
+      // Arsenal vs lineup matchup analysis
+      const awayVsHomeArsenal = analyzeArsenalMatchup(homeArsenal, awayBatterPitchStats, homePitcherInfo?.throwHand);
+      const homeVsAwayArsenal = analyzeArsenalMatchup(awayArsenal, homeBatterPitchStats, awayPitcherInfo?.throwHand);
 
       const [anData, weather, awayStats, homeStats, umpire, awayLineupOrder, homeLineupOrder] = await Promise.all([
         fetchActionNetwork(game.away_team, game.home_team, game.commence_time),
@@ -2695,7 +2897,7 @@ async function main() {
       if (anData?.total) lines.total = validateTotal(lines.total, anData.total);
 
       const f5Lines = f5Map[game.id] || null;
-      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName, umpire, awayLineupOrder, homeLineupOrder);
+      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName, umpire, awayLineupOrder, homeLineupOrder, awayArsenal, homeArsenal, awayVsHomeArsenal, homeVsAwayArsenal);
 
       if (!analysis) {
         console.error(`  ✗ ${game.away_team} @ ${game.home_team}: analysis parse failed — keeping previous row, not overwriting`);
