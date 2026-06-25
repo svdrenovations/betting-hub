@@ -898,21 +898,52 @@ async function getTeamId(teamName) {
 
 
 // Fetch Statcast pitcher metrics from Baseball Savant
+// Now includes xERA, xFIP, xwOBA, last 3 starts K/BB/HR rates
 async function fetchStatcast(pitcherName, pitcherId) {
   try {
     if (!pitcherId) return null;
     const endDate = new Date().toISOString().split('T')[0];
     const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    const url = 'https://baseballsavant.mlb.com/statcast_search/csv?player_type=pitcher&pitchers_lookup[]=' + pitcherId + '&game_date_gt=' + startDate + '&game_date_lt=' + endDate + '&type=details&hfSea=2026%7C&group_by=name&sort_col=pitches&sort_order=desc&min_abs=0';
+    // Fetch pitch-by-pitch data AND expected stats in parallel
+    const [pitchRes, xStatsRes] = await Promise.all([
+      fetch(
+        'https://baseballsavant.mlb.com/statcast_search/csv?player_type=pitcher&pitchers_lookup[]=' + pitcherId +
+        '&game_date_gt=' + startDate + '&game_date_lt=' + endDate +
+        '&type=details&hfSea=2026%7C&group_by=name&sort_col=pitches&sort_order=desc&min_abs=0',
+        { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } }
+      ),
+      fetch(
+        `https://baseballsavant.mlb.com/expected_statistics?type=pitcher&year=2026&position=&team=&min=10&csv=true`,
+        { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } }
+      )
+    ]);
 
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' }
-    });
-    if (!res.ok) return null;
-    const csv = await res.text();
+    // Parse expected stats (xERA, xFIP, xwOBA)
+    let xERA = null, xFIP = null, xwOBA = null;
+    if (xStatsRes.ok) {
+      const xCsv = await xStatsRes.text();
+      const xLines = xCsv.trim().split('\n');
+      if (xLines.length > 1) {
+        const xHeaders = xLines[0].split(',');
+        const getX = (row, col) => { const i = xHeaders.indexOf(col); return i >= 0 ? row.split(',')[i] : null; };
+        for (let i = 1; i < xLines.length; i++) {
+          const row = xLines[i];
+          const pid = getX(row, 'player_id') || getX(row, 'pitcher');
+          if (String(pid).trim() === String(pitcherId).trim()) {
+            xERA  = getX(row, 'xera')  || getX(row, 'est_era')  || null;
+            xFIP  = getX(row, 'xfip')  || getX(row, 'est_fip')  || null;
+            xwOBA = getX(row, 'xwoba') || getX(row, 'est_woba') || null;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!pitchRes.ok) return { xERA, xFIP, xwOBA };
+    const csv = await pitchRes.text();
     const lines = csv.trim().split('\n');
-    if (lines.length < 2) return null;
+    if (lines.length < 2) return { xERA, xFIP, xwOBA };
 
     const headers = lines[0].split(',');
     const getCol = (row, name) => {
@@ -920,10 +951,11 @@ async function fetchStatcast(pitcherName, pitcherId) {
       return idx >= 0 ? row.split(',')[idx] : null;
     };
 
-    // Parse all pitches
+    // Parse all pitches — track by game date for per-start stats
     let totalPitches = 0, totalVelo = 0, swings = 0, whiffs = 0;
     let barrels = 0, hardHits = 0, batted = 0;
     const startVelos = {};
+    const startStats = {}; // per-start: {ks, bbs, hrs, bf}
 
     for (let i = 1; i < lines.length; i++) {
       const row = lines[i];
@@ -933,6 +965,7 @@ async function fetchStatcast(pitcherName, pitcherId) {
       const description = getCol(row, 'description');
       const exitVelo = parseFloat(getCol(row, 'launch_speed'));
       const isBarrel = getCol(row, 'barrel');
+      const events = getCol(row, 'events');
 
       if (!isNaN(velo) && velo > 0) {
         totalPitches++;
@@ -949,6 +982,14 @@ async function fetchStatcast(pitcherName, pitcherId) {
         batted++;
         if (exitVelo >= 95) hardHits++;
         if (isBarrel === '1') barrels++;
+      }
+      // Per-start rate stats
+      if (gameDate && events) {
+        if (!startStats[gameDate]) startStats[gameDate] = { ks: 0, bbs: 0, hrs: 0, bf: 0 };
+        startStats[gameDate].bf++;
+        if (events === 'strikeout' || events === 'strikeout_double_play') startStats[gameDate].ks++;
+        if (events === 'walk' || events === 'hit_by_pitch') startStats[gameDate].bbs++;
+        if (events === 'home_run') startStats[gameDate].hrs++;
       }
     }
 
@@ -967,14 +1008,25 @@ async function fetchStatcast(pitcherName, pitcherId) {
         parseFloat(lastStartVelo) > parseFloat(avgVelo) + 1.0 ? 'UP' : 'STABLE'
       : 'UNKNOWN';
 
+    // Last 3 starts rate stats
+    const last3Dates = Object.keys(startStats).sort().slice(-3);
+    const last3Rates = last3Dates.map(d => {
+      const s = startStats[d];
+      const bf = s.bf || 1;
+      return {
+        date: d,
+        kPct: ((s.ks / bf) * 100).toFixed(1),
+        bbPct: ((s.bbs / bf) * 100).toFixed(1),
+        hrPer9: ((s.hrs / Math.max(1, bf/4.3)) * 9).toFixed(2) // approx innings from BF
+      };
+    });
+
     return {
-      avgVelo,
-      lastStartVelo,
-      veloTrend,
-      whiffRate,
-      hardHitRate,
-      barrelRate,
-      pitches: totalPitches
+      avgVelo, lastStartVelo, veloTrend,
+      whiffRate, hardHitRate, barrelRate,
+      pitches: totalPitches,
+      xERA, xFIP, xwOBA,
+      last3Rates
     };
   } catch(e) {
     console.log(`  Statcast error for ${pitcherName}:`, e.message);
@@ -1110,7 +1162,84 @@ async function fetchPitcherDetail(pitcherId) {
   } catch(e) { return null; }
 }
 
-// Lineup handedness composition (L / R / S counts) from a batched people lookup.
+// Fetch home plate umpire for a game and their run-scoring tendency
+async function fetchUmpireTendency(gamePk) {
+  try {
+    if (!gamePk) return null;
+    // Get umpire assignment from MLB Stats API
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/boxscore`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const officials = data.officials || [];
+    const hp = officials.find(o => (o.officialType || '').toLowerCase().includes('home plate') || (o.officialType || '').toLowerCase() === 'hp');
+    if (!hp?.official?.id) return null;
+
+    const umpireId = hp.official.id;
+    const umpireName = hp.official.fullName || 'Unknown';
+
+    // Get umpire's 2026 season stats from MLB Stats API
+    const statsRes = await fetch(
+      `https://statsapi.mlb.com/api/v1/people/${umpireId}/stats?stats=byYear&group=umpiring&season=2026`
+    );
+
+    let runsPerGame = null;
+    if (statsRes.ok) {
+      const sData = await statsRes.json();
+      const splits = sData.stats?.[0]?.splits || [];
+      const season = splits.find(s => s.season === '2026');
+      if (season?.stat) {
+        const games = parseFloat(season.stat.gamesTotal || 0);
+        const runs = parseFloat(season.stat.runsTotal || 0);
+        if (games > 0) runsPerGame = (runs / games).toFixed(2);
+      }
+    }
+
+    // League avg is ~8.8 runs/game — classify tendency
+    const rpg = parseFloat(runsPerGame);
+    let tendency = 'NEUTRAL';
+    if (!isNaN(rpg)) {
+      if (rpg >= 9.5) tendency = 'HIGH_SCORER'; // tight zone, more walks, more runs
+      else if (rpg <= 8.1) tendency = 'LOW_SCORER'; // big zone, more Ks, fewer runs
+    }
+
+    console.log(`  Umpire: ${umpireName} | runs/game: ${runsPerGame || '?'} | tendency: ${tendency}`);
+    return { umpireId, umpireName, runsPerGame, tendency };
+  } catch(e) {
+    return null;
+  }
+}
+
+// Fetch lineup batting order from MLB Stats API boxscore
+async function fetchLineupOrder(gamePk, teamId) {
+  try {
+    if (!gamePk || !teamId) return null;
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/game/${gamePk}/boxscore`);
+    if (!res.ok) return null;
+    const data = await res.json();
+
+    // Find which side (home/away) this team is on
+    const awayId = data.teams?.away?.team?.id;
+    const homeId = data.teams?.home?.team?.id;
+    const side = awayId === teamId ? 'away' : homeId === teamId ? 'home' : null;
+    if (!side) return null;
+
+    const players = data.teams?.[side]?.players || {};
+    const batters = Object.values(players)
+      .filter(p => p.battingOrder)
+      .sort((a, b) => parseInt(a.battingOrder) - parseInt(b.battingOrder))
+      .map(p => ({
+        id: p.person?.id,
+        name: p.person?.fullName,
+        order: parseInt(p.battingOrder) / 100, // MLB encodes as 100, 200, etc.
+        ops: p.seasonStats?.batting?.ops || null,
+        avg: p.seasonStats?.batting?.avg || null
+      }));
+
+    return batters.slice(0, 9);
+  } catch(e) {
+    return null;
+  }
+}
 async function lineupHandedness(lineup) {
   try {
     if (!lineup || !lineup.length) return null;
@@ -1380,7 +1509,7 @@ function validateTotal(oddsTotal, anTotal) {
   return oddsTotal;
 }
 
-async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName) {
+async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName, umpire, awayLineupOrder, homeLineupOrder) {
   console.log(`  Analyzing ${game.away_team} @ ${game.home_team}...`);
 
   const weatherInfo = weather
@@ -1426,12 +1555,26 @@ async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, hom
     : 'Public betting data unavailable';
 
   const awayStatcastInfo = awayStatcast
-    ? `${awayPitcher?.name||'Away'} Statcast: avg velo ${awayStatcast.avgVelo}mph (${awayStatcast.veloTrend}), last start ${awayStatcast.lastStartVelo}mph, whiff% ${awayStatcast.whiffRate}, hard hit% ${awayStatcast.hardHitRate}, barrel% ${awayStatcast.barrelRate}`
+    ? `${awayPitcher?.name||'Away'} Statcast: avg velo ${awayStatcast.avgVelo}mph (${awayStatcast.veloTrend}), last start ${awayStatcast.lastStartVelo}mph, whiff% ${awayStatcast.whiffRate}, hard hit% ${awayStatcast.hardHitRate}, barrel% ${awayStatcast.barrelRate}` +
+      (awayStatcast.xERA ? ` | xERA ${awayStatcast.xERA}, xFIP ${awayStatcast.xFIP||'?'}, xwOBA ${awayStatcast.xwOBA||'?'}` : '') +
+      (awayStatcast.last3Rates?.length ? ` | Last 3 starts K%: ${awayStatcast.last3Rates.map(s=>s.kPct).join('/')} BB%: ${awayStatcast.last3Rates.map(s=>s.bbPct).join('/')}` : '')
     : 'Away pitcher Statcast: unavailable';
 
   const homeStatcastInfo = homeStatcast
-    ? `${homePitcher?.name||'Home'} Statcast: avg velo ${homeStatcast.avgVelo}mph (${homeStatcast.veloTrend}), last start ${homeStatcast.lastStartVelo}mph, whiff% ${homeStatcast.whiffRate}, hard hit% ${homeStatcast.hardHitRate}, barrel% ${homeStatcast.barrelRate}`
+    ? `${homePitcher?.name||'Home'} Statcast: avg velo ${homeStatcast.avgVelo}mph (${homeStatcast.veloTrend}), last start ${homeStatcast.lastStartVelo}mph, whiff% ${homeStatcast.whiffRate}, hard hit% ${homeStatcast.hardHitRate}, barrel% ${homeStatcast.barrelRate}` +
+      (homeStatcast.xERA ? ` | xERA ${homeStatcast.xERA}, xFIP ${homeStatcast.xFIP||'?'}, xwOBA ${homeStatcast.xwOBA||'?'}` : '') +
+      (homeStatcast.last3Rates?.length ? ` | Last 3 starts K%: ${homeStatcast.last3Rates.map(s=>s.kPct).join('/')} BB%: ${homeStatcast.last3Rates.map(s=>s.bbPct).join('/')}` : '')
     : 'Home pitcher Statcast: unavailable';
+
+  const umpireInfo = umpire
+    ? `HP Umpire: ${umpire.umpireName} | runs/game ${umpire.runsPerGame||'?'} (league avg ~8.8) | tendency: ${umpire.tendency} — ${umpire.tendency==='HIGH_SCORER'?'tight zone, expect more walks/runs':umpire.tendency==='LOW_SCORER'?'wide zone, expect more Ks/fewer runs':'neutral impact on scoring'}`
+    : 'Umpire data unavailable';
+
+  const formatLineupOrder = (order, teamName) => {
+    if (!order?.length) return `${teamName} lineup order: unavailable`;
+    const formatted = order.map((b,i) => `${i+1}. ${b.name}${b.ops?' (OPS '+b.ops+')':''}`).join(', ');
+    return `${teamName} batting order: ${formatted}`;
+  };
 
   const awayMatchupInfo = (awayMatchups && awayMatchups.avgOPS != null)
     ? `${game.away_team} lineup vs ${homePitcher?.name||'home pitcher'}: avg OPS ${awayMatchups.avgOPS}, avg AVG ${awayMatchups.avgAVG}, K% ${awayMatchups.kRate}, hot bats ${awayMatchups.hotBatters}, cold bats ${awayMatchups.coldBatters} (${awayMatchups.sample})`
@@ -1460,6 +1603,13 @@ ${f5Info}
 
 WEATHER:
 ${weatherInfo}
+
+UMPIRE:
+${umpireInfo}
+
+BATTING ORDER:
+${formatLineupOrder(awayLineupOrder, game.away_team)}
+${formatLineupOrder(homeLineupOrder, game.home_team)}
 
 PARK FACTORS:
 ${parkInfo}
@@ -1512,6 +1662,9 @@ ANALYSIS INSTRUCTIONS — CRITICAL:
 - APPLY THE PARK RUN FACTOR to your run projections: multiply the run environment by it (e.g. 1.06 = project ~6% more runs, 0.92 = ~8% fewer). This is a real number — use it instead of recalling park reputations.
 - DAY-GAME SHADOW: if a shadow profile is given, apply it as a SCORING-DISTRIBUTION shift, not a flat under — add its early-innings runs to your F5 projection and its late-innings runs to the full game. It is a small, approximate effect; do not let it swing a play on its own.
 - Current season form only — a team 2-8 in last 10 is a fade regardless of brand
+- UMPIRE IMPACT: HP umpires with runs/game significantly above 8.8 (league avg) have tight zones — more walks, more baserunners, more scoring. Factor this into totals projection (HIGH_SCORER umpire = +0.3 to +0.5 runs, LOW_SCORER = -0.3 to -0.5 runs). Do not let it swing a ML/RL call on its own.
+- LINEUP ORDER MATTERS: A team with their best hitters in slots 3-5 with weak 1-2 hitters scores fewer early runs. A balanced lineup (good hitters spread across 1-6) generates more consistent scoring. Factor batting order quality into run projections especially for F5.
+- xERA vs ERA: If a pitcher's xERA is significantly higher than their ERA (by 0.75+), they are overperforming and regression is likely — treat them as worse than ERA suggests. If xERA is lower than ERA, they have been unlucky and are better than ERA suggests.
 - PROJECTION CALIBRATION: Historical tracking across 241 games shows your total projections run high by an average of 0.14 runs (actual avg 8.80 vs projected avg 8.95). More importantly, 63% of games come in UNDER your projection vs 37% over. This means when your edge on a total is marginal, lean toward under. Do NOT force under calls — only call under when the data genuinely supports it. But when the game projects to 8.8 and the line is 8.5, consider whether the true projection after calibration is closer to 8.66 (8.80 - 0.14), which changes the edge calculation meaningfully.
 
 Return ONLY this JSON (no markdown, no code fences). Return ONLY these fields — every EV, breakeven, win-probability, and juice table is recomputed downstream from your projections, so do NOT include them:
@@ -2468,17 +2621,20 @@ async function main() {
       if (awayBullpen) console.log(`  ${game.away_team} pen: ${awayBullpen.summary}`);
       if (homeBullpen) console.log(`  ${game.home_team} pen: ${homeBullpen.summary}`);
 
-      const [anData, weather, awayStats, homeStats] = await Promise.all([
+      const [anData, weather, awayStats, homeStats, umpire, awayLineupOrder, homeLineupOrder] = await Promise.all([
         fetchActionNetwork(game.away_team, game.home_team, game.commence_time),
         fetchWeather(game.home_team, game.commence_time, venueName),
         fetchTeamStats(game.away_team),
-        fetchTeamStats(game.home_team)
+        fetchTeamStats(game.home_team),
+        gamePk ? fetchUmpireTendency(gamePk) : Promise.resolve(null),
+        gamePk && awayTeamId ? fetchLineupOrder(gamePk, awayTeamId) : Promise.resolve(null),
+        gamePk && homeTeamId ? fetchLineupOrder(gamePk, homeTeamId) : Promise.resolve(null)
       ]);
 
       if (anData?.total) lines.total = validateTotal(lines.total, anData.total);
 
       const f5Lines = f5Map[game.id] || null;
-      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName);
+      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName, umpire, awayLineupOrder, homeLineupOrder);
 
       if (!analysis) {
         console.error(`  ✗ ${game.away_team} @ ${game.home_team}: analysis parse failed — keeping previous row, not overwriting`);
