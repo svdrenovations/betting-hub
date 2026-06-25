@@ -1,0 +1,30 @@
+name: Statcast Daily Cache
+
+on:
+  schedule:
+    # 6am ET = 10:00 UTC every day
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+
+jobs:
+  cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pybaseball requests --break-system-packages -q
+
+      - name: Fetch all Statcast data and cache to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python3 scripts/fetch_statcast.py --mode=full
