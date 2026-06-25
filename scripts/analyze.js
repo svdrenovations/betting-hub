@@ -278,7 +278,7 @@ function computePitcherFactor(pitcherDetail, statcast, lineupMatchups, arsenalMa
   // Three-way blend: season (30%) + split (20%) + recent (50%)
   // Recent is most predictive, split captures venue/home-away tendency
   const blendedERA = (seasonERA * 0.30) + (splitERA * 0.20) + (recentERA * 0.50);
-  let eraFactor = Math.min(Math.max(blendedERA / LEAGUE_AVG_ERA, 0.65), 1.85);
+  let eraFactor = Math.min(Math.max(blendedERA / LEAGUE_AVG_ERA, 0.65), 1.65);
 
   // ── vs Batter handedness split ────────────────────────────────────────────
   let handednessFactor = 1.0;
@@ -426,7 +426,7 @@ function projectRuns({ offenseStats, offenseMatchups, offenseOrder, offenseHande
   const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
   const raw  = LEAGUE_AVG_RUNS * pf * of_ * park * wx * ump * bp * plat;
   return {
-    runs: +Math.max(3.0, Math.min(raw, 10.0)).toFixed(2),
+    runs: +Math.max(3.0, Math.min(raw, 8.5)).toFixed(2),
     factors: { pitcher: +pf.toFixed(3), offense: +of_.toFixed(3), park: +park.toFixed(3), weather: +wx.toFixed(3), umpire: +ump.toFixed(3), bullpen: +bp.toFixed(3), platoon: +plat.toFixed(3) }
   };
 }
@@ -1102,13 +1102,14 @@ async function fetchStatcastCSV(pitcherId, groupBy = 'name', playerType = 'pitch
   const startDate = `${new Date().getFullYear()}-01-01`;
   const url = `${STATCAST_PROXY}/statcast?pitcherId=${pitcherId}&playerType=${playerType}&groupBy=${groupBy}&startDate=${startDate}&endDate=${endDate}`;
   try {
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const res = await fetch(url);
     if (!res.ok) { console.log(`  Statcast proxy error: HTTP ${res.status} for pitcherId ${pitcherId}`); return null; }
     const text = await res.text();
     if (!text) { console.log(`  Statcast proxy: empty response for pitcherId ${pitcherId}`); return null; }
     if (text.includes('Method not allowed') || text.includes('Missing')) { console.log(`  Statcast proxy: ${text.slice(0,50)} for pitcherId ${pitcherId}`); return null; }
     const lines = text.trim().split('\n');
     console.log(`  Statcast proxy: ${lines.length} rows for pitcherId ${pitcherId}`);
+    if (lines.length <= 1) { console.log(`  Statcast proxy: header only — Savant returned no pitch data`); return null; }
     return text;
   } catch(e) {
     console.log(`  Statcast proxy fetch error for ${pitcherId}:`, e.message);
