@@ -21,7 +21,10 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: python3 -m pip install pybaseball requests -q
+        run: |
+          python3 -m pip install --upgrade pip -q
+          python3 -m pip install pybaseball requests lxml pandas numpy -q
+          python3 -c "import pybaseball; print('pybaseball OK')"
 
       - name: Fetch all Statcast data and cache to Supabase
         env:
