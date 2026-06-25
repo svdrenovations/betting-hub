@@ -2468,6 +2468,7 @@ function triggerAllKalshiFetches() {
     const situations = el.dataset.sits;
     const matchup = el.dataset.matchup;
 
+    const activePlays = plays.filter(p => !p.suppressed);
     const totalPlay = activePlays.find(p => p.key === 'total');
     const totalVerdict = totalPlay ? totalPlay.verdict : '';
 
