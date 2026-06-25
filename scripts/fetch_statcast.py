@@ -44,8 +44,9 @@ try:
     import pybaseball
     from pybaseball import statcast_pitcher, statcast_batter, roster
     pybaseball.cache.enable()
-except ImportError:
-    print("ERROR: pybaseball not installed. Run: pip install pybaseball")
+    print("pybaseball imported successfully")
+except ImportError as e:
+    print(f"ERROR: pybaseball import failed: {e}")
     sys.exit(1)
 
 season_start = f"{datetime.now().year}-03-01"
