@@ -1095,92 +1095,91 @@ async function getTeamId(teamName) {
 }
 
 
-// Fetch Statcast pitcher metrics from Baseball Savant
-// Now includes xERA, xFIP, xwOBA, last 3 starts K/BB/HR rates
+const STATCAST_PROXY = 'https://betting-proxy.svdrenovations.workers.dev';
+
+async function fetchStatcastCSV(pitcherId, groupBy = 'name', playerType = 'pitcher') {
+  const endDate = new Date().toISOString().split('T')[0];
+  const startDate = `${new Date().getFullYear()}-01-01`;
+  const url = `${STATCAST_PROXY}/statcast?pitcherId=${pitcherId}&playerType=${playerType}&groupBy=${groupBy}&startDate=${startDate}&endDate=${endDate}`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!res.ok) return null;
+  const text = await res.text();
+  if (!text || text.includes('Method not allowed') || text.includes('Missing')) return null;
+  return text;
+}
+
+async function fetchStatcastXStats(pitcherId) {
+  const url = `${STATCAST_PROXY}/statcast-xstats?pitcherId=${pitcherId}`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+  if (!res.ok) return null;
+  const text = await res.text();
+  if (!text || text.includes('Method not allowed')) return null;
+  return text;
+}
+
+// Fetch Statcast pitcher metrics via Cloudflare proxy → Baseball Savant
 async function fetchStatcast(pitcherName, pitcherId) {
   try {
     if (!pitcherId) return null;
-    const endDate = new Date().toISOString().split('T')[0];
-    const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    // Fetch pitch-by-pitch data only — xStats is a huge file, fetch separately with timeout
-    const pitchRes = await fetch(
-      'https://baseballsavant.mlb.com/statcast_search/csv?player_type=pitcher&pitchers_lookup[]=' + pitcherId +
-      '&game_date_gt=' + startDate + '&game_date_lt=' + endDate +
-      '&type=details&hfSea=2026%7C&group_by=name&sort_col=pitches&sort_order=desc&min_abs=0',
-      { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } }
-    );
+    const [csv, xCsv] = await Promise.all([
+      fetchStatcastCSV(pitcherId, 'name', 'pitcher'),
+      fetchStatcastXStats(pitcherId)
+    ]);
 
-    // Fetch xERA/xFIP/xwOBA separately — non-blocking, won't delay analysis if it fails
+    // Parse xERA/xFIP/xwOBA
     let xERA = null, xFIP = null, xwOBA = null;
-    try {
-      const xStatsRes = await fetch(
-        `https://baseballsavant.mlb.com/expected_statistics?type=pitcher&year=2026&position=&team=&min=10&pitchers_lookup[]=${pitcherId}&csv=true`,
-        { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } }
-      );
-      if (xStatsRes.ok) {
-        const xCsv = await xStatsRes.text();
-        const xLines = xCsv.trim().split('\n');
-        if (xLines.length > 1) {
-          const xHeaders = xLines[0].split(',');
-          const getX = (row, col) => { const i = xHeaders.indexOf(col); return i >= 0 ? row.split(',')[i]?.trim() : null; };
-          for (let i = 1; i < xLines.length; i++) {
-            const row = xLines[i];
-            const pid = getX(row, 'player_id') || getX(row, 'pitcher');
-            if (String(pid).trim() === String(pitcherId).trim()) {
-              xERA  = getX(row, 'xera')  || getX(row, 'est_era')  || null;
-              xFIP  = getX(row, 'xfip')  || getX(row, 'est_fip')  || null;
-              xwOBA = getX(row, 'xwoba') || getX(row, 'est_woba') || null;
-              break;
-            }
+    if (xCsv) {
+      const xLines = xCsv.trim().split('\n');
+      if (xLines.length > 1) {
+        const xHeaders = xLines[0].split(',');
+        const getX = (row, col) => { const i = xHeaders.indexOf(col); return i >= 0 ? row.split(',')[i]?.trim() : null; };
+        for (let i = 1; i < xLines.length; i++) {
+          const pid = getX(xLines[i], 'player_id') || getX(xLines[i], 'pitcher');
+          if (String(pid).trim() === String(pitcherId).trim()) {
+            xERA  = getX(xLines[i], 'xera')  || getX(xLines[i], 'est_era')  || null;
+            xFIP  = getX(xLines[i], 'xfip')  || getX(xLines[i], 'est_fip')  || null;
+            xwOBA = getX(xLines[i], 'xwoba') || getX(xLines[i], 'est_woba') || null;
+            break;
           }
         }
       }
-    } catch(xe) { /* xStats optional — don't fail if unavailable */ }
+    }
 
-    if (!pitchRes.ok) return { xERA, xFIP, xwOBA };
-    const csv = await pitchRes.text();
+    if (!csv) return { xERA, xFIP, xwOBA };
     const csvLines = csv.trim().split('\n');
     if (csvLines.length < 2) return { xERA, xFIP, xwOBA };
 
     const headers = csvLines[0].split(',');
-    const getCol = (row, name) => {
-      const idx = headers.indexOf(name);
-      return idx >= 0 ? row.split(',')[idx] : null;
-    };
+    const getCol = (row, name) => { const idx = headers.indexOf(name); return idx >= 0 ? row.split(',')[idx] : null; };
 
-    let totalPitches = 0, totalVelo = 0, swings = 0, whiffs = 0;
-    let barrels = 0, hardHits = 0, batted = 0;
-    const startVelos = {};
-    const startStats = {};
+    let totalPitches = 0, totalVelo = 0, swings = 0, whiffs = 0, barrels = 0, hardHits = 0, batted = 0;
+    const startVelos = {}, startStats = {};
 
     for (let i = 1; i < csvLines.length; i++) {
       const row = csvLines[i];
       if (!row.trim()) continue;
       const velo = parseFloat(getCol(row, 'release_speed'));
       const gameDate = getCol(row, 'game_date');
-      const description = getCol(row, 'description');
+      const description = getCol(row, 'description') || '';
       const exitVelo = parseFloat(getCol(row, 'launch_speed'));
       const isBarrel = getCol(row, 'barrel');
-      const events = getCol(row, 'events');
+      const events = getCol(row, 'events') || '';
 
       if (!isNaN(velo) && velo > 0) {
-        totalPitches++;
-        totalVelo += velo;
+        totalPitches++; totalVelo += velo;
         if (gameDate) {
           if (!startVelos[gameDate]) startVelos[gameDate] = { total: 0, count: 0 };
-          startVelos[gameDate].total += velo;
-          startVelos[gameDate].count++;
+          startVelos[gameDate].total += velo; startVelos[gameDate].count++;
         }
       }
-      if (description && (description.includes('swing') || description.includes('foul') || description.includes('hit'))) swings++;
-      if (description && description.includes('swinging_strike')) whiffs++;
+      if (description.includes('swing') || description.includes('foul') || description.includes('hit')) swings++;
+      if (description.includes('swinging_strike')) whiffs++;
       if (!isNaN(exitVelo) && exitVelo > 0) {
         batted++;
         if (exitVelo >= 95) hardHits++;
         if (isBarrel === '1') barrels++;
       }
-      // Per-start rate stats
       if (gameDate && events) {
         if (!startStats[gameDate]) startStats[gameDate] = { ks: 0, bbs: 0, hrs: 0, bf: 0 };
         startStats[gameDate].bf++;
@@ -1194,37 +1193,23 @@ async function fetchStatcast(pitcherName, pitcherId) {
     const whiffRate = swings > 0 ? ((whiffs / swings) * 100).toFixed(1) : null;
     const hardHitRate = batted > 0 ? ((hardHits / batted) * 100).toFixed(1) : null;
     const barrelRate = batted > 0 ? ((barrels / batted) * 100).toFixed(1) : null;
-
-    // Velocity trend — compare last start to average
     const startDates = Object.keys(startVelos).sort().slice(-5);
     const lastStartVelo = startDates.length > 0
       ? (startVelos[startDates[startDates.length-1]].total / startVelos[startDates[startDates.length-1]].count).toFixed(1)
       : null;
     const veloTrend = avgVelo && lastStartVelo
-      ? parseFloat(lastStartVelo) < parseFloat(avgVelo) - 1.5 ? 'DOWN' :
-        parseFloat(lastStartVelo) > parseFloat(avgVelo) + 1.0 ? 'UP' : 'STABLE'
+      ? parseFloat(lastStartVelo) < parseFloat(avgVelo) - 1.5 ? 'DOWN'
+        : parseFloat(lastStartVelo) > parseFloat(avgVelo) + 1.0 ? 'UP' : 'STABLE'
       : 'UNKNOWN';
-
-    // Last 3 starts rate stats
     const last3Dates = Object.keys(startStats).sort().slice(-3);
     const last3Rates = last3Dates.map(d => {
       const s = startStats[d];
       const bf = s.bf || 1;
-      return {
-        date: d,
-        kPct: ((s.ks / bf) * 100).toFixed(1),
-        bbPct: ((s.bbs / bf) * 100).toFixed(1),
-        hrPer9: ((s.hrs / Math.max(1, bf/4.3)) * 9).toFixed(2) // approx innings from BF
-      };
+      return { date: d, kPct: ((s.ks/bf)*100).toFixed(1), bbPct: ((s.bbs/bf)*100).toFixed(1), hrPer9: ((s.hrs/Math.max(1,bf/4.3))*9).toFixed(2) };
     });
 
-    return {
-      avgVelo, lastStartVelo, veloTrend,
-      whiffRate, hardHitRate, barrelRate,
-      pitches: totalPitches,
-      xERA, xFIP, xwOBA,
-      last3Rates
-    };
+    console.log(`  Statcast ${pitcherName}: velo ${avgVelo}mph (${veloTrend}), whiff ${whiffRate}%, barrel ${barrelRate}%${xERA ? ` | xERA ${xERA}` : ''}`);
+    return { avgVelo, lastStartVelo, veloTrend, whiffRate, hardHitRate, barrelRate, pitches: totalPitches, xERA, xFIP, xwOBA, last3Rates };
   } catch(e) {
     console.log(`  Statcast error for ${pitcherName}:`, e.message);
     return null;
@@ -1399,10 +1384,8 @@ async function fetchPitcherDetail(pitcherId, venueId = null) {
 async function fetchPitchArsenal(pitcherId, season = 2026) {
   try {
     if (!pitcherId) return null;
-    const url = `https://baseballsavant.mlb.com/statcast_search/csv?player_type=pitcher&pitchers_lookup[]=${pitcherId}&game_date_gt=${season}-01-01&game_date_lt=${new Date().toISOString().split('T')[0]}&type=details&hfSea=${season}%7C&min_abs=0&group_by=name-pitch_type`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } });
-    if (!res.ok) return null;
-    const csv = await res.text();
+    const csv = await fetchStatcastCSV(pitcherId, 'name-pitch_type', 'pitcher');
+    if (!csv) return null;
     const csvLines = csv.trim().split('\n');
     if (csvLines.length < 2) return null;
 
@@ -1484,10 +1467,8 @@ async function fetchPitchArsenal(pitcherId, season = 2026) {
 async function fetchBatterVsPitchType(batterId, pitcherHand, season = 2026) {
   try {
     if (!batterId) return null;
-    const url = `https://baseballsavant.mlb.com/statcast_search/csv?player_type=batter&batters_lookup[]=${batterId}&game_date_gt=${season}-01-01&game_date_lt=${new Date().toISOString().split('T')[0]}&type=details&hfSea=${season}%7C&pitchHand=${pitcherHand || ''}&min_abs=0&group_by=name-pitch_type`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'text/csv' } });
-    if (!res.ok) return null;
-    const csv = await res.text();
+    const csv = await fetchStatcastCSV(batterId, 'name-pitch_type', 'batter');
+    if (!csv) return null;
     const csvLines = csv.trim().split('\n');
     if (csvLines.length < 2) return null;
 
