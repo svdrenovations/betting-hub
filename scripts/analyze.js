@@ -278,7 +278,7 @@ function computePitcherFactor(pitcherDetail, statcast, lineupMatchups, arsenalMa
   // Three-way blend: season (30%) + split (20%) + recent (50%)
   // Recent is most predictive, split captures venue/home-away tendency
   const blendedERA = (seasonERA * 0.30) + (splitERA * 0.20) + (recentERA * 0.50);
-  let eraFactor = Math.min(Math.max(blendedERA / LEAGUE_AVG_ERA, 0.65), 2.00);
+  let eraFactor = Math.min(Math.max(blendedERA / LEAGUE_AVG_ERA, 0.65), 1.85);
 
   // ── vs Batter handedness split ────────────────────────────────────────────
   let handednessFactor = 1.0;
@@ -1101,11 +1101,19 @@ async function fetchStatcastCSV(pitcherId, groupBy = 'name', playerType = 'pitch
   const endDate = new Date().toISOString().split('T')[0];
   const startDate = `${new Date().getFullYear()}-01-01`;
   const url = `${STATCAST_PROXY}/statcast?pitcherId=${pitcherId}&playerType=${playerType}&groupBy=${groupBy}&startDate=${startDate}&endDate=${endDate}`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-  if (!res.ok) return null;
-  const text = await res.text();
-  if (!text || text.includes('Method not allowed') || text.includes('Missing')) return null;
-  return text;
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!res.ok) { console.log(`  Statcast proxy error: HTTP ${res.status} for pitcherId ${pitcherId}`); return null; }
+    const text = await res.text();
+    if (!text) { console.log(`  Statcast proxy: empty response for pitcherId ${pitcherId}`); return null; }
+    if (text.includes('Method not allowed') || text.includes('Missing')) { console.log(`  Statcast proxy: ${text.slice(0,50)} for pitcherId ${pitcherId}`); return null; }
+    const lines = text.trim().split('\n');
+    console.log(`  Statcast proxy: ${lines.length} rows for pitcherId ${pitcherId}`);
+    return text;
+  } catch(e) {
+    console.log(`  Statcast proxy fetch error for ${pitcherId}:`, e.message);
+    return null;
+  }
 }
 
 async function fetchStatcastXStats(pitcherId) {
