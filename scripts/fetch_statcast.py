@@ -42,7 +42,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 try:
     import pybaseball
-    from pybaseball import statcast_pitcher, statcast_batter, roster
+    from pybaseball import statcast_pitcher, statcast_batter
     pybaseball.cache.enable()
     print("pybaseball imported successfully")
 except ImportError as e:
