@@ -1126,25 +1126,53 @@ async function fetchStatcastXStats(pitcherId) {
   return text;
 }
 
-// Load pybaseball Statcast cache (written by fetch_statcast.py before analyze.js runs)
+// Load Statcast cache from Supabase (written by fetch_statcast.py daily at 6am ET)
 let _statcastCache = null;
-function loadStatcastCache() {
+async function loadStatcastCache() {
   if (_statcastCache) return _statcastCache;
   try {
-    const fs = require('fs');
-    const cachePath = '/tmp/statcast_cache.json';
-    if (fs.existsSync(cachePath)) {
-      _statcastCache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
-      console.log(`  Loaded Statcast cache: ${Object.keys(_statcastCache).length} pitchers`);
-    } else {
-      console.log('  No Statcast cache found — will use MLB Stats API fallback');
-      _statcastCache = {};
+    const url = `${process.env.SUPABASE_URL}/rest/v1/statcast_cache?select=player_id,player_type,name,data&updated_at=gte.${new Date(Date.now() - 24*60*60*1000).toISOString()}`;
+    const res = await fetch(url, {
+      headers: {
+        'apikey': process.env.SUPABASE_SERVICE_KEY,
+        'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_KEY}`
+      }
+    });
+    if (!res.ok) throw new Error(`Supabase error: ${res.status}`);
+    const rows = await res.json();
+    _statcastCache = { pitchers: {}, batters: {} };
+    for (const row of rows) {
+      const data = typeof row.data === 'string' ? JSON.parse(row.data) : row.data;
+      const bucket = row.player_type === 'pitcher' ? 'pitchers' : 'batters';
+      _statcastCache[bucket][String(row.player_id)] = { name: row.name, ...data };
     }
+    const pc = Object.keys(_statcastCache.pitchers).length;
+    const bc = Object.keys(_statcastCache.batters).length;
+    console.log(`  Loaded Statcast cache from Supabase: ${pc} pitchers, ${bc} batters`);
   } catch(e) {
     console.log('  Statcast cache load error:', e.message);
-    _statcastCache = {};
+    // Fallback: try local /tmp cache from current run
+    try {
+      const fs = require('fs');
+      if (fs.existsSync('/tmp/statcast_cache.json')) {
+        const raw = JSON.parse(fs.readFileSync('/tmp/statcast_cache.json', 'utf8'));
+        _statcastCache = {
+          pitchers: raw.pitchers || raw,
+          batters: raw.batters || {}
+        };
+        console.log(`  Fallback: loaded from /tmp cache`);
+      } else {
+        _statcastCache = { pitchers: {}, batters: {} };
+      }
+    } catch(fe) {
+      _statcastCache = { pitchers: {}, batters: {} };
+    }
   }
   return _statcastCache;
+}
+
+function getStatcastBatter(batterId) {
+  return _statcastCache?.batters?.[String(batterId)] || null;
 }
 
 // Fetch Statcast metrics — reads from pybaseball cache first, falls back to MLB Stats API
@@ -1152,9 +1180,9 @@ async function fetchStatcast(pitcherName, pitcherId) {
   try {
     if (!pitcherId) return null;
 
-    // Try pybaseball cache first (rich pitch-level data)
-    const cache = loadStatcastCache();
-    const cached = cache[String(pitcherId)];
+    // Try Supabase cache first (rich pitch-level data from pybaseball)
+    const cache = await loadStatcastCache();
+    const cached = cache.pitchers?.[String(pitcherId)];
     if (cached) {
       console.log(`  Statcast ${pitcherName} (cache): velo ${cached.avgVelo}mph (${cached.veloTrend}), whiff ${cached.whiffRate}%, barrel ${cached.barrelRate}%${cached.xERA ? ` | xERA ${cached.xERA}` : ''}`);
       return cached;
@@ -2953,6 +2981,9 @@ async function main() {
   console.log(`\n=== MLB Analysis: ${RUN_TYPE} ===`);
   console.log(`${new Date().toLocaleString('en-US',{timeZone:'America/New_York'})} ET\n`);
 
+  // Pre-load Statcast cache from Supabase before game analysis begins
+  await loadStatcastCache();
+
   // Use ET timezone for date
   const etDate = new Date().toLocaleDateString('en-US', {timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'});
   const [etMonth, etDay, etYear] = etDate.split('/');
@@ -3136,16 +3167,23 @@ async function main() {
       if (homePitcherInfo && homeDetail) Object.assign(homePitcherInfo, homeDetail);
       if (awayBullpen) console.log(`  ${game.away_team} pen: ${awayBullpen.summary}`);
       if (homeBullpen) console.log(`  ${game.home_team} pen: ${homeBullpen.summary}`);
-      if (awayArsenal) console.log(`  ${awayPitcherInfo?.name} arsenal: ${awayArsenal.arsenal.slice(0,3).map(p=>`${p.name} ${p.pct}% (whiff ${p.whiffPct}%)`).join(', ')} | arm slot: ${awayArsenal.armSlot}`);
-      if (homeArsenal) console.log(`  ${homePitcherInfo?.name} arsenal: ${homeArsenal.arsenal.slice(0,3).map(p=>`${p.name} ${p.pct}% (whiff ${p.whiffPct}%)`).join(', ')} | arm slot: ${homeArsenal.armSlot}`);
+      if (awayArsenal?.arsenal) console.log(`  ${awayPitcherInfo?.name} arsenal: ${Object.entries(awayArsenal.arsenal).slice(0,3).map(([pt,p])=>`${pt} ${p.pct}% (whiff ${p.whiffRate}%)`).join(', ')}`);
+      if (homeArsenal?.arsenal) console.log(`  ${homePitcherInfo?.name} arsenal: ${Object.entries(homeArsenal.arsenal).slice(0,3).map(([pt,p])=>`${pt} ${p.pct}% (whiff ${p.whiffRate}%)`).join(', ')}`);
 
-      // Fetch batter vs pitch type for each lineup — cross with pitcher arsenal
-      const awayBatterPitchStats = awayArsenal ? await Promise.all(
-        awayMatchups.lineup.slice(0,9).map(b => fetchBatterVsPitchType(b.id, homePitcherInfo?.throwHand))
-      ) : null;
-      const homeBatterPitchStats = homeArsenal ? await Promise.all(
-        homeMatchups.lineup.slice(0,9).map(b => fetchBatterVsPitchType(b.id, awayPitcherInfo?.throwHand))
-      ) : null;
+      // Build batter pitch type stats from Supabase Statcast cache
+      const getBatterPitchStats = (lineup) => {
+        if (!lineup?.length) return null;
+        return lineup.slice(0, 9).map(b => {
+          const cached = _statcastCache?.batters?.[String(b.id)];
+          if (!cached?.pitchTypeStats) return null;
+          return Object.entries(cached.pitchTypeStats).map(([pt, s]) => ({
+            type: pt, ...s
+          }));
+        });
+      };
+
+      const awayBatterPitchStats = getBatterPitchStats(awayMatchups?.lineup || awayLineupOrder);
+      const homeBatterPitchStats = getBatterPitchStats(homeMatchups?.lineup || homeLineupOrder);
 
       // Arsenal vs lineup matchup analysis
       const awayVsHomeArsenal = analyzeArsenalMatchup(homeArsenal, awayBatterPitchStats, homePitcherInfo?.throwHand);
