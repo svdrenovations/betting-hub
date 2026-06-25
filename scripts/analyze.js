@@ -1126,99 +1126,77 @@ async function fetchStatcastXStats(pitcherId) {
   return text;
 }
 
-// Fetch Statcast pitcher metrics via Cloudflare proxy → Baseball Savant
+// Load pybaseball Statcast cache (written by fetch_statcast.py before analyze.js runs)
+let _statcastCache = null;
+function loadStatcastCache() {
+  if (_statcastCache) return _statcastCache;
+  try {
+    const fs = require('fs');
+    const cachePath = '/tmp/statcast_cache.json';
+    if (fs.existsSync(cachePath)) {
+      _statcastCache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+      console.log(`  Loaded Statcast cache: ${Object.keys(_statcastCache).length} pitchers`);
+    } else {
+      console.log('  No Statcast cache found — will use MLB Stats API fallback');
+      _statcastCache = {};
+    }
+  } catch(e) {
+    console.log('  Statcast cache load error:', e.message);
+    _statcastCache = {};
+  }
+  return _statcastCache;
+}
+
+// Fetch Statcast metrics — reads from pybaseball cache first, falls back to MLB Stats API
 async function fetchStatcast(pitcherName, pitcherId) {
   try {
     if (!pitcherId) return null;
 
-    const [csv, xCsv] = await Promise.all([
-      fetchStatcastCSV(pitcherId, 'name', 'pitcher'),
-      fetchStatcastXStats(pitcherId)
+    // Try pybaseball cache first (rich pitch-level data)
+    const cache = loadStatcastCache();
+    const cached = cache[String(pitcherId)];
+    if (cached) {
+      console.log(`  Statcast ${pitcherName} (cache): velo ${cached.avgVelo}mph (${cached.veloTrend}), whiff ${cached.whiffRate}%, barrel ${cached.barrelRate}%${cached.xERA ? ` | xERA ${cached.xERA}` : ''}`);
+      return cached;
+    }
+
+    // Fallback: MLB Stats API sabermetrics (less detail but always available)
+    console.log(`  Statcast ${pitcherName}: not in cache — using MLB Stats API fallback`);
+    const [saberRes, gameLogRes] = await Promise.all([
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=sabermetrics&group=pitching&season=2026`),
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=gameLog&group=pitching&season=2026`)
     ]);
 
-    // Parse xERA/xFIP/xwOBA
-    let xERA = null, xFIP = null, xwOBA = null;
-    if (xCsv) {
-      const xLines = xCsv.trim().split('\n');
-      if (xLines.length > 1) {
-        const xHeaders = xLines[0].split(',');
-        const getX = (row, col) => { const i = xHeaders.indexOf(col); return i >= 0 ? row.split(',')[i]?.trim() : null; };
-        for (let i = 1; i < xLines.length; i++) {
-          const pid = getX(xLines[i], 'player_id') || getX(xLines[i], 'pitcher');
-          if (String(pid).trim() === String(pitcherId).trim()) {
-            xERA  = getX(xLines[i], 'xera')  || getX(xLines[i], 'est_era')  || null;
-            xFIP  = getX(xLines[i], 'xfip')  || getX(xLines[i], 'est_fip')  || null;
-            xwOBA = getX(xLines[i], 'xwoba') || getX(xLines[i], 'est_woba') || null;
-            break;
-          }
-        }
+    let avgVelo = null, whiffRate = null, hardHitRate = null, barrelRate = null;
+    let xERA = null, xwOBA = null, veloTrend = 'UNKNOWN', lastStartVelo = null;
+    let last3Rates = [];
+
+    if (saberRes.ok) {
+      const sd = await saberRes.json();
+      const s = sd.stats?.[0]?.splits?.[0]?.stat;
+      if (s) {
+        whiffRate   = s.whiffPercent   != null ? parseFloat(s.whiffPercent).toFixed(1)   : null;
+        hardHitRate = s.hardHitPercent != null ? parseFloat(s.hardHitPercent).toFixed(1) : null;
+        barrelRate  = s.barrelPercent  != null ? parseFloat(s.barrelPercent).toFixed(1)  : null;
+        xERA        = s.xEra           != null ? parseFloat(s.xEra).toFixed(2)           : null;
+        xwOBA       = s.xWoba          != null ? parseFloat(s.xWoba).toFixed(3)          : null;
       }
     }
 
-    if (!csv) return { xERA, xFIP, xwOBA };
-    const csvLines = csv.trim().split('\n');
-    if (csvLines.length < 2) return { xERA, xFIP, xwOBA };
-
-    const headers = csvLines[0].split(',');
-    const getCol = (row, name) => { const idx = headers.indexOf(name); return idx >= 0 ? row.split(',')[idx] : null; };
-
-    let totalPitches = 0, totalVelo = 0, swings = 0, whiffs = 0, barrels = 0, hardHits = 0, batted = 0;
-    const startVelos = {}, startStats = {};
-
-    for (let i = 1; i < csvLines.length; i++) {
-      const row = csvLines[i];
-      if (!row.trim()) continue;
-      const velo = parseFloat(getCol(row, 'release_speed'));
-      const gameDate = getCol(row, 'game_date');
-      const description = getCol(row, 'description') || '';
-      const exitVelo = parseFloat(getCol(row, 'launch_speed'));
-      const isBarrel = getCol(row, 'barrel');
-      const events = getCol(row, 'events') || '';
-
-      if (!isNaN(velo) && velo > 0) {
-        totalPitches++; totalVelo += velo;
-        if (gameDate) {
-          if (!startVelos[gameDate]) startVelos[gameDate] = { total: 0, count: 0 };
-          startVelos[gameDate].total += velo; startVelos[gameDate].count++;
-        }
-      }
-      if (description.includes('swing') || description.includes('foul') || description.includes('hit')) swings++;
-      if (description.includes('swinging_strike')) whiffs++;
-      if (!isNaN(exitVelo) && exitVelo > 0) {
-        batted++;
-        if (exitVelo >= 95) hardHits++;
-        if (isBarrel === '1') barrels++;
-      }
-      if (gameDate && events) {
-        if (!startStats[gameDate]) startStats[gameDate] = { ks: 0, bbs: 0, hrs: 0, bf: 0 };
-        startStats[gameDate].bf++;
-        if (events === 'strikeout' || events === 'strikeout_double_play') startStats[gameDate].ks++;
-        if (events === 'walk' || events === 'hit_by_pitch') startStats[gameDate].bbs++;
-        if (events === 'home_run') startStats[gameDate].hrs++;
-      }
+    if (gameLogRes.ok) {
+      const gd = await gameLogRes.json();
+      const games = gd.stats?.[0]?.splits || [];
+      last3Rates = games.slice(-3).map(g => ({
+        date: g.date,
+        ip: g.stat?.inningsPitched,
+        er: g.stat?.earnedRuns,
+        kPct: null, bbPct: null
+      }));
+      veloTrend = 'STABLE';
     }
 
-    const avgVelo = totalPitches > 0 ? (totalVelo / totalPitches).toFixed(1) : null;
-    const whiffRate = swings > 0 ? ((whiffs / swings) * 100).toFixed(1) : null;
-    const hardHitRate = batted > 0 ? ((hardHits / batted) * 100).toFixed(1) : null;
-    const barrelRate = batted > 0 ? ((barrels / batted) * 100).toFixed(1) : null;
-    const startDates = Object.keys(startVelos).sort().slice(-5);
-    const lastStartVelo = startDates.length > 0
-      ? (startVelos[startDates[startDates.length-1]].total / startVelos[startDates[startDates.length-1]].count).toFixed(1)
-      : null;
-    const veloTrend = avgVelo && lastStartVelo
-      ? parseFloat(lastStartVelo) < parseFloat(avgVelo) - 1.5 ? 'DOWN'
-        : parseFloat(lastStartVelo) > parseFloat(avgVelo) + 1.0 ? 'UP' : 'STABLE'
-      : 'UNKNOWN';
-    const last3Dates = Object.keys(startStats).sort().slice(-3);
-    const last3Rates = last3Dates.map(d => {
-      const s = startStats[d];
-      const bf = s.bf || 1;
-      return { date: d, kPct: ((s.ks/bf)*100).toFixed(1), bbPct: ((s.bbs/bf)*100).toFixed(1), hrPer9: ((s.hrs/Math.max(1,bf/4.3))*9).toFixed(2) };
-    });
-
-    console.log(`  Statcast ${pitcherName}: velo ${avgVelo}mph (${veloTrend}), whiff ${whiffRate}%, barrel ${barrelRate}%${xERA ? ` | xERA ${xERA}` : ''}`);
-    return { avgVelo, lastStartVelo, veloTrend, whiffRate, hardHitRate, barrelRate, pitches: totalPitches, xERA, xFIP, xwOBA, last3Rates };
+    console.log(`  Statcast ${pitcherName} (API fallback): whiff ${whiffRate}%, hardHit ${hardHitRate}%, barrel ${barrelRate}%${xERA ? ` | xERA ${xERA}` : ''}`);
+    return { avgVelo, lastStartVelo, veloTrend, whiffRate, hardHitRate, barrelRate, pitches: null, xERA, xwOBA, last3Rates, arsenal: null };
   } catch(e) {
     console.log(`  Statcast error for ${pitcherName}:`, e.message);
     return null;
