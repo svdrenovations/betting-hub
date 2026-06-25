@@ -278,7 +278,7 @@ function computePitcherFactor(pitcherDetail, statcast, lineupMatchups, arsenalMa
   // Three-way blend: season (30%) + split (20%) + recent (50%)
   // Recent is most predictive, split captures venue/home-away tendency
   const blendedERA = (seasonERA * 0.30) + (splitERA * 0.20) + (recentERA * 0.50);
-  let eraFactor = Math.min(Math.max(blendedERA / LEAGUE_AVG_ERA, 0.40), 2.30);
+  let eraFactor = Math.min(Math.max(blendedERA / LEAGUE_AVG_ERA, 0.65), 2.00);
 
   // ── vs Batter handedness split ────────────────────────────────────────────
   let handednessFactor = 1.0;
@@ -426,7 +426,7 @@ function projectRuns({ offenseStats, offenseMatchups, offenseOrder, offenseHande
   const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
   const raw  = LEAGUE_AVG_RUNS * pf * of_ * park * wx * ump * bp * plat;
   return {
-    runs: +Math.max(1.0, Math.min(raw, 12.0)).toFixed(2),
+    runs: +Math.max(3.0, Math.min(raw, 10.0)).toFixed(2),
     factors: { pitcher: +pf.toFixed(3), offense: +of_.toFixed(3), park: +park.toFixed(3), weather: +wx.toFixed(3), umpire: +ump.toFixed(3), bullpen: +bp.toFixed(3), platoon: +plat.toFixed(3) }
   };
 }
@@ -615,9 +615,13 @@ function normCdf(x) {
 // return per-team runs.
 function deriveRunModel(a, lines) {
   if (!a) return a;
-  const la = parseFloat(a.projAwayRuns);
-  const lb = parseFloat(a.projHomeRuns);
-  if (!(la >= 0) || !(lb >= 0)) return a; // no per-team runs -> leave ML/RL as-is
+  // Enforce minimum 3.0 runs per team — no MLB team ever averages below this
+  const la = Math.max(3.0, parseFloat(a.projAwayRuns));
+  const lb = Math.max(3.0, parseFloat(a.projHomeRuns));
+  // Write back the floored values so card display is also correct
+  a.projAwayRuns = la;
+  a.projHomeRuns = lb;
+  if (!(la >= 0) || !(lb >= 0)) return a;
   const mu = la - lb;
 
   // ML: P(away wins) ~ P(margin >= 1), P(home wins) ~ P(margin <= -1).
@@ -2152,7 +2156,7 @@ DETERMINISTIC RUN PROJECTION (computed from explicit factors — use as your pro
 ${game.away_team}: ${detProj.awayRuns} runs | factors: ${formatFactors(detProj.awayFactors)}
 ${game.home_team}: ${detProj.homeRuns} runs | factors: ${formatFactors(detProj.homeFactors)}
 Projected total: ${detProj.total} | Posted line: ${lines.total}
-NOTE: This projection is computed from pitcher ERA (60% recent/40% season weighted), lineup OPS, park factor, weather, umpire tendency, bullpen exposure, and platoon splits. You may adjust by up to ±0.5 runs based on specific matchup factors not captured here (arsenal matchup, lineup quality vs this specific pitcher, etc.) but you MUST NOT deviate by more than 1.0 run without documenting why. Your projAwayRuns and projHomeRuns in the response JSON should be your final adjusted number.
+NOTE: This projection is computed from pitcher ERA (60% recent/40% season weighted), lineup OPS, park factor, weather, umpire tendency, bullpen exposure, and platoon splits. You may adjust by up to ±0.5 runs based on specific matchup factors not captured here (arsenal matchup, lineup quality vs this specific pitcher, etc.) but you MUST NOT deviate by more than 1.0 run without documenting why. Your projAwayRuns and projHomeRuns in the response JSON should be your final adjusted number. MINIMUM: never project below 3.0 runs for either team regardless of pitcher quality — even elite pitchers allow 3+ runs on average.
 
 PITCHING MATCHUP:
 Away: ${awayPitcherInfo}
@@ -2461,8 +2465,8 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       total_ev: analysis.totalEV,
       total_line: analysis.totalLine,
       proj_total: analysis.projTotal,
-      proj_away_runs: analysis.projAwayRuns ?? null,
-      proj_home_runs: analysis.projHomeRuns ?? null,
+      proj_away_runs: analysis.projAwayRuns != null ? Math.max(3.0, parseFloat(analysis.projAwayRuns)).toFixed(1) : null,
+      proj_home_runs: analysis.projHomeRuns != null ? Math.max(3.0, parseFloat(analysis.projHomeRuns)).toFixed(1) : null,
       sim_away_runs: analysis.simAwayRuns ?? null,
       sim_home_runs: analysis.simHomeRuns ?? null,
       sim_ml_verdict: analysis.simMl ?? null,
