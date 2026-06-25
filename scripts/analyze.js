@@ -250,6 +250,188 @@ function payoutMult(odds) {
   return n > 0 ? n / 100 : 100 / Math.abs(n);
 }
 
+// ─── DETERMINISTIC RUN PROJECTION ENGINE ────────────────────────────────────
+const LEAGUE_AVG_RUNS = 4.40;
+const LEAGUE_AVG_ERA  = 4.20;
+const LEAGUE_AVG_OPS  = 0.720;
+
+function computePitcherFactor(pitcherDetail, statcast, lineupMatchups, arsenalMatchup, isPitcherHome, offenseHandedness) {
+  if (!pitcherDetail) return 1.0;
+
+  // ── ERA component — use home/away split when available ────────────────────
+  const seasonERA = parseFloat(pitcherDetail.era || LEAGUE_AVG_ERA);
+  const recentERA = parseFloat(pitcherDetail.recentERA || seasonERA);
+
+  // Home/away ERA split: pitcher at home vs on road
+  let splitERA = seasonERA;
+  if (isPitcherHome && pitcherDetail.homeERA) {
+    splitERA = parseFloat(pitcherDetail.homeERA);
+  } else if (!isPitcherHome && pitcherDetail.awayERA) {
+    splitERA = parseFloat(pitcherDetail.awayERA);
+  }
+
+  // Venue-specific ERA if available
+  if (pitcherDetail.venueERA) {
+    splitERA = (splitERA + parseFloat(pitcherDetail.venueERA)) / 2;
+  }
+
+  // Three-way blend: season (30%) + split (20%) + recent (50%)
+  // Recent is most predictive, split captures venue/home-away tendency
+  const blendedERA = (seasonERA * 0.30) + (splitERA * 0.20) + (recentERA * 0.50);
+  let eraFactor = Math.min(Math.max(blendedERA / LEAGUE_AVG_ERA, 0.40), 2.30);
+
+  // ── vs Batter handedness split ────────────────────────────────────────────
+  let handednessFactor = 1.0;
+  if (offenseHandedness && (pitcherDetail.vsLHB || pitcherDetail.vsRHB)) {
+    const { L = 0, R = 0, S = 0 } = offenseHandedness;
+    const total = L + R + S;
+    if (total > 0) {
+      let blendedOPS = 0;
+      if (pitcherDetail.vsLHB && L > 0) blendedOPS += (parseFloat(pitcherDetail.vsLHB.ops || LEAGUE_AVG_OPS) * L);
+      if (pitcherDetail.vsRHB && R > 0) blendedOPS += (parseFloat(pitcherDetail.vsRHB.ops || LEAGUE_AVG_OPS) * R);
+      if (S > 0) blendedOPS += (LEAGUE_AVG_OPS * S); // switch hitters: league avg
+      blendedOPS /= total;
+      handednessFactor = Math.min(Math.max(blendedOPS / LEAGUE_AVG_OPS, 0.85), 1.15);
+    }
+  }
+
+  // ── Statcast component ─────────────────────────────────────────────────────
+  let statcastAdj = 1.0;
+  if (statcast) {
+    if (statcast.whiffRate != null) {
+      const w = parseFloat(statcast.whiffRate);
+      if (!isNaN(w)) statcastAdj *= Math.min(Math.max(1 - ((w - 25) * 0.010), 0.82), 1.18);
+    }
+    if (statcast.hardHitRate != null) {
+      const hh = parseFloat(statcast.hardHitRate);
+      if (!isNaN(hh)) statcastAdj *= Math.min(Math.max(1 + ((hh - 38) * 0.008), 0.86), 1.14);
+    }
+    if (statcast.barrelRate != null) {
+      const br = parseFloat(statcast.barrelRate);
+      if (!isNaN(br)) statcastAdj *= Math.min(Math.max(1 + ((br - 8) * 0.012), 0.88), 1.12);
+    }
+    if (statcast.veloTrend === 'DOWN') statcastAdj *= 1.09;
+    else if (statcast.veloTrend === 'UP') statcastAdj *= 0.95;
+  }
+
+  // ── Pitcher vs this specific lineup history ───────────────────────────────
+  let matchupAdj = 1.0;
+  if (lineupMatchups?.avgOPS != null) {
+    const matchupOPS = parseFloat(lineupMatchups.avgOPS);
+    if (!isNaN(matchupOPS) && matchupOPS > 0) {
+      matchupAdj = Math.min(Math.max(matchupOPS / LEAGUE_AVG_OPS, 0.70), 1.40);
+    }
+    if (lineupMatchups.kRate != null) {
+      const k = parseFloat(lineupMatchups.kRate);
+      if (!isNaN(k)) matchupAdj *= Math.min(Math.max(1 - ((k - 22) * 0.005), 0.90), 1.10);
+    }
+  }
+
+  // ── Arsenal vs swing path ─────────────────────────────────────────────────
+  let arsenalAdj = 1.0;
+  if (arsenalMatchup?.overallEdge === 'PITCHER DOMINATES') arsenalAdj = 0.92;
+  else if (arsenalMatchup?.overallEdge === 'LINEUP ADVANTAGE') arsenalAdj = 1.08;
+
+  // ── Innings / bullpen exposure ────────────────────────────────────────────
+  const avgIP = parseFloat(pitcherDetail.avgIP || 6.0);
+  const inningsFactor = avgIP < 4.5 ? 1.10 : avgIP < 5.0 ? 1.06 : avgIP < 5.5 ? 1.03 : 1.0;
+
+  return eraFactor * handednessFactor * statcastAdj * matchupAdj * arsenalAdj * inningsFactor;
+}
+
+function computeOffenseFactor(teamStats, lineupMatchups, lineupOrder, isHome) {
+  if (!teamStats) return 1.0;
+
+  // Use home/away split OPS when available — more predictive than season average
+  let teamOPS;
+  if (isHome && teamStats.homeOPS) {
+    teamOPS = parseFloat(teamStats.homeOPS);
+  } else if (!isHome && teamStats.awayOPS) {
+    teamOPS = parseFloat(teamStats.awayOPS);
+  } else {
+    teamOPS = parseFloat(teamStats.ops || LEAGUE_AVG_OPS);
+  }
+
+  let opsFactor = teamOPS / LEAGUE_AVG_OPS;
+
+  // If we have specific lineup vs pitcher matchup data, blend it in
+  if (lineupMatchups?.avgOPS) {
+    const matchupOPS = parseFloat(lineupMatchups.avgOPS);
+    // Matchup-specific OPS weighted 50%, split OPS weighted 50%
+    opsFactor = ((matchupOPS * 0.50) + (teamOPS * 0.50)) / LEAGUE_AVG_OPS;
+  }
+
+  // K rate adjustment
+  if (lineupMatchups?.kRate) {
+    const kAdj = 1 - ((parseFloat(lineupMatchups.kRate) - 22.0) * 0.004);
+    opsFactor *= Math.min(Math.max(kAdj, 0.90), 1.10);
+  }
+
+  // Lineup order quality
+  if (lineupOrder?.length >= 4) {
+    const top4 = lineupOrder.slice(0, 4).map(b => parseFloat(b.ops || 0)).filter(o => !isNaN(o) && o > 0);
+    if (top4.length >= 3) {
+      const top4Avg = top4.reduce((s, o) => s + o, 0) / top4.length;
+      opsFactor = opsFactor * 0.70 + (top4Avg / LEAGUE_AVG_OPS) * 0.30;
+    }
+  }
+
+  return Math.min(Math.max(opsFactor, 0.55), 1.55);
+}
+
+function computeWeatherRunFactor(weather, parkFactors) {
+  if (!weather || weather.dome || parkFactors?.dome) return 1.0;
+  let mult = 1.0;
+  const temp = weather.temp || 72;
+  const effWind = weather.effWind || 0;
+  const flags = weather.flags || [];
+  if (temp >= 90) mult *= 1.05; else if (temp >= 80) mult *= 1.02;
+  else if (temp <= 50) mult *= 0.95; else if (temp <= 40) mult *= 0.90;
+  if (flags.some(f => (f||'').includes('OUT'))) mult *= 1 + Math.min(effWind * 0.006, 0.12);
+  else if (flags.some(f => (f||'').includes('IN'))) mult *= 1 - Math.min(effWind * 0.005, 0.10);
+  return Math.min(Math.max(mult, 0.88), 1.18);
+}
+
+function computeUmpireRunFactor(umpire) {
+  if (!umpire?.runsPerGame) return 1.0;
+  const rpg = parseFloat(umpire.runsPerGame);
+  return isNaN(rpg) ? 1.0 : Math.min(Math.max(rpg / 8.8, 0.93), 1.07);
+}
+
+function computeBullpenRunFactor(bullpen, pitcherDetail) {
+  const avgIP = parseFloat(pitcherDetail?.avgIP || 6.0);
+  if (avgIP >= 5.5 || !bullpen) return 1.0;
+  const bullpenERA = parseFloat(bullpen.weightedERA || LEAGUE_AVG_ERA);
+  const penWeight = Math.max(0, 9 - avgIP) / 9;
+  return 1 + (bullpenERA / LEAGUE_AVG_ERA - 1) * penWeight * 0.5;
+}
+
+function computePlatoonRunFactor(pitcherHand, lineupHandedness) {
+  if (!pitcherHand || !lineupHandedness) return 1.0;
+  const { L = 0, R = 0 } = lineupHandedness;
+  const total = L + R + (lineupHandedness.S || 0);
+  if (!total) return 1.0;
+  const samePct = pitcherHand === 'R' ? R / total : L / total;
+  const oppPct  = pitcherHand === 'R' ? L / total : R / total;
+  return Math.min(Math.max(1.0 - (samePct * 0.03) + (oppPct * 0.03), 0.94), 1.06);
+}
+
+function projectRuns({ offenseStats, offenseMatchups, offenseOrder, offenseHandedness, isOffenseHome, defPitcher, defStatcast, defPitcherHand, isPitcherHome, defBullpen, parkFactors, weather, umpire, arsenalMatchup }) {
+  const pf   = computePitcherFactor(defPitcher, defStatcast, offenseMatchups, arsenalMatchup, isPitcherHome, offenseHandedness);
+  const of_  = computeOffenseFactor(offenseStats, offenseMatchups, offenseOrder, isOffenseHome);
+  const park = parseFloat(parkFactors?.runFactor || 1.0);
+  const wx   = computeWeatherRunFactor(weather, parkFactors);
+  const ump  = computeUmpireRunFactor(umpire);
+  const bp   = computeBullpenRunFactor(defBullpen, defPitcher);
+  const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
+  const raw  = LEAGUE_AVG_RUNS * pf * of_ * park * wx * ump * bp * plat;
+  return {
+    runs: +Math.max(1.0, Math.min(raw, 12.0)).toFixed(2),
+    factors: { pitcher: +pf.toFixed(3), offense: +of_.toFixed(3), park: +park.toFixed(3), weather: +wx.toFixed(3), umpire: +ump.toFixed(3), bullpen: +bp.toFixed(3), platoon: +plat.toFixed(3) }
+  };
+}
+// ─── END DETERMINISTIC PROJECTION ENGINE ─────────────────────────────────────
+
 // EV% of a 1-unit bet at American `odds` given win probability `p` (0..1)
 function evPct(p, odds) {
   const b = payoutMult(odds);
@@ -739,7 +921,7 @@ async function fetchPitcherStats(pitcherName) {
 }
 
 // Fetch team batting stats and hot/cold hitters
-async function fetchTeamStats(teamName) {
+async function fetchTeamStats(teamName, venueId = null) {
   try {
     const teamsRes = await fetch('https://statsapi.mlb.com/api/v1/teams?sportId=1&season=2026');
     if (!teamsRes.ok) return null;
@@ -750,18 +932,35 @@ async function fetchTeamStats(teamName) {
     );
     if (!team) return null;
 
-    const statsRes = await fetch(
-      `https://statsapi.mlb.com/api/v1/teams/${team.id}/stats?stats=season&group=hitting&season=2026`
-    );
+    // Fetch season stats + home/away splits + venue splits in parallel
+    const [statsRes, splitRes, schedRes] = await Promise.all([
+      fetch(`https://statsapi.mlb.com/api/v1/teams/${team.id}/stats?stats=season&group=hitting&season=2026`),
+      fetch(`https://statsapi.mlb.com/api/v1/teams/${team.id}/stats?stats=statSplits&group=hitting&season=2026&sitCodes=h,a`),
+      fetch(`https://statsapi.mlb.com/api/v1/schedule?teamId=${team.id}&sportId=1&season=2026&gameType=R&startDate=2026-01-01&endDate=${new Date().toISOString().split('T')[0]}`)
+    ]);
+
     if (!statsRes.ok) return null;
     const statsData = await statsRes.json();
     const stats = statsData.stats?.[0]?.splits?.[0]?.stat;
     if (!stats) return null;
 
-    // Get last 10 games record
-    const schedRes = await fetch(
-      `https://statsapi.mlb.com/api/v1/schedule?teamId=${team.id}&sportId=1&season=2026&gameType=R&startDate=2026-01-01&endDate=${new Date().toISOString().split('T')[0]}`
-    );
+    // Parse home/away splits
+    let homeOPS = null, awayOPS = null, homeAVG = null, awayAVG = null;
+    let homeRuns = null, awayRuns = null;
+    if (splitRes.ok) {
+      const sd = await splitRes.json();
+      const splits = sd.stats?.[0]?.splits || [];
+      const home = splits.find(s => s.split?.code === 'h');
+      const away = splits.find(s => s.split?.code === 'a');
+      homeOPS  = home?.stat?.ops  || null;
+      awayOPS  = away?.stat?.ops  || null;
+      homeAVG  = home?.stat?.avg  || null;
+      awayAVG  = away?.stat?.avg  || null;
+      homeRuns = home?.stat?.runs || null;
+      awayRuns = away?.stat?.runs || null;
+    }
+
+    // Last 10 games record
     let last10 = null;
     if (schedRes.ok) {
       const schedData = await schedRes.json();
@@ -777,17 +976,12 @@ async function fetchTeamStats(teamName) {
     return {
       teamId: team.id,
       teamName: team.name,
-      avg: stats.avg,
-      ops: stats.ops,
-      runs: stats.runs,
-      hr: stats.homeRuns,
-      obp: stats.obp,
-      slg: stats.slg,
+      avg: stats.avg, ops: stats.ops, runs: stats.runs,
+      hr: stats.homeRuns, obp: stats.obp, slg: stats.slg,
+      homeOPS, awayOPS, homeAVG, awayAVG, homeRuns, awayRuns,
       last10
     };
-  } catch(e) {
-    return null;
-  }
+  } catch(e) { return null; }
 }
 
 // Fetch today's probable pitchers from MLB Stats API
@@ -813,7 +1007,7 @@ async function fetchProbablePitchers(gameDate) {
         const homeP = homePitcher ? { id: homePitcher.id, name: homePitcher.fullName, note: homePitcher.note || null, vs: awayId, gamePk: game.gamePk, venue: venueName } : null;
         if (awayP) pitcherMap[`away_${awayId}`] = awayP;  // legacy team-id map (collapses on doubleheaders; kept as fallback)
         if (homeP) pitcherMap[`home_${homeId}`] = homeP;
-        scheduleGames.push({ gamePk: game.gamePk, awayId, homeId, gameDate: game.gameDate, venue: venueName, awayPitcher: awayP, homePitcher: homeP, seriesGameNumber: game.seriesGameNumber, gamesInSeries: game.gamesInSeries });
+        scheduleGames.push({ gamePk: game.gamePk, awayId, homeId, gameDate: game.gameDate, venue: venueName, venueId: game.venue?.id || null, awayPitcher: awayP, homePitcher: homeP, seriesGameNumber: game.seriesGameNumber, gamesInSeries: game.gamesInSeries });
       }
     }
     console.log(`Probable pitchers found: ${Object.keys(pitcherMap).length}`);
@@ -1125,38 +1319,73 @@ async function fetchLineupMatchups(teamId, pitcherId, gameDate) {
 
 // Real starter stats by ID: ERA/WHIP/recent form, avg innings per start, throw hand.
 // (The old pitcherMap only carried id/name — this fills in the actual numbers.)
-async function fetchPitcherDetail(pitcherId) {
+async function fetchPitcherDetail(pitcherId, venueId = null) {
   try {
     if (!pitcherId) return null;
-    const [statsRes, personRes] = await Promise.all([
+
+    const [statsRes, personRes, splitRes] = await Promise.all([
       fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season,gameLog&group=pitching&season=2026`),
-      fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}`)
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}`),
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=statSplits&group=pitching&season=2026&sitCodes=h,a,vl,vr`)
     ]);
+
     let throwHand = null;
     if (personRes.ok) {
       const p = await personRes.json();
       throwHand = p.people?.[0]?.pitchHand?.code || null;
     }
-    if (!statsRes.ok) return throwHand ? { throwHand } : null;
+
+    // Parse home/away/handedness splits
+    let homeERA = null, awayERA = null, vsLHB = null, vsRHB = null;
+    if (splitRes.ok) {
+      const sd = await splitRes.json();
+      const splits = sd.stats?.[0]?.splits || [];
+      const home = splits.find(s => s.split?.code === 'h');
+      const away = splits.find(s => s.split?.code === 'a');
+      const vl   = splits.find(s => s.split?.code === 'vl');
+      const vr   = splits.find(s => s.split?.code === 'vr');
+      homeERA = home?.stat?.era || null;
+      awayERA = away?.stat?.era || null;
+      vsLHB   = vl?.stat ? { era: vl.stat.era, ops: vl.stat.ops, k9: vl.stat.strikeoutsPer9Inn } : null;
+      vsRHB   = vr?.stat ? { era: vr.stat.era, ops: vr.stat.ops, k9: vr.stat.strikeoutsPer9Inn } : null;
+    }
+
+    if (!statsRes.ok) return throwHand ? { throwHand, homeERA, awayERA, vsLHB, vsRHB } : null;
     const d = await statsRes.json();
-    const season = d.stats?.find(s => s.type?.displayName === 'season')?.splits?.[0]?.stat;
+    const season  = d.stats?.find(s => s.type?.displayName === 'season')?.splits?.[0]?.stat;
     const gameLog = d.stats?.find(s => s.type?.displayName === 'gameLog')?.splits || [];
-    if (!season) return throwHand ? { throwHand } : null;
+    if (!season) return throwHand ? { throwHand, homeERA, awayERA, vsLHB, vsRHB } : null;
 
     const starts = gameLog.filter(g => parseInt(g.stat?.gamesStarted || 0) > 0 || parseFloat(g.stat?.inningsPitched || 0) >= 3).slice(-5);
-    const avgIP = starts.length ? (starts.reduce((s, g) => s + parseFloat(g.stat?.inningsPitched || 0), 0) / starts.length).toFixed(1) : null;
-    const last3 = gameLog.slice(-3).map(g => ({ ip: g.stat?.inningsPitched, er: g.stat?.earnedRuns }));
+    const avgIP  = starts.length ? (starts.reduce((s, g) => s + parseFloat(g.stat?.inningsPitched || 0), 0) / starts.length).toFixed(1) : null;
+    const last3  = gameLog.slice(-3).map(g => ({ ip: g.stat?.inningsPitched, er: g.stat?.earnedRuns, date: g.date }));
     const recentERA = last3.length
-      ? (last3.reduce((s, g) => s + parseFloat(g.er || 0), 0) / Math.max(1, last3.reduce((s, g) => s + parseFloat(g.ip || 0), 0)) * 9).toFixed(2)
+      ? (last3.reduce((s, g) => s + parseFloat(g.er || 0), 0) / Math.max(0.1, last3.reduce((s, g) => s + parseFloat(g.ip || 0), 0)) * 9).toFixed(2)
       : null;
     const trending = recentERA && season.era
       ? (parseFloat(recentERA) < parseFloat(season.era) - 0.5 ? 'HOT'
         : parseFloat(recentERA) > parseFloat(season.era) + 0.5 ? 'COLD' : 'NEUTRAL')
       : 'UNKNOWN';
 
+    // Venue-specific ERA if venueId provided — fetch from game log
+    let venueERA = null;
+    if (venueId && gameLog.length) {
+      // Filter game log to games at this venue — approximate by checking gamePk
+      // MLB API doesn't directly expose venueId in gameLog splits easily
+      // So we'll use home/away as proxy: if pitching at home stadium
+      const venueGames = gameLog.filter(g => g.isHome === true || (g.team?.venue?.id === venueId));
+      if (venueGames.length >= 2) {
+        const vIP = venueGames.reduce((s, g) => s + parseFloat(g.stat?.inningsPitched || 0), 0);
+        const vER = venueGames.reduce((s, g) => s + parseFloat(g.stat?.earnedRuns || 0), 0);
+        if (vIP > 0) venueERA = (vER / vIP * 9).toFixed(2);
+      }
+    }
+
     return {
       era: season.era, whip: season.whip, wins: season.wins, losses: season.losses,
-      ip: season.inningsPitched, recentERA, trending, avgIP, throwHand, last3
+      ip: season.inningsPitched, recentERA, trending, avgIP, throwHand, last3,
+      homeERA, awayERA, venueERA, vsLHB, vsRHB,
+      seasonK9: season.strikeoutsPer9Inn, seasonBB9: season.walksPer9Inn
     };
   } catch(e) { return null; }
 }
@@ -1750,6 +1979,56 @@ function validateTotal(oddsTotal, anTotal) {
 async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName, umpire, awayLineupOrder, homeLineupOrder, awayArsenal, homeArsenal, awayVsHomeArsenal, homeVsAwayArsenal) {
   console.log(`  Analyzing ${game.away_team} @ ${game.home_team}...`);
 
+  // ── DETERMINISTIC RUN PROJECTIONS ──────────────────────────────────────────
+  // Compute before the LLM prompt so the model receives auditable projections
+  const parkFactors = getParkFactors(game.home_team, venueName);
+
+  const awayRunProj = projectRuns({
+    offenseStats: awayStats,
+    offenseMatchups: awayMatchups,
+    offenseOrder: awayLineupOrder,
+    offenseHandedness: awayMatchups?.handedness,
+    isOffenseHome: false,           // away team is always visiting
+    defPitcher: homePitcher,
+    defStatcast: homeStatcast,
+    defPitcherHand: homePitcher?.throwHand,
+    isPitcherHome: true,            // home pitcher pitching at home
+    defBullpen: homeBullpen,
+    arsenalMatchup: awayVsHomeArsenal,
+    parkFactors, weather, umpire
+  });
+
+  const homeRunProj = projectRuns({
+    offenseStats: homeStats,
+    offenseMatchups: homeMatchups,
+    offenseOrder: homeLineupOrder,
+    offenseHandedness: homeMatchups?.handedness,
+    isOffenseHome: true,            // home team at home
+    defPitcher: awayPitcher,
+    defStatcast: awayStatcast,
+    defPitcherHand: awayPitcher?.throwHand,
+    isPitcherHome: false,           // away pitcher pitching on road
+    defBullpen: awayBullpen,
+    arsenalMatchup: homeVsAwayArsenal,
+    parkFactors, weather, umpire
+  });
+
+  const detProj = {
+    awayRuns: awayRunProj.runs,
+    homeRuns: homeRunProj.runs,
+    total: +(parseFloat(awayRunProj.runs) + parseFloat(homeRunProj.runs)).toFixed(2),
+    awayFactors: awayRunProj.factors,
+    homeFactors: homeRunProj.factors
+  };
+
+  const formatFactors = (f) =>
+    `pitcher×${f.pitcher} offense×${f.offense} park×${f.park} weather×${f.weather} umpire×${f.umpire} bullpen×${f.bullpen} platoon×${f.platoon}`;
+
+  console.log(`  DET PROJ: ${game.away_team} ${detProj.awayRuns} - ${game.home_team} ${detProj.homeRuns} (tot ${detProj.total})`);
+  console.log(`    Away factors: ${formatFactors(detProj.awayFactors)}`);
+  console.log(`    Home factors: ${formatFactors(detProj.homeFactors)}`);
+  // ── END DETERMINISTIC PROJECTIONS ──────────────────────────────────────────
+
   const weatherInfo = weather
     ? weather.dome ? 'Indoor dome — weather not a factor'
     : weather.weatherNeutralized ? `Retractable roof likely CLOSED (~${Math.round((weather.roofOpenProb ?? 0.2)*100)}% open) — treat as INDOOR: weather is NOT a factor and you must NOT tag this game "weather". (Outside conditions, for reference only: ${weather.summary})`
@@ -1757,11 +2036,17 @@ async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, hom
     : 'Weather data unavailable';
 
   const awayPitcherInfo = awayPitcher
-    ? `${awayPitcher.name} (${awayPitcher.throwHand||'?'}HP): ERA ${awayPitcher.era}, WHIP ${awayPitcher.whip}, ${awayPitcher.wins}W-${awayPitcher.losses}L, Recent ERA ${awayPitcher.recentERA} (${awayPitcher.trending}), avg ${awayPitcher.avgIP||'?'} IP/start, Last 3: ${awayPitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}`
+    ? `${awayPitcher.name} (${awayPitcher.throwHand||'?'}HP): ERA ${awayPitcher.era}, WHIP ${awayPitcher.whip}, ${awayPitcher.wins}W-${awayPitcher.losses}L, Recent ERA ${awayPitcher.recentERA} (${awayPitcher.trending}), avg ${awayPitcher.avgIP||'?'} IP/start, Last 3: ${awayPitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}` +
+      (awayPitcher.homeERA || awayPitcher.awayERA ? ` | Home ERA: ${awayPitcher.homeERA||'?'} Away ERA: ${awayPitcher.awayERA||'?'}` : '') +
+      (awayPitcher.venueERA ? ` | At this venue ERA: ${awayPitcher.venueERA}` : '') +
+      (awayPitcher.vsLHB || awayPitcher.vsRHB ? ` | vs LHB: ERA ${awayPitcher.vsLHB?.era||'?'} OPS ${awayPitcher.vsLHB?.ops||'?'} | vs RHB: ERA ${awayPitcher.vsRHB?.era||'?'} OPS ${awayPitcher.vsRHB?.ops||'?'}` : '')
     : 'Away pitcher: TBD';
 
   const homePitcherInfo = homePitcher
-    ? `${homePitcher.name} (${homePitcher.throwHand||'?'}HP): ERA ${homePitcher.era}, WHIP ${homePitcher.whip}, ${homePitcher.wins}W-${homePitcher.losses}L, Recent ERA ${homePitcher.recentERA} (${homePitcher.trending}), avg ${homePitcher.avgIP||'?'} IP/start, Last 3: ${homePitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}`
+    ? `${homePitcher.name} (${homePitcher.throwHand||'?'}HP): ERA ${homePitcher.era}, WHIP ${homePitcher.whip}, ${homePitcher.wins}W-${homePitcher.losses}L, Recent ERA ${homePitcher.recentERA} (${homePitcher.trending}), avg ${homePitcher.avgIP||'?'} IP/start, Last 3: ${homePitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}` +
+      (homePitcher.homeERA || homePitcher.awayERA ? ` | Home ERA: ${homePitcher.homeERA||'?'} Away ERA: ${homePitcher.awayERA||'?'}` : '') +
+      (homePitcher.venueERA ? ` | At this venue ERA: ${homePitcher.venueERA}` : '') +
+      (homePitcher.vsLHB || homePitcher.vsRHB ? ` | vs LHB: ERA ${homePitcher.vsLHB?.era||'?'} OPS ${homePitcher.vsLHB?.ops||'?'} | vs RHB: ERA ${homePitcher.vsRHB?.era||'?'} OPS ${homePitcher.vsRHB?.ops||'?'}` : '')
     : 'Home pitcher: TBD';
 
   const awayBullpenInfo = awayBullpen ? `${game.away_team} bullpen: ${awayBullpen.summary}` : `${game.away_team} bullpen: unavailable`;
@@ -1781,11 +2066,13 @@ async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, hom
   const shadowInfo = shadow ? shadow.note : 'No day-game shadow factor (night game, roofed park, or low susceptibility).';
 
   const awayTeamInfo = awayStats
-    ? `${awayStats.teamName}: AVG ${awayStats.avg}, OPS ${awayStats.ops}, ${awayStats.runs} runs scored, ${awayStats.hr} HR, Last 10: ${awayStats.last10||'N/A'}`
+    ? `${awayStats.teamName}: AVG ${awayStats.avg}, OPS ${awayStats.ops}, ${awayStats.runs} runs scored, ${awayStats.hr} HR, Last 10: ${awayStats.last10||'N/A'}` +
+      (awayStats.awayOPS ? ` | Road OPS: ${awayStats.awayOPS} (home OPS: ${awayStats.homeOPS||'?'})` : '')
     : `${game.away_team}: Stats unavailable`;
 
   const homeTeamInfo = homeStats
-    ? `${homeStats.teamName}: AVG ${homeStats.avg}, OPS ${homeStats.ops}, ${homeStats.runs} runs scored, ${homeStats.hr} HR, Last 10: ${homeStats.last10||'N/A'}`
+    ? `${homeStats.teamName}: AVG ${homeStats.avg}, OPS ${homeStats.ops}, ${homeStats.runs} runs scored, ${homeStats.hr} HR, Last 10: ${homeStats.last10||'N/A'}` +
+      (homeStats.homeOPS ? ` | Home OPS: ${homeStats.homeOPS} (road OPS: ${homeStats.awayOPS||'?'})` : '')
     : `${game.home_team}: Stats unavailable`;
 
   const publicInfo = anData
@@ -1860,6 +2147,12 @@ ${parkInfo}
 
 DAY-GAME SHADOW / SCORING DISTRIBUTION:
 ${shadowInfo}
+
+DETERMINISTIC RUN PROJECTION (computed from explicit factors — use as your projection anchor):
+${game.away_team}: ${detProj.awayRuns} runs | factors: ${formatFactors(detProj.awayFactors)}
+${game.home_team}: ${detProj.homeRuns} runs | factors: ${formatFactors(detProj.homeFactors)}
+Projected total: ${detProj.total} | Posted line: ${lines.total}
+NOTE: This projection is computed from pitcher ERA (60% recent/40% season weighted), lineup OPS, park factor, weather, umpire tendency, bullpen exposure, and platoon splits. You may adjust by up to ±0.5 runs based on specific matchup factors not captured here (arsenal matchup, lineup quality vs this specific pitcher, etc.) but you MUST NOT deviate by more than 1.0 run without documenting why. Your projAwayRuns and projHomeRuns in the response JSON should be your final adjusted number.
 
 PITCHING MATCHUP:
 Away: ${awayPitcherInfo}
@@ -2856,10 +3149,12 @@ async function main() {
       if (homeMatchups?.avgOPS != null) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: OPS ${homeMatchups.avgOPS}, K% ${homeMatchups.kRate}`);
       else if (homeMatchups) console.log(`  Home lineup vs ${awayPitcherInfo?.name}: no batter-vs-pitcher sample (using season stats) — ${homeMatchups.meaningful || 0} batters with 10+ AB found`);
 
-      // Real starter stats (ERA/WHIP/avg IP/hand) + bullpen quality & fatigue + pitch arsenal
+      const venueId = sg?.venueId || null;
+
+      // Real starter stats with home/away/venue splits
       const [awayDetail, homeDetail, awayBullpen, homeBullpen, awayArsenal, homeArsenal] = await Promise.all([
-        awayPitcherInfo?.id ? fetchPitcherDetail(awayPitcherInfo.id) : Promise.resolve(null),
-        homePitcherInfo?.id ? fetchPitcherDetail(homePitcherInfo.id) : Promise.resolve(null),
+        awayPitcherInfo?.id ? fetchPitcherDetail(awayPitcherInfo.id, venueId) : Promise.resolve(null),
+        homePitcherInfo?.id ? fetchPitcherDetail(homePitcherInfo.id, venueId) : Promise.resolve(null),
         awayTeamId ? fetchBullpen(awayTeamId) : Promise.resolve(null),
         homeTeamId ? fetchBullpen(homeTeamId) : Promise.resolve(null),
         awayPitcherInfo?.id ? fetchPitchArsenal(awayPitcherInfo.id) : Promise.resolve(null),
