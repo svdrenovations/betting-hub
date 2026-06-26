@@ -2129,12 +2129,12 @@ async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, hom
 
   const awayTeamInfo = awayStats
     ? `${awayStats.teamName}: AVG ${awayStats.avg}, OPS ${awayStats.ops}, ${awayStats.runs} runs scored, ${awayStats.hr} HR, Last 10: ${awayStats.last10||'N/A'}` +
-      (awayStats.awayOPS ? ` | Road OPS: ${awayStats.awayOPS} (home OPS: ${awayStats.homeOPS||'?'})` : '')
+      
     : `${game.away_team}: Stats unavailable`;
 
   const homeTeamInfo = homeStats
     ? `${homeStats.teamName}: AVG ${homeStats.avg}, OPS ${homeStats.ops}, ${homeStats.runs} runs scored, ${homeStats.hr} HR, Last 10: ${homeStats.last10||'N/A'}` +
-      (homeStats.homeOPS ? ` | Home OPS: ${homeStats.homeOPS} (road OPS: ${homeStats.awayOPS||'?'})` : '')
+      
     : `${game.home_team}: Stats unavailable`;
 
   const publicInfo = anData
@@ -2209,10 +2209,6 @@ ${parkInfo}
 
 DAY-GAME SHADOW / SCORING DISTRIBUTION:
 ${shadowInfo}
-
-DETERMINISTIC RUN PROJECTION (reference only — do NOT use as a constraint):
-${game.away_team}: ${detProj.awayRuns} runs (det model) | ${game.home_team}: ${detProj.homeRuns} runs (det model) | total: ${detProj.total}
-This is a reference projection from a separate formula. Use it as one data point alongside all other factors below. Your own projection should be based on your full analysis of pitching, lineup, park, weather, bullpen, and matchup data. You are NOT constrained by this number.
 
 PITCHING MATCHUP:
 Away: ${awayPitcherInfo}
