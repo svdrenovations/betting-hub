@@ -189,20 +189,95 @@ function computePlatoonRunFactor(pitcherHand, lineupHandedness) {
   return Math.min(Math.max(1.0-(samePct*0.03)+(oppPct*0.03), 0.94), 1.06);
 }
 
-function projectRuns({ offenseStats, offenseMatchups, offenseOrder, offenseHandedness, defPitcher, defStatcast, defPitcherHand, defBullpen, parkFactors, weather, umpire }) {
+function projectRuns({ offenseStats, offenseMatchups, offenseOrder, offenseHandedness, isOffenseHome, defPitcher, defStatcast, defPitcherHand, isPitcherHome, defBullpen, parkFactors, weather, umpire, arsenalMatchup }) {
   const avgIP = parseFloat(defPitcher?.avgIP || 6.0);
-  const starterERA = (() => { if (!defPitcher) return LEAGUE_AVG_ERA; const s = parseFloat(defPitcher.era||LEAGUE_AVG_ERA), r = Math.min(parseFloat(defPitcher.recentERA||s), Math.max(s*3.0,9.0)); return s*0.70+r*0.30; })();
-  const bullpenERA = parseFloat(defBullpen?.weightedERA||LEAGUE_AVG_ERA);
-  const baselineRuns = (starterERA/9)*avgIP + (bullpenERA/9)*Math.max(0,9-avgIP);
-  const of_ = computeOffenseFactor(offenseStats, offenseMatchups, offenseOrder);
-  const park = parseFloat(parkFactors?.runFactor||1.0), wx = computeWeatherRunFactor(weather, parkFactors), ump = computeUmpireRunFactor(umpire), plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
+
+  // ERA: blend season (60%) + home/away split (20%) + recent (20%)
+  // xERA: if available and diverges from ERA by 0.75+, shade toward xERA (regression signal)
+  const starterERA = (() => {
+    if (!defPitcher) return LEAGUE_AVG_ERA;
+    const seasonERA = parseFloat(defPitcher.era || LEAGUE_AVG_ERA);
+    const rawRecent = parseFloat(defPitcher.recentERA || seasonERA);
+    const recentERA = Math.min(rawRecent, Math.max(seasonERA * 3.0, 9.0));
+    // Home/away split
+    const splitERA = isPitcherHome && defPitcher.homeERA ? parseFloat(defPitcher.homeERA)
+                   : !isPitcherHome && defPitcher.awayERA ? parseFloat(defPitcher.awayERA)
+                   : seasonERA;
+    let blended = (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20);
+    // xERA regression: if xERA diverges >0.75 from ERA, blend 25% xERA in
+    if (defPitcher.xERA != null) {
+      const xera = parseFloat(defPitcher.xERA);
+      if (!isNaN(xera) && Math.abs(xera - seasonERA) >= 0.75) {
+        blended = blended * 0.75 + xera * 0.25;
+      }
+    }
+    return Math.min(Math.max(blended, 1.5), 10.0);
+  })();
+
+  const bullpenERA = parseFloat(defBullpen?.weightedERA || LEAGUE_AVG_ERA);
+  const baselineRuns = (starterERA / 9) * avgIP + (bullpenERA / 9) * Math.max(0, 9 - avgIP);
+
+  // Offense: use home/away OPS split when available
+  const of_ = (() => {
+    if (!offenseStats) return 1.0;
+    const splitOPS = isOffenseHome ? offenseStats.homeOPS : offenseStats.awayOPS;
+    const baseOPS = parseFloat(splitOPS || offenseStats.ops || LEAGUE_AVG_OPS);
+    let opsFactor = baseOPS / LEAGUE_AVG_OPS;
+    // Matchup-specific OPS blended in
+    if (offenseMatchups?.avgOPS) {
+      const mOPS = parseFloat(offenseMatchups.avgOPS);
+      opsFactor = ((mOPS * 0.50) + (baseOPS * 0.50)) / LEAGUE_AVG_OPS;
+    }
+    if (offenseMatchups?.kRate) {
+      const kAdj = 1 - ((parseFloat(offenseMatchups.kRate) - 22.0) * 0.004);
+      opsFactor *= Math.min(Math.max(kAdj, 0.90), 1.10);
+    }
+    // Lineup order top-4 quality
+    if (offenseOrder?.length >= 4) {
+      const top4 = offenseOrder.slice(0,4).map(b=>parseFloat(b.ops||0)).filter(o=>!isNaN(o)&&o>0);
+      if (top4.length >= 3) {
+        const avg = top4.reduce((s,o)=>s+o,0)/top4.length;
+        opsFactor = opsFactor * 0.70 + (avg / LEAGUE_AVG_OPS) * 0.30;
+      }
+    }
+    // vs handedness split OPS
+    if (offenseHandedness && (defPitcher?.vsLHB || defPitcher?.vsRHB)) {
+      const { L=0, R=0, S=0 } = offenseHandedness;
+      const total = L + R + S;
+      if (total > 0) {
+        let blendOPS = 0;
+        if (defPitcher.vsLHB && L > 0) blendOPS += parseFloat(defPitcher.vsLHB.ops || LEAGUE_AVG_OPS) * L;
+        if (defPitcher.vsRHB && R > 0) blendOPS += parseFloat(defPitcher.vsRHB.ops || LEAGUE_AVG_OPS) * R;
+        if (S > 0) blendOPS += LEAGUE_AVG_OPS * S;
+        blendOPS /= total;
+        // Blend 40% handedness split into offense factor
+        opsFactor = opsFactor * 0.60 + (blendOPS / LEAGUE_AVG_OPS) * 0.40;
+      }
+    }
+    return Math.min(Math.max(opsFactor, 0.55), 1.55);
+  })();
+
+  const park = parseFloat(parkFactors?.runFactor || 1.0);
+  const wx   = computeWeatherRunFactor(weather, parkFactors);
+  const ump  = computeUmpireRunFactor(umpire);
+  const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
+
+  // Statcast adjustments
   let sc = 1.0;
   if (defStatcast) {
-    if (defStatcast.whiffRate!=null) { const w=parseFloat(defStatcast.whiffRate); if(!isNaN(w)) sc*=Math.min(Math.max(1-((w-25)*0.010),0.85),1.15); }
-    if (defStatcast.hardHitRate!=null) { const hh=parseFloat(defStatcast.hardHitRate); if(!isNaN(hh)) sc*=Math.min(Math.max(1+((hh-38)*0.008),0.88),1.12); }
+    if (defStatcast.whiffRate != null) { const w=parseFloat(defStatcast.whiffRate); if(!isNaN(w)) sc*=Math.min(Math.max(1-((w-25)*0.010),0.85),1.15); }
+    if (defStatcast.hardHitRate != null) { const hh=parseFloat(defStatcast.hardHitRate); if(!isNaN(hh)) sc*=Math.min(Math.max(1+((hh-38)*0.008),0.88),1.12); }
+    if (defStatcast.barrelRate != null) { const br=parseFloat(defStatcast.barrelRate); if(!isNaN(br)) sc*=Math.min(Math.max(1+((br-8)*0.010),0.90),1.10); }
     if (defStatcast.veloTrend==='DOWN') sc*=1.06; else if (defStatcast.veloTrend==='UP') sc*=0.96;
   }
-  return { runs: +Math.max(3.0, Math.min(baselineRuns*of_*park*wx*ump*plat*sc, 9.5)).toFixed(2) };
+
+  // Arsenal matchup adjustment
+  let arsenalAdj = 1.0;
+  if (arsenalMatchup?.overallEdge === 'PITCHER DOMINATES') arsenalAdj = 0.93;
+  else if (arsenalMatchup?.overallEdge === 'LINEUP ADVANTAGE') arsenalAdj = 1.07;
+
+  const raw = baselineRuns * of_ * park * wx * ump * plat * sc * arsenalAdj;
+  return { runs: +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2) };
 }
 
 function evPct(p, odds) { const b = payoutMult(odds); if (b==null||!(p>0)) return null; return +((p*b-(1-p))*100).toFixed(1); }
@@ -305,12 +380,14 @@ async function fetchTeamStats(teamName) {
     const teamsData=await teamsRes.json();
     const team=teamsData.teams?.find(t=>t.name.toLowerCase().includes(teamName.toLowerCase().split(' ').pop().toLowerCase())||teamName.toLowerCase().includes(t.name.toLowerCase().split(' ').pop().toLowerCase()));
     if(!team) return null;
-    const [statsRes,schedRes]=await Promise.all([fetch(`https://statsapi.mlb.com/api/v1/teams/${team.id}/stats?stats=season&group=hitting&season=2026`),fetch(`https://statsapi.mlb.com/api/v1/schedule?teamId=${team.id}&sportId=1&season=2026&gameType=R&startDate=2026-01-01&endDate=${new Date().toISOString().split('T')[0]}`)]);
+    const [statsRes,splitRes,schedRes]=await Promise.all([fetch(`https://statsapi.mlb.com/api/v1/teams/${team.id}/stats?stats=season&group=hitting&season=2026`),fetch(`https://statsapi.mlb.com/api/v1/teams/${team.id}/stats?stats=statSplits&group=hitting&season=2026&sitCodes=h,a`),fetch(`https://statsapi.mlb.com/api/v1/schedule?teamId=${team.id}&sportId=1&season=2026&gameType=R&startDate=2026-01-01&endDate=${new Date().toISOString().split('T')[0]}`)]);
     if(!statsRes.ok) return null;
     const statsData=await statsRes.json(), stats=statsData.stats?.[0]?.splits?.[0]?.stat; if(!stats) return null;
+    let homeOPS=null,awayOPS=null;
+    if(splitRes.ok){const sd=await splitRes.json(),splits=sd.stats?.[0]?.splits||[];const home=splits.find(s=>s.split?.code==='h'),away=splits.find(s=>s.split?.code==='a');homeOPS=home?.stat?.ops||null;awayOPS=away?.stat?.ops||null;}
     let last10=null;
     if(schedRes.ok){const schedData=await schedRes.json(),games=schedData.dates?.flatMap(d=>d.games)||[],completed=games.filter(g=>g.status?.abstractGameState==='Final').slice(-10),wins=completed.filter(g=>{const isHome=g.teams?.home?.team?.id===team.id;return isHome?g.teams?.home?.isWinner:g.teams?.away?.isWinner;}).length;last10=`${wins}-${completed.length-wins}`;}
-    return {teamId:team.id,teamName:team.name,avg:stats.avg,ops:stats.ops,runs:stats.runs,hr:stats.homeRuns,obp:stats.obp,slg:stats.slg,last10};
+    return {teamId:team.id,teamName:team.name,avg:stats.avg,ops:stats.ops,runs:stats.runs,hr:stats.homeRuns,obp:stats.obp,slg:stats.slg,homeOPS,awayOPS,last10};
   } catch(e) { return null; }
 }
 
@@ -426,18 +503,66 @@ async function fetchLineupMatchups(teamId, pitcherId, gameDate) {
 async function fetchPitcherDetail(pitcherId) {
   try {
     if(!pitcherId) return null;
-    const [statsRes,personRes]=await Promise.all([fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season,gameLog&group=pitching&season=2026`),fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}`)]);
+    const [statsRes,personRes,splitRes,saberRes]=await Promise.all([
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=season,gameLog&group=pitching&season=2026`),
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}`),
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=statSplits&group=pitching&season=2026&sitCodes=h,a,vl,vr`),
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pitcherId}/stats?stats=sabermetrics&group=pitching&season=2026`)
+    ]);
     let throwHand=null; if(personRes.ok){const p=await personRes.json();throwHand=p.people?.[0]?.pitchHand?.code||null;}
-    if(!statsRes.ok) return throwHand?{throwHand}:null;
+    // Home/away/handedness splits
+    let homeERA=null,awayERA=null,vsLHB=null,vsRHB=null;
+    if(splitRes.ok){const sd=await splitRes.json(),splits=sd.stats?.[0]?.splits||[];const home=splits.find(s=>s.split?.code==='h'),away=splits.find(s=>s.split?.code==='a'),vl=splits.find(s=>s.split?.code==='vl'),vr=splits.find(s=>s.split?.code==='vr');homeERA=home?.stat?.era||null;awayERA=away?.stat?.era||null;vsLHB=vl?.stat?{era:vl.stat.era,ops:vl.stat.ops,k9:vl.stat.strikeoutsPer9Inn}:null;vsRHB=vr?.stat?{era:vr.stat.era,ops:vr.stat.ops,k9:vr.stat.strikeoutsPer9Inn}:null;}
+    // xERA/xFIP from sabermetrics
+    let xERA=null,xFIP=null;
+    if(saberRes.ok){const sd=await saberRes.json(),s=sd.stats?.[0]?.splits?.[0]?.stat;if(s){xERA=s.xEra!=null?parseFloat(s.xEra).toFixed(2):null;xFIP=s.xFip!=null?parseFloat(s.xFip).toFixed(2):null;}}
+    if(!statsRes.ok) return throwHand?{throwHand,homeERA,awayERA,vsLHB,vsRHB,xERA,xFIP}:null;
     const d=await statsRes.json(),season=d.stats?.find(s=>s.type?.displayName==='season')?.splits?.[0]?.stat,gameLog=d.stats?.find(s=>s.type?.displayName==='gameLog')?.splits||[];
-    if(!season) return throwHand?{throwHand}:null;
+    if(!season) return throwHand?{throwHand,homeERA,awayERA,vsLHB,vsRHB,xERA,xFIP}:null;
     const starts=gameLog.filter(g=>parseInt(g.stat?.gamesStarted||0)>0||parseFloat(g.stat?.inningsPitched||0)>=3).slice(-5);
     const avgIP=starts.length?(starts.reduce((s,g)=>s+parseFloat(g.stat?.inningsPitched||0),0)/starts.length).toFixed(1):null;
     const last3=gameLog.slice(-3).map(g=>({ip:g.stat?.inningsPitched,er:g.stat?.earnedRuns,date:g.date}));
     const recentERA=last3.length?(last3.reduce((s,g)=>s+parseFloat(g.er||0),0)/Math.max(0.1,last3.reduce((s,g)=>s+parseFloat(g.ip||0),0))*9).toFixed(2):null;
     const trending=recentERA&&season.era?(parseFloat(recentERA)<parseFloat(season.era)-0.5?'HOT':parseFloat(recentERA)>parseFloat(season.era)+0.5?'COLD':'NEUTRAL'):'UNKNOWN';
-    return {era:season.era,whip:season.whip,wins:season.wins,losses:season.losses,ip:season.inningsPitched,recentERA,trending,avgIP,throwHand,last3};
+    return {era:season.era,whip:season.whip,wins:season.wins,losses:season.losses,ip:season.inningsPitched,recentERA,trending,avgIP,throwHand,last3,homeERA,awayERA,vsLHB,vsRHB,xERA,xFIP};
   } catch(e){return null;}
+}
+
+
+async function fetchPitchArsenal(pitcherId) {
+  try {
+    if (!pitcherId) return null;
+    const cache = await loadStatcastCache();
+    const cached = cache.pitchers?.[String(pitcherId)];
+    if (!cached?.pitchTypeStats) return null;
+    // Build arsenal from cached pitch type stats
+    const pitchNames = {'FF':'4-Seam FB','SI':'Sinker','FC':'Cutter','SL':'Slider','SW':'Sweeper','CU':'Curveball','KC':'Knuckle-Curve','CH':'Changeup','FS':'Splitter','KN':'Knuckleball','ST':'Sweeper','SV':'Screwball'};
+    const totalPitches = Object.values(cached.pitchTypeStats).reduce((s,p)=>s+(p.count||0),0);
+    if (!totalPitches) return null;
+    const arsenal = Object.entries(cached.pitchTypeStats)
+      .filter(([,p])=>(p.count||0)>=10)
+      .map(([pt,p])=>({type:pt,name:pitchNames[pt]||pt,pct:((p.count/totalPitches)*100).toFixed(1),velo:p.velo?.toFixed(1)||null,whiffPct:p.whiffRate?.toFixed(1)||null}))
+      .sort((a,b)=>parseFloat(b.pct)-parseFloat(a.pct));
+    return {arsenal,armSlot:cached.armSlot||'unknown',totalPitches};
+  } catch(e) { return null; }
+}
+
+function analyzeArsenalMatchup(arsenal, lineupBatterStats, pitcherHand) {
+  if (!arsenal?.arsenal?.length || !lineupBatterStats?.length) return null;
+  const matchups = [];
+  for (const pitch of arsenal.arsenal.slice(0, 4)) {
+    const lineupVsPitch = lineupBatterStats.map(b => b?.find?.(p => p.type === pitch.type)).filter(Boolean);
+    if (!lineupVsPitch.length) continue;
+    const avgWhiff = lineupVsPitch.reduce((s,p)=>s+parseFloat(p.whiffPct||0),0)/lineupVsPitch.length;
+    const avgHH = lineupVsPitch.reduce((s,p)=>s+parseFloat(p.hardHitPct||0),0)/lineupVsPitch.length;
+    const pitcherWhiff = parseFloat(pitch.whiffPct || 0);
+    const edge = pitcherWhiff > avgWhiff ? 'pitcher' : avgHH > 38 ? 'batter' : 'neutral';
+    matchups.push({pitch:pitch.name,usage:pitch.pct,pitcherWhiff:pitch.whiffPct,lineupWhiff:avgWhiff.toFixed(1),lineupHardHit:avgHH.toFixed(1),edge});
+  }
+  const pitcherEdges = matchups.filter(m=>m.edge==='pitcher').length;
+  const batterEdges = matchups.filter(m=>m.edge==='batter').length;
+  const overallEdge = pitcherEdges > batterEdges ? 'PITCHER DOMINATES' : batterEdges > pitcherEdges ? 'LINEUP ADVANTAGE' : 'EVEN';
+  return {matchups,overallEdge,armSlot:arsenal.armSlot};
 }
 
 async function fetchUmpireTendency(gamePk) {
@@ -1079,8 +1204,18 @@ async function main(){
 
       // DETERMINISTIC PROJECTION — background only, never shown to LLM
       const parkFactors=getParkFactors(game.home_team,venueName);
-      const awayRunProj=projectRuns({offenseStats:awayStats,offenseMatchups:awayMatchups,offenseOrder:awayLineupOrder,offenseHandedness:awayMatchups?.handedness,defPitcher:homePitcherInfo,defStatcast:homeStatcast,defPitcherHand:homePitcherInfo?.throwHand,defBullpen:homeBullpen,parkFactors,weather,umpire});
-      const homeRunProj=projectRuns({offenseStats:homeStats,offenseMatchups:homeMatchups,offenseOrder:homeLineupOrder,offenseHandedness:homeMatchups?.handedness,defPitcher:awayPitcherInfo,defStatcast:awayStatcast,defPitcherHand:awayPitcherInfo?.throwHand,defBullpen:awayBullpen,parkFactors,weather,umpire});
+      // Fetch additional det-only data: arsenal + batter pitch stats
+      const [awayArsenal,homeArsenal]=await Promise.all([
+        awayPitcherInfo?.id?fetchPitchArsenal(awayPitcherInfo.id):Promise.resolve(null),
+        homePitcherInfo?.id?fetchPitchArsenal(homePitcherInfo.id):Promise.resolve(null)
+      ]);
+      const getBatterPitchStats=(lineup)=>{if(!lineup?.length)return null;return lineup.slice(0,9).map(b=>{const cached=_statcastCache?.batters?.[String(b.id)];if(!cached?.pitchTypeStats)return null;return Object.entries(cached.pitchTypeStats).map(([pt,s])=>({type:pt,...s}));});};
+      const awayBatterPitchStats=getBatterPitchStats(awayMatchups?.lineup);
+      const homeBatterPitchStats=getBatterPitchStats(homeMatchups?.lineup);
+      const awayVsHomeArsenal=analyzeArsenalMatchup(homeArsenal,awayBatterPitchStats,homePitcherInfo?.throwHand);
+      const homeVsAwayArsenal=analyzeArsenalMatchup(awayArsenal,homeBatterPitchStats,awayPitcherInfo?.throwHand);
+      const awayRunProj=projectRuns({offenseStats:awayStats,offenseMatchups:awayMatchups,offenseOrder:awayLineupOrder,offenseHandedness:awayMatchups?.handedness,isOffenseHome:false,defPitcher:homePitcherInfo,defStatcast:homeStatcast,defPitcherHand:homePitcherInfo?.throwHand,isPitcherHome:true,defBullpen:homeBullpen,parkFactors,weather,umpire,arsenalMatchup:awayVsHomeArsenal});
+      const homeRunProj=projectRuns({offenseStats:homeStats,offenseMatchups:homeMatchups,offenseOrder:homeLineupOrder,offenseHandedness:homeMatchups?.handedness,isOffenseHome:true,defPitcher:awayPitcherInfo,defStatcast:awayStatcast,defPitcherHand:awayPitcherInfo?.throwHand,isPitcherHome:false,defBullpen:awayBullpen,parkFactors,weather,umpire,arsenalMatchup:homeVsAwayArsenal});
       const detProj={awayRuns:awayRunProj.runs,homeRuns:homeRunProj.runs};
       console.log(`  DET (background): ${game.away_team} ${detProj.awayRuns} - ${game.home_team} ${detProj.homeRuns} (tot ${+(detProj.awayRuns+detProj.homeRuns).toFixed(2)})`);
 
