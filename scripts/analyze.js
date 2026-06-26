@@ -2525,6 +2525,8 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       proj_home_runs: analysis.projHomeRuns != null ? Math.max(3.0, parseFloat(analysis.projHomeRuns)).toFixed(1) : null,
       sim_away_runs: analysis.simAwayRuns ?? null,
       sim_home_runs: analysis.simHomeRuns ?? null,
+      det_proj_away: analysis.detProjAway ?? null,
+      det_proj_home: analysis.detProjHome ?? null,
       sim_ml_verdict: analysis.simMl ?? null,
       sim_ml_ev: analysis.simMlEV ?? null,
       sim_rl_verdict: analysis.simRl ?? null,
@@ -3269,6 +3271,12 @@ async function main() {
       if (!analysis) {
         console.error(`  ✗ ${game.away_team} @ ${game.home_team}: analysis parse failed — keeping previous row, not overwriting`);
         continue;
+      }
+
+      // Attach deterministic projection to analysis for storage and display
+      if (detProj) {
+        analysis.detProjAway = detProj.awayRuns;
+        analysis.detProjHome = detProj.homeRuns;
       }
 
       // SHADOW MODE: run the Monte Carlo sim next to the LLM projection. It logs and stores
