@@ -2210,11 +2210,9 @@ ${parkInfo}
 DAY-GAME SHADOW / SCORING DISTRIBUTION:
 ${shadowInfo}
 
-DETERMINISTIC RUN PROJECTION (computed from explicit factors — use as your projection anchor):
-${game.away_team}: ${detProj.awayRuns} runs | factors: ${formatFactors(detProj.awayFactors)}
-${game.home_team}: ${detProj.homeRuns} runs | factors: ${formatFactors(detProj.homeFactors)}
-Projected total: ${detProj.total} | Posted line: ${lines.total}
-NOTE: This projection is computed from pitcher ERA (60% recent/40% season weighted), lineup OPS, park factor, weather, umpire tendency, bullpen exposure, and platoon splits. You may adjust by up to ±0.5 runs based on specific matchup factors not captured here (arsenal matchup, lineup quality vs this specific pitcher, etc.) but you MUST NOT deviate by more than 1.0 run without documenting why. Your projAwayRuns and projHomeRuns in the response JSON should be your final adjusted number. MINIMUM: never project below 3.0 runs for either team regardless of pitcher quality — even elite pitchers allow 3+ runs on average.
+DETERMINISTIC RUN PROJECTION (reference only — do NOT use as a constraint):
+${game.away_team}: ${detProj.awayRuns} runs (det model) | ${game.home_team}: ${detProj.homeRuns} runs (det model) | total: ${detProj.total}
+This is a reference projection from a separate formula. Use it as one data point alongside all other factors below. Your own projection should be based on your full analysis of pitching, lineup, park, weather, bullpen, and matchup data. You are NOT constrained by this number.
 
 PITCHING MATCHUP:
 Away: ${awayPitcherInfo}
