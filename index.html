@@ -220,6 +220,20 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
   .k-main{grid-template-columns:1fr;gap:8px}
 }
 </style>
+<script>
+// Set correct page class before render to avoid flash to games page
+(function(){
+  var p=new URLSearchParams(location.search).get('page');
+  var valid=['games','tracker','kalshi','stats','scoreboard'];
+  if(p&&valid.includes(p)&&p!=='games'){
+    document.addEventListener('DOMContentLoaded',function(){
+      document.querySelectorAll('.page').forEach(function(el){el.classList.remove('on');});
+      var el=document.getElementById('page-'+p);
+      if(el)el.classList.add('on');
+    });
+  }
+})();
+</script>
 </head>
 <body>
 
@@ -2967,7 +2981,19 @@ loadBetsFromSupabase().then(()=>{
   // Handle ?page= param after bets are loaded so tracker/kalshi have data
   const p=new URLSearchParams(location.search).get('page');
   if(p&&p!=='games'&&['tracker','kalshi','stats','scoreboard'].includes(p)){
-    goPage(p);
+    // Switch page visibility first
+    document.querySelectorAll('.page').forEach(el=>el.classList.remove('on'));
+    document.querySelectorAll('.nav-tab').forEach(el=>el.classList.remove('on'));
+    const pageEl=document.getElementById('page-'+p);
+    if(pageEl)pageEl.classList.add('on');
+    history.replaceState(null,'','?page='+p);
+    const activeTab=[...document.querySelectorAll('.nav-tab')].find(b=>(b.getAttribute('onclick')||'').includes("'"+p+"'"));
+    if(activeTab)activeTab.classList.add('on');
+    // Then load data for the page
+    if(p==='tracker'){renderTracker();}
+    else if(p==='kalshi'){loadKalshiBets().then(()=>renderKalshi());}
+    else if(p==='stats'){renderStats();}
+    else if(p==='scoreboard'){sbGames=null;renderScoreboard();}
   } else if(new URLSearchParams(location.search).get('game')){
     openDeepLinkGame();
   } else {
