@@ -24,7 +24,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .nav-logo{font-weight:600;font-size:16px;letter-spacing:-.3px}
 .nav-logo span{color:var(--green)}
 .nav-tabs{display:flex}
-.nav-tab{padding:0 16px;height:56px;display:flex;align-items:center;font-size:13px;font-weight:500;color:var(--text);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent}
+.nav-tab{padding:0 16px;height:56px;display:flex;align-items:center;font-size:13px;font-weight:500;color:var(--text);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;text-decoration:none}
 .nav-tab.on{color:var(--green);border-bottom-color:var(--green)}
 .nav-record{font-family:DM Mono,monospace;font-size:12px;color:var(--text)}
 .container{max-width:1100px;margin:0 auto;padding:1.5rem}
@@ -226,11 +226,13 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 <nav>
   <div class="nav-logo">MLB <span>Hub</span></div>
   <div class="nav-tabs">
-    <button class="nav-tab on" onclick="goPage('games',this)">Games</button>
-    <button class="nav-tab" onclick="goPage('tracker',this)">Tracker</button>
-    <button class="nav-tab" onclick="goPage('kalshi',this)">Kalshi</button>
-    <button class="nav-tab" onclick="goPage('stats',this)">Stats</button>
-    <button class="nav-tab" onclick="goPage('scoreboard',this)">Model vs Sim vs Det</button>
+    <a class="nav-tab on" href="?page=games" onclick="goPage('games',this);return false;">Games</a>
+    <a class="nav-tab" href="?page=tracker" onclick="goPage('tracker',this);return false;">Tracker</a>
+    <a class="nav-tab" href="?page=kalshi" onclick="goPage('kalshi',this);return false;">Kalshi</a>
+    <a class="nav-tab" href="?page=stats" onclick="goPage('stats',this);return false;">Stats</a>
+    <a class="nav-tab" href="?page=msd" onclick="goPage('msd',this);return false;">Models</a>
+    <a class="nav-tab" href="?page=scoreboard" onclick="goPage('scoreboard',this);return false;">Scoreboard</a>
+    <a class="nav-tab" href="?page=plus" onclick="goPage('plus',this);return false;">Plus</a>
   </div>
   <div class="nav-record mono" id="nav-record">—</div>
   <div style="display:flex;align-items:center;gap:6px">
