@@ -1927,9 +1927,7 @@ async function openDeepLinkGame(){
   if(!matchup)return false;
   const dateStr=params.get('date');
   goPage('games');
-  if(dateStr&&/^\d{4}-\d{2}-\d{2}$/.test(dateStr)){const[y,m,d]=dateStr.split('-').map(Number);currentDate=new Date(y,m-1,d);document.getElementById('date-display').textContent=fmtDate(currentDate);
-// Handle ?page= param for new-tab navigation
-(()=>{const p=new URLSearchParams(location.search).get('page');if(p&&['games','tracker','kalshi','stats','scoreboard'].includes(p))goPage(p);})();}
+  if(dateStr&&/^\d{4}-\d{2}-\d{2}$/.test(dateStr)){const[y,m,d]=dateStr.split('-').map(Number);currentDate=new Date(y,m-1,d);document.getElementById('date-display').textContent=fmtDate(currentDate);}
   await loadGames();
   const norm=s=>(s||'').trim().toLowerCase();
   const g=games.find(x=>norm(`${x.away_team} @ ${x.home_team}`)===norm(matchup));
@@ -2060,7 +2058,7 @@ function simMarketCell(label,verdict,ev,breakeven,gId,engine){
   const isPlay=!!verdict&&(v.startsWith('BET')||v.includes('LEAN'));
   const hasEdge=isPlay&&ev!=null&&parseFloat(ev)>=6;
   const valColor=isPlay?'var(--purple)':'var(--text)';
-  const border=isPlay?'border-color:var(--purple)':'';
+  const border=isPlay?'border-color:var(--purple);':'';
   const evHtml=(ev!=null&&ev!==0&&isPlay)?`<div class="ev-val" style="color:var(--purple)">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV</div>`:'';
   const breakHtml=(breakeven&&isPlay)?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>`:'';
   const clickable=hasEdge&&gId&&engine?`onclick="quickLogEngine('${gId}','${label}','${v}','${engine}')"` :'';
@@ -2964,8 +2962,18 @@ fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper?select=matchup,market,game_date`,{he
     // Store as matchup+market keys; matched against gid in triggerAllKalshiFetches
     rows.forEach(r=>{if(r.matchup&&r.market)kalshiAcceptedMatchups.add((r.matchup+'|'+r.market+'|'+(r.game_date||'')).toLowerCase());});
   }).catch(()=>{});
-loadBetsFromSupabase().then(()=>{updateNavRecord();renderGames();});
-if(new URLSearchParams(location.search).get('game')){openDeepLinkGame();}else{loadGames();}
+loadBetsFromSupabase().then(()=>{updateNavRecord();});
+// Handle ?page= param for new-tab navigation - runs before loadGames
+(()=>{
+  const p=new URLSearchParams(location.search).get('page');
+  if(p&&p!=='games'&&['tracker','kalshi','stats','scoreboard'].includes(p)){
+    goPage(p);
+  } else if(new URLSearchParams(location.search).get('game')){
+    openDeepLinkGame();
+  } else {
+    loadGames();
+  }
+})();
 </script>
 
 <div class="container" style="padding-top:0">
