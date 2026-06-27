@@ -1809,8 +1809,12 @@ function scoreboardHTML(){
   const statsPanel=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px">${statBox('Record',`${st.w}-${st.l}${st.p?`-${st.p}`:''}`,st.win!=null?`${st.win}% win`:'no settled plays')}${statBox('Units · 1u/play',u+'u',st.roi!=null?`${st.roi>=0?'+':''}${st.roi.toFixed(1)}% ROI`:'—',st.units>0?'var(--green)':st.units<0?'var(--red)':'')}${statBox('Plays',String(st.n),`${st.settled} settled · ${st.pend} pending`)}${statBox('Avg EV',st.ev!=null?`+${st.ev.toFixed(1)}%`:'—','at analysis-time line')}</div>`;
   const srcBadge=(s,pair,agreement)=>{
     const base=s==='model'?'<span style="color:var(--text)">model</span>':s==='det'?'<span style="color:var(--purple)">det</span>':'<span style="color:var(--amber)">sim</span>';
-    if(agreement==='all3')return '<span style="color:var(--green);font-weight:600">all 3</span>';
-    if((agreement==='agree2_dis1'||agreement==='agree2_none1')&&pair&&pair.includes('+'))return `<span style="font-size:10px;font-family:DM Mono,monospace;color:var(--green)">${pair}</span>`;
+    if(agreement==='all3')return '<span style="color:var(--green);font-weight:600">all 3 ✓</span>';
+    if(pair&&pair.includes('+')){
+      const pairColor=pair==='sim+det'?'var(--green)':pair==='model+det'?'var(--purple)':'var(--amber)';
+      const suffix=agreement==='agree2_dis1'?' ⇄':'';
+      return `<span style="font-size:10px;font-family:DM Mono,monospace;color:${pairColor}">${pair}${suffix}</span>`;
+    }
     return base;
   };
   const resCell=x=>{const c=x.result==='win'?'var(--green)':x.result==='loss'?'var(--red)':x.result==='push'?'var(--text)':'var(--text)';const t=x.result==='win'?'W':x.result==='loss'?'L':x.result==='push'?'P':'·';return`<span style="color:${c};font-weight:600">${t}</span>`;};
