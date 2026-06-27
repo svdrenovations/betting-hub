@@ -244,7 +244,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     <a class="nav-tab" href="?page=tracker" onclick="goPage('tracker',this);return false;">Tracker</a>
     <a class="nav-tab" href="?page=kalshi" onclick="goPage('kalshi',this);return false;">Kalshi</a>
     <a class="nav-tab" href="?page=stats" onclick="goPage('stats',this);return false;">Stats</a>
-    <a class="nav-tab" href="?page=msd" onclick="goPage('msd',this);return false;">Model vs Sim vs Det</a>
+    <a class="nav-tab" href="?page=msd" onclick="goPage('msd',this);return false;">Models</a>
     <a class="nav-tab" href="?page=scoreboard" onclick="goPage('scoreboard',this);return false;">Scoreboard</a>
   </div>
   <div class="nav-record mono" id="nav-record">—</div>
@@ -358,7 +358,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 <div class="page" id="page-msd">
 <div class="container">
   <div class="topbar">
-    <div class="topbar-left"><h2>Model vs Sim vs Det</h2><p>True W/L of each engine's recommended plays</p></div>
+    <div class="topbar-left"><h2>Models</h2><p>True W/L of each engine's recommended plays</p></div>
     <button class="btn" onclick="sbExportCSV()">Export CSV</button>
   </div>
   <div id="scoreboard-container">
@@ -1689,6 +1689,8 @@ function sbSortPlays(plays){
   });
 }
 const SIM_VALID_FROM='2026-06-18';
+const SIM_PLUS_VALID_FROM='2026-06-27';
+const DET_PLUS_VALID_FROM='2026-06-27';
 function sbKey(date,matchup,mk,side,source){return`${date}|${matchup}|${mk}|${side}|${source}`;}
 function sbParsePlay(verdict){if(!verdict)return null;const m=String(verdict).toUpperCase().trim().match(/^(BET|LEAN)\s+(AWAY|HOME|OVER|UNDER)$/);return m?{strength:m[1],side:m[2]}:null;}
 function sbOddsFor(mk,side,g){if(mk==='ml')return parseFloat(side==='AWAY'?g.away_ml:g.home_ml);if(mk==='rl')return parseFloat(side==='AWAY'?g.away_rl_odds:g.home_rl_odds);if(mk==='total')return parseFloat(side==='OVER'?g.over_odds:g.under_odds);return NaN;}
@@ -1725,10 +1727,21 @@ function sbBuildPlays(games){
       const sp=simValid?sbParsePlay(g['sim_'+mk+'_verdict']):null;
       const sev=simValid?parseFloat(g['sim_'+mk+'_ev']):NaN;
       const det=detFor(mk,g);
+      const splusValid=g.game_date>=SIM_PLUS_VALID_FROM;
+      const spp=splusValid?sbParsePlay(g['sim_plus_'+mk+'_verdict']):null;
+      const spev=splusValid?parseFloat(g['sim_plus_'+mk+'_ev']):NaN;
+      const dplusValid=g.game_date>=DET_PLUS_VALID_FROM;
+      const dpp=dplusValid&&g['det_plus_proj_away']!=null?{side:(sbParsePlay(g['det_plus_'+mk+'_verdict'])||{}).side,ev:parseFloat(g['det_plus_'+mk+'_ev']),verdict:g['det_plus_'+mk+'_verdict'],odds:sbOddsFor(mk,(sbParsePlay(g['det_plus_'+mk+'_verdict'])||{}).side,g)}:null;
       // Each engine's side (null = no qualifying play)
       const ms=(mp&&!neg(mev))?mp.side:null;
       const ss=(sp&&!neg(sev))?sp.side:null;
       const ds=det?det.side:null;
+      const sps=(spp&&!neg(spev)&&(sbParsePlay(g['sim_plus_'+mk+'_verdict'])?.side))?sbParsePlay(g['sim_plus_'+mk+'_verdict']).side:null;
+      const dps=dpp&&dpp.side&&!neg(dpp.ev)?dpp.side:null;
+      // Emit sim+ row
+      if(sps){const odds=sbOddsFor(mk,sps,g);const result=sbGrade(mk,sps,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;out.push({date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,agreement:'solo',pair:null,source:'sim+',side:sps,strength:spev>=10?'BET':'LEAN',ev:(spev==null||isNaN(spev))?null:spev,odds,line:sbLineLabel(mk,sps,g),result,units,mStatus:'none',sStatus:'none',dStatus:'none',confidence:(g.confidence||'').toUpperCase(),final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''});}
+      // Emit det+ row
+      if(dps){const odds=dpp.odds||sbOddsFor(mk,dps,g);const result=sbGrade(mk,dps,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;out.push({date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,agreement:'solo',pair:null,source:'det+',side:dps,strength:dpp.ev>=10?'BET':'LEAN',ev:(dpp.ev==null||isNaN(dpp.ev))?null:dpp.ev,odds,line:sbLineLabel(mk,dps,g),result,units,mStatus:'none',sStatus:'none',dStatus:'none',confidence:(g.confidence||'').toUpperCase(),final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''});}
       // Only emit a row if at least one engine has a play
       if(!ms&&!ss&&!ds)continue;
       // Determine the "primary" side and source for this row
@@ -1766,11 +1779,14 @@ function sbPasses(x){const f=sbFilter;
     const hasSim=f.source.includes('sim');
     const hasDet=f.source.includes('det');
     const count=f.source.length;
+    const hasSimPlus=f.source.includes('sim+');
+    const hasDetPlus=f.source.includes('det+');
     if(count===1){
-      // Single engine — show rows where that engine is part of the source
       if(hasMod&&!x.source.includes('model')&&x.source!=='all3')return false;
-      if(hasSim&&!x.source.includes('sim')&&x.source!=='all3')return false;
-      if(hasDet&&!x.source.includes('det')&&x.source!=='all3')return false;
+      if(hasSim&&x.source!=='sim'&&x.source!=='all3'&&!x.source.includes('sim+'))return false;
+      if(hasDet&&x.source!=='det'&&x.source!=='all3'&&!x.source.includes('det+'))return false;
+      if(hasSimPlus&&x.source!=='sim+')return false;
+      if(hasDetPlus&&x.source!=='det+')return false;
     } else if(count===2){
       // Two engines — show rows where both those engines agreed
       if(hasSim&&hasDet&&x.source!=='sim+det'&&x.source!=='all3')return false;
@@ -1795,7 +1811,7 @@ async function renderScoreboard(){
   if(sbGames===null){
     el.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
     try{
-      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev,det_proj_away,det_proj_home,confidence';
+      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev,det_proj_away,det_proj_home,sim_plus_away_runs,sim_plus_home_runs,sim_plus_ml_verdict,sim_plus_ml_ev,sim_plus_rl_verdict,sim_plus_rl_ev,sim_plus_total_verdict,sim_plus_total_ev,det_plus_proj_away,det_plus_proj_home,det_plus_ml_verdict,det_plus_ml_ev,det_plus_rl_verdict,det_plus_rl_ev,det_plus_total_verdict,det_plus_total_ev,confidence';
       const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?analyzed=eq.true&select=${cols}&order=game_date.desc&limit=2000`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
       if(!res.ok)throw new Error('Supabase '+res.status);
       sbGames=await res.json();
@@ -1841,11 +1857,11 @@ function scoreboardHTML(){
   const tog=(key,v,l)=>`<button class="filter-btn ${sbFilter[key].includes(v)?'on':''}" onclick="sbToggle('${key}','${v}')">${l}</button>`;
   const anyBtn=(key,l)=>`<button class="filter-btn ${sbFilter[key].length===0?'on':''}" onclick="sbClear('${key}')">${l}</button>`;
   const inp=(which)=>`<input type="date" value="${sbFilter[which]}" onchange="sbDate('${which}',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">`;
-  const filterBar=`<div class="tracker-filters">`+[['model','Model'],['sim','Sim'],['det','Det']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('conf','Any conf')+[['HIGH','High'],['MEDIUM','Medium'],['LOW','Low']].map(([v,l])=>tog('conf',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10–14.9%'],['d','15–19.9%'],['e','20–24.9%'],['f','25%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to')}</div>`;
+  const filterBar=`<div class="tracker-filters">`+[['model','Model'],['sim','Sim'],['det','Det'],['sim+','Sim+'],['det+','Det+']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('conf','Any conf')+[['HIGH','High'],['MEDIUM','Medium'],['LOW','Low']].map(([v,l])=>tog('conf',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10–14.9%'],['d','15–19.9%'],['e','20–24.9%'],['f','25%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to')}</div>`;
   const u=(st.units>=0?'+':'')+st.units.toFixed(2);
   const statBox=(label,big,sub,color)=>`<div style="flex:1;min-width:150px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px"><div style="font-size:11px;color:var(--text);text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:24px;font-weight:700;font-family:DM Mono,monospace;${color?`color:${color}`:''}">${big}</div><div style="font-size:12px;color:var(--text)">${sub}</div></div>`;
   const statsPanel=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px">${statBox('Record',`${st.w}-${st.l}${st.p?`-${st.p}`:''}`,st.win!=null?`${st.win}% win`:'no settled plays')}${statBox('Units · 1u/play',u+'u',st.roi!=null?`${st.roi>=0?'+':''}${st.roi.toFixed(1)}% ROI`:'—',st.units>0?'var(--green)':st.units<0?'var(--red)':'')}${statBox('Plays',String(st.n),`${st.settled} settled · ${st.pend} pending`)}${statBox('Avg EV',st.ev!=null?`+${st.ev.toFixed(1)}%`:'—','at analysis-time line')}</div>`;
-  const srcColor=s=>s==='model'?'var(--text)':s==='det'?'var(--purple)':s==='sim'?'var(--amber)':'var(--green)';
+  const srcColor=s=>s==='model'?'var(--text)':s==='det'?'var(--purple)':s==='sim'?'var(--amber)':s==='sim+'?'#5eead4':s==='det+'?'#c084fc':'var(--green)';
   const srcBadge=(s)=>{
     const color=srcColor(s);
     return`<span style="color:${color};font-family:DM Mono,monospace;font-size:11px">${s}</span>`;
@@ -2138,6 +2154,8 @@ function gameCardHTML(g){
         ${simMarketCell('TOTAL',g.sim_total_verdict,g.sim_total_ev,simMaxJuice('TOTAL',g.sim_total_verdict,g.sim_total_ev,g),g.id,'SIM')}
       </div>
       ${(()=>{const dml=deriveDetVerdict('ML',g),drl=deriveDetVerdict('RL',g),dtot=deriveDetVerdict('TOTAL',g);const hasDetProj=g.det_proj_away!=null&&g.det_proj_home!=null;if(!hasDetProj)return '';return playRowLabel('DET',true,projInline(g.det_proj_away,g.det_proj_home,true))+'<div class="markets">'+simMarketCell('ML',dml.verdict,dml.ev,null,g.id,'DET')+simMarketCell('RL',drl.verdict,drl.ev,null,g.id,'DET')+simMarketCell('TOTAL',dtot.verdict,dtot.ev,null,g.id,'DET')+'</div>';})()}
+      ${(()=>{const hasSimPlus=g.sim_plus_away_runs!=null&&g.sim_plus_home_runs!=null;if(!hasSimPlus)return '';return playRowLabel('SIM+',true,projInline(g.sim_plus_away_runs,g.sim_plus_home_runs,true))+'<div class="markets">'+simMarketCell('ML',g.sim_plus_ml_verdict,g.sim_plus_ml_ev,null,g.id,'SIM+')+simMarketCell('RL',g.sim_plus_rl_verdict,g.sim_plus_rl_ev,null,g.id,'SIM+')+simMarketCell('TOTAL',g.sim_plus_total_verdict,g.sim_plus_total_ev,null,g.id,'SIM+')+'</div>';})()}
+      ${(()=>{const hasDetPlus=g.det_plus_proj_away!=null&&g.det_plus_proj_home!=null;if(!hasDetPlus)return '';return playRowLabel('DET+',true,projInline(g.det_plus_proj_away,g.det_plus_proj_home,true))+'<div class="markets">'+simMarketCell('ML',g.det_plus_ml_verdict,g.det_plus_ml_ev,null,g.id,'DET+')+simMarketCell('RL',g.det_plus_rl_verdict,g.det_plus_rl_ev,null,g.id,'DET+')+simMarketCell('TOTAL',g.det_plus_total_verdict,g.det_plus_total_ev,null,g.id,'DET+')+'</div>';})()}
       ${kalshiPanelHTML(g,bets)}`
     :`<div class="markets" style="opacity:.4">${['ML','RL','TOTAL'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
 
