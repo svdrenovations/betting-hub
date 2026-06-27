@@ -2962,9 +2962,9 @@ fetch(`${SUPABASE_URL}/rest/v1/kalshi_paper?select=matchup,market,game_date`,{he
     // Store as matchup+market keys; matched against gid in triggerAllKalshiFetches
     rows.forEach(r=>{if(r.matchup&&r.market)kalshiAcceptedMatchups.add((r.matchup+'|'+r.market+'|'+(r.game_date||'')).toLowerCase());});
   }).catch(()=>{});
-loadBetsFromSupabase().then(()=>{updateNavRecord();});
-// Handle ?page= param for new-tab navigation - runs before loadGames
-(()=>{
+loadBetsFromSupabase().then(()=>{
+  updateNavRecord();
+  // Handle ?page= param after bets are loaded so tracker/kalshi have data
   const p=new URLSearchParams(location.search).get('page');
   if(p&&p!=='games'&&['tracker','kalshi','stats','scoreboard'].includes(p)){
     goPage(p);
@@ -2973,7 +2973,7 @@ loadBetsFromSupabase().then(()=>{updateNavRecord();});
   } else {
     loadGames();
   }
-})();
+});
 </script>
 
 <div class="container" style="padding-top:0">
