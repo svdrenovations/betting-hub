@@ -1792,10 +1792,10 @@ function sbPasses(x){const f=sbFilter;
       if(hasSim&&x.source!=='sim')return false;
       if(hasDet&&x.source!=='det')return false;
     } else if(count===2){
-      // Two engines — show rows from either engine where pair agrees
-      if(hasSim&&hasDet){if(!['sim','det'].includes(x.source))return false;if(x.pair!=='sim+det')return false;}
-      if(hasMod&&hasDet){if(!['model','det'].includes(x.source))return false;if(x.pair!=='model+det')return false;}
-      if(hasMod&&hasSim){if(!['model','sim'].includes(x.source))return false;if(x.pair!=='model+sim')return false;}
+      // Two engines — show rows where those two agree (including all3)
+      if(hasSim&&hasDet){if(!['sim','det'].includes(x.source))return false;if(x.pair!=='sim+det'&&x.agreement!=='all3')return false;}
+      if(hasMod&&hasDet){if(!['model','det'].includes(x.source))return false;if(x.pair!=='model+det'&&x.agreement!=='all3')return false;}
+      if(hasMod&&hasSim){if(!['model','sim'].includes(x.source))return false;if(x.pair!=='model+sim'&&x.agreement!=='all3')return false;}
     } else if(count===3){
       // All three — only show all3 agreement rows (one per engine)
       if(x.agreement!=='all3')return false;
@@ -1866,8 +1866,9 @@ function scoreboardHTML(){
   const all=sbBuildPlays(sbGames||[]);
   if(!all.length)return`<div class="empty-state"><div class="empty-title">No +EV plays yet</div></div>`;
   let plays=all.filter(sbPasses);
-  // Dedup: when 2 engines selected and both rows for same game+mk+side pass, keep one
-  if(sbFilter.source.length===2){
+  // Dedup: when multiple engines selected or agreement filter active, keep one row per game+mk+side
+  const needsDedup=sbFilter.source.length>=2||sbFilter.agreement==='all3'||sbFilter.agreement==='agree2_dis1'||sbFilter.agreement==='agree2_none1'||sbFilter.agreement==='sim+det'||sbFilter.agreement==='model+det'||sbFilter.agreement==='model+sim';
+  if(needsDedup){
     const seen=new Set();
     plays=plays.filter(x=>{const k=`${x.date}|${x.matchup}|${x.mk}|${x.side}`;if(seen.has(k))return false;seen.add(k);return true;});
   }
