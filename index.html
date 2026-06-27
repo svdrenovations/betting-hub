@@ -1930,8 +1930,10 @@ async function loadGames(forceRefresh=false){
     document.getElementById('game-sit-filters').style.display='flex';
     renderGames();
     renderBestPlays();
-    // Update live banners for in-progress games
+    // Update live banners for in-progress games, then every 60s
     setTimeout(updateCardLiveBanners, 1000);
+    if (window._cardBannerInterval) clearInterval(window._cardBannerInterval);
+    window._cardBannerInterval = setInterval(updateCardLiveBanners, 60000);
   }catch(err){
     document.getElementById('games-container').innerHTML=`<div class="empty-state"><div class="empty-title">Could not load games</div><div class="empty-sub">${err.message}</div></div>`;
     document.getElementById('games-subtitle').textContent='Error loading games';
