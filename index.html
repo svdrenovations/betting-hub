@@ -2991,6 +2991,7 @@ async function loadLiveScoreboard() {
   const sub = document.getElementById('sb-subtitle');
   if (!el) return;
   const dateStr = isoDate(currentDate);
+  el.innerHTML = '<div class="loading-wrap"><div class="loading-dots"><span></span><span></span><span></span></div><p style="color:var(--text);font-size:13px;margin-top:1rem">Fetching live scores…</p></div>';
   try {
     const res = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${dateStr}&gameType=R&hydrate=linescore,boxscore,game(content(summary))&language=en`);
     if (!res.ok) throw new Error('MLB API ' + res.status);
@@ -3276,7 +3277,6 @@ function renderPbp(pbp) {
 }
 
 // Stop polling when leaving scoreboard page
-const _origGoPage = goPage;
 
 document.getElementById('date-display').textContent=fmtDate(currentDate);
 // Apply lock state on load — auto-unlocks on devices where password was previously entered
@@ -3304,7 +3304,8 @@ loadBetsFromSupabase().then(()=>{
     if(p==='tracker'){renderTracker();}
     else if(p==='kalshi'){loadKalshiBets().then(()=>renderKalshi());}
     else if(p==='stats'){renderStats();}
-    else if(p==='scoreboard'){sbGames=null;renderScoreboard();}
+    else if(p==='scoreboard'){loadLiveScoreboard();}
+    else if(p==='msd'){sbGames=null;renderScoreboard();}
   } else if(new URLSearchParams(location.search).get('game')){
     openDeepLinkGame();
   } else {
