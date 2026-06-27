@@ -1227,6 +1227,10 @@ function kalshiPanelHTML(g, bets) {
           <span>juice comparison</span><span class="arr">▾</span>
         </button>
         <div class="k-dropdown-content" id="${dropId}">
+          <div style="display:flex;gap:6px;margin-bottom:10px;align-items:center">
+            <span style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-transform:uppercase;letter-spacing:.05em">Kalshi EV by engine:</span>
+            ${['model','sim','det'].map(eng=>`<button id="keng-${gid}-${m.key}-${eng}" onclick="switchKalshiEngine('${gid}','${m.key}','${eng}')" style="padding:3px 9px;font-size:11px;font-family:DM Mono,monospace;border-radius:4px;border:1px solid var(--border);background:${eng==='model'?'var(--s2)':'none'};color:var(--text);cursor:pointer">${eng}</button>`).join('')}
+          </div>
           <div class="juice-grid">
             <div class="juice-card">
               <div class="juice-src">DraftKings</div>
@@ -1253,11 +1257,36 @@ function kalshiPanelHTML(g, bets) {
   }).join('');
 
   // Store play metadata for async fill
+  // Compute sim prob per market using sim run projections
+  const simProbFor=(mk,verdict)=>{
+    const v=(verdict||'').toUpperCase();
+    const sa=parseFloat(g.sim_away_runs),sh=parseFloat(g.sim_home_runs);
+    if(isNaN(sa)||isNaN(sh))return null;
+    const mu=sa-sh,MSD=4.0,TSD=5.5;
+    const ncdfS=x=>{const t=1/(1+0.2316419*Math.abs(x)),d2=0.3989423*Math.exp(-x*x/2),p=d2*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;};
+    if(mk==='ml'){const pA=(1-ncdfS((0.5-mu)/MSD)),pH=ncdfS((-0.5-mu)/MSD),den=(pA+pH)||1;return v.includes('AWAY')?pA/den:pH/den;}
+    if(mk==='rl'){let aRL=parseFloat(g.away_rl),hRL=parseFloat(g.home_rl);if(isNaN(aRL))aRL=mu>0?-1.5:1.5;if(isNaN(hRL))hRL=mu>0?1.5:-1.5;const pA=1-ncdfS((-aRL-mu)/MSD),pH=ncdfS((hRL-mu)/MSD);return v.includes('AWAY')?pA:pH;}
+    if(mk==='total'){const proj=sa+sh,line=parseFloat(g.total_line||g.total);if(isNaN(line))return null;const pO=1/(1+Math.exp(1.7*(line-proj)/TSD));return v.includes('OVER')?pO:1-pO;}
+    return null;
+  };
+  const detProbFor=(mk,verdict)=>{
+    const v=(verdict||'').toUpperCase();
+    const da=parseFloat(g.det_proj_away),dh=parseFloat(g.det_proj_home);
+    if(isNaN(da)||isNaN(dh))return null;
+    const mu=da-dh,MSD=4.0,TSD=5.5;
+    const ncdfD=x=>{const t=1/(1+0.2316419*Math.abs(x)),d2=0.3989423*Math.exp(-x*x/2),p=d2*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;};
+    if(mk==='ml'){const pA=(1-ncdfD((0.5-mu)/MSD)),pH=ncdfD((-0.5-mu)/MSD),den=(pA+pH)||1;return v.includes('AWAY')?pA/den:pH/den;}
+    if(mk==='rl'){let aRL=parseFloat(g.away_rl),hRL=parseFloat(g.home_rl);if(isNaN(aRL))aRL=mu>0?-1.5:1.5;if(isNaN(hRL))hRL=mu>0?1.5:-1.5;const pA=1-ncdfD((-aRL-mu)/MSD),pH=ncdfD((hRL-mu)/MSD);return v.includes('AWAY')?pA:pH;}
+    if(mk==='total'){const proj=da+dh,line=parseFloat(g.total_line||g.total);if(isNaN(line))return null;const pO=1/(1+Math.exp(1.7*(line-proj)/TSD));return v.includes('OVER')?pO:1-pO;}
+    return null;
+  };
   const playsJson = JSON.stringify(activePlays.map(m=>({
     key:m.key, label:m.label, verdict:m.verdict, ev:m.ev,
     dkOdds: dkOdds(m), dkLine: dkLine(m),
     rawAwayRL: m.key==='rl' ? parseFloat(g.away_rl||0) : null,
     p: prob(m),
+    pSim: simProbFor(m.key, m.verdict),
+    pDet: detProbFor(m.key, m.verdict),
     maxC: kalshiMaxCents(prob(m)),
     line: m.key==='total' ? (m.line||g.total_line) : null,
     projTotal: m.key==='total' ? g.proj_total : null
@@ -1675,7 +1704,6 @@ function sbBuildPlays(games){
     return{side,ev:+ev.toFixed(1),odds,strength:ev>=10?'BET':'LEAN'};
   }
   function agreementInfo(ms,ss,ds){
-    // ms/ss/ds = side string or null
     const has={model:ms!=null,sim:ss!=null,det:ds!=null};
     const sides=[ms,ss,ds].filter(s=>s!=null);
     const n=sides.length;
@@ -1683,12 +1711,9 @@ function sbBuildPlays(games){
     if(n===1){const who=has.model?'model':has.sim?'sim':'det';return{tag:'solo',pair:who};}
     if(n===2){
       const names=Object.keys(has).filter(k=>has[k]);
-      const agree=sides[0]===sides[1];
-      return{tag:agree?'agree2_none1':'dis2_none1',pair:names.join('+')};
+      return{tag:sides[0]===sides[1]?'agree2_none1':'dis2_none1',pair:names.join('+')};
     }
-    // all 3
     if(ms===ss&&ss===ds)return{tag:'all3',pair:'model+sim+det'};
-    // find the 2 that agree
     if(ms===ss)return{tag:'agree2_dis1',pair:'model+sim'};
     if(ms===ds)return{tag:'agree2_dis1',pair:'model+det'};
     return{tag:'agree2_dis1',pair:'sim+det'};
@@ -1715,7 +1740,15 @@ function sbBuildPlays(games){
 }
 function sbPasses(x){const f=sbFilter;
   if(f.source){if(f.source==='model'&&x.source!=='model')return false;if(f.source==='sim'&&x.source!=='sim')return false;if(f.source==='det'&&x.source!=='det')return false;}
-  if(f.agreement){if(f.agreement==='all3'&&x.agreement!=='all3')return false;if(f.agreement==='agree2_dis1'&&x.agreement!=='agree2_dis1')return false;if(f.agreement==='agree2_none1'&&x.agreement!=='agree2_none1')return false;if(f.agreement==='solo'&&x.agreement!=='solo')return false;}if(f.result.length&&!f.result.includes(x.result))return false;if(f.market.length&&!f.market.includes(x.mk))return false;if(f.conf.length&&!f.conf.includes((x.confidence||'').toUpperCase()))return false;if(f.ev.length){const e=x.ev;const ok=f.ev.some(b=>b==='neg'?(e!=null&&e<0):b==='z'?(e!=null&&e>=0&&e<2):b==='a'?(e!=null&&e>=2&&e<6):b==='b'?(e!=null&&e>=6&&e<10):b==='c'?(e!=null&&e>=10):false);if(!ok)return false;}if(f.from&&x.date<f.from)return false;if(f.to&&x.date>f.to)return false;return true;}
+  if(f.agreement){
+    if(f.agreement==='all3'&&x.agreement!=='all3')return false;
+    if(f.agreement==='agree2_dis1'&&x.agreement!=='agree2_dis1')return false;
+    if(f.agreement==='agree2_none1'&&x.agreement!=='agree2_none1')return false;
+    if(f.agreement==='solo'&&x.agreement!=='solo')return false;
+    if(f.agreement==='sim+det'&&x.pair!=='sim+det')return false;
+    if(f.agreement==='model+det'&&x.pair!=='model+det')return false;
+    if(f.agreement==='model+sim'&&x.pair!=='model+sim')return false;
+  }if(f.result.length&&!f.result.includes(x.result))return false;if(f.market.length&&!f.market.includes(x.mk))return false;if(f.conf.length&&!f.conf.includes((x.confidence||'').toUpperCase()))return false;if(f.ev.length){const e=x.ev;const ok=f.ev.some(b=>b==='neg'?(e!=null&&e<0):b==='z'?(e!=null&&e>=0&&e<2):b==='a'?(e!=null&&e>=2&&e<6):b==='b'?(e!=null&&e>=6&&e<10):b==='c'?(e!=null&&e>=10):false);if(!ok)return false;}if(f.from&&x.date<f.from)return false;if(f.to&&x.date>f.to)return false;return true;}
 function sbStats(plays){let w=0,l=0,p=0,pend=0,units=0,evs=0,evn=0;for(const x of plays){if(x.result==='win'){w++;units+=x.units;}else if(x.result==='loss'){l++;units+=x.units;}else if(x.result==='push')p++;else pend++;if(x.ev!=null){evs+=x.ev;evn++;}}const dec=w+l,settled=w+l+p;return{w,l,p,pend,units,win:dec?Math.round(100*w/dec):null,roi:settled?(units/settled*100):null,ev:evn?(evs/evn):null,n:plays.length,settled};}
 
 async function renderScoreboard(){
@@ -1770,16 +1803,14 @@ function scoreboardHTML(){
   const anyBtn=(key,l)=>`<button class="filter-btn ${sbFilter[key].length===0?'on':''}" onclick="sbClear('${key}')">${l}</button>`;
   const inp=(which)=>`<input type="date" value="${sbFilter[which]}" onchange="sbDate('${which}',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">`;
   const agreeBtn=(v,l)=>`<button class="filter-btn ${sbFilter.agreement===v?'on':''}" onclick="sbSetAgreement('${v}')">${l}</button>`;
-  const filterBar=`<div class="tracker-filters">`+[['model','Model'],['sim','Sim'],['det','Det']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+[['all3','All 3 agree'],['agree2_dis1','2 agree (1 disagree)'],['agree2_none1','2 agree (1 no play)'],['solo','Solo']].map(([v,l])=>agreeBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('conf','Any conf')+[['HIGH','High'],['MEDIUM','Medium'],['LOW','Low']].map(([v,l])=>tog('conf',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to')}</div>`;
+  const filterBar=`<div class="tracker-filters">`+[['model','Model'],['sim','Sim'],['det','Det']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+[['all3','All 3 agree'],['agree2_dis1','2 agree (1 disagree)'],['agree2_none1','2 agree (1 no play)'],['solo','Solo']].map(([v,l])=>agreeBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+[['sim+det','Sim+Det'],['model+det','Model+Det'],['model+sim','Model+Sim']].map(([v,l])=>agreeBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('conf','Any conf')+[['HIGH','High'],['MEDIUM','Medium'],['LOW','Low']].map(([v,l])=>tog('conf',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to')}</div>`;
   const u=(st.units>=0?'+':'')+st.units.toFixed(2);
   const statBox=(label,big,sub,color)=>`<div style="flex:1;min-width:150px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px"><div style="font-size:11px;color:var(--text);text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:24px;font-weight:700;font-family:DM Mono,monospace;${color?`color:${color}`:''}">${big}</div><div style="font-size:12px;color:var(--text)">${sub}</div></div>`;
   const statsPanel=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px">${statBox('Record',`${st.w}-${st.l}${st.p?`-${st.p}`:''}`,st.win!=null?`${st.win}% win`:'no settled plays')}${statBox('Units · 1u/play',u+'u',st.roi!=null?`${st.roi>=0?'+':''}${st.roi.toFixed(1)}% ROI`:'—',st.units>0?'var(--green)':st.units<0?'var(--red)':'')}${statBox('Plays',String(st.n),`${st.settled} settled · ${st.pend} pending`)}${statBox('Avg EV',st.ev!=null?`+${st.ev.toFixed(1)}%`:'—','at analysis-time line')}</div>`;
   const srcBadge=(s,pair,agreement)=>{
     const base=s==='model'?'<span style="color:var(--text)">model</span>':s==='det'?'<span style="color:var(--purple)">det</span>':'<span style="color:var(--amber)">sim</span>';
-    if((agreement==='agree2_dis1'||agreement==='agree2_none1')&&pair&&pair.includes('+')){
-      return `<span style="font-size:10px;font-family:DM Mono,monospace;color:var(--green)">${pair}</span>`;
-    }
-    if(agreement==='all3')return '<span style="color:var(--green)">all 3</span>';
+    if(agreement==='all3')return '<span style="color:var(--green);font-weight:600">all 3</span>';
+    if((agreement==='agree2_dis1'||agreement==='agree2_none1')&&pair&&pair.includes('+'))return `<span style="font-size:10px;font-family:DM Mono,monospace;color:var(--green)">${pair}</span>`;
     return base;
   };
   const resCell=x=>{const c=x.result==='win'?'var(--green)':x.result==='loss'?'var(--red)':x.result==='push'?'var(--text)':'var(--text)';const t=x.result==='win'?'W':x.result==='loss'?'L':x.result==='push'?'P':'·';return`<span style="color:${c};font-weight:600">${t}</span>`;};
@@ -2528,6 +2559,39 @@ function exportCSV(){
   const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='mlb_bets_'+isoDate(new Date())+'.csv';a.click();
 }
 
+
+// ── KALSHI ENGINE SWITCHER ───────────────────────────────────────────────────
+function switchKalshiEngine(gid, marketKey, engine) {
+  const kdataEl = document.getElementById('kdata-' + gid);
+  if (!kdataEl) return;
+  let plays = [];
+  try { plays = JSON.parse(kdataEl.dataset.plays || '[]'); } catch(e) {}
+  const m = plays.find(p => p.key === marketKey);
+  if (!m) return;
+  // Update button styles
+  ['model','sim','det'].forEach(eng => {
+    const btn = document.getElementById(`keng-${gid}-${marketKey}-${eng}`);
+    if (btn) { btn.style.background = eng === engine ? 'var(--s2)' : 'none'; btn.style.color = eng === engine ? 'var(--green)' : 'var(--text)'; btn.style.borderColor = eng === engine ? 'var(--green-dim)' : 'var(--border)'; }
+  });
+  // Get the right prob for this engine
+  const p = engine === 'sim' ? m.pSim : engine === 'det' ? m.pDet : m.p;
+  if (p == null) {
+    const kevEl = document.getElementById('kev-' + gid + '-' + marketKey);
+    if (kevEl) { kevEl.textContent = 'no ' + engine + ' proj'; kevEl.style.color = 'var(--text)'; }
+    return;
+  }
+  // Read current cents from price display
+  const kpriceEl = document.getElementById('kprice-' + gid + '-' + marketKey);
+  if (!kpriceEl || kpriceEl.textContent === '—') return;
+  const cents = parseFloat(kpriceEl.textContent);
+  if (isNaN(cents)) return;
+  const kev = evFromCents(p, cents);
+  const kevEl = document.getElementById('kev-' + gid + '-' + marketKey);
+  if (kevEl) {
+    kevEl.textContent = kev != null ? (kev >= 0 ? '+' : '') + kev.toFixed(1) + '% EV (' + engine + ')' : '—';
+    kevEl.style.color = kev >= 6 ? 'var(--green)' : kev >= 0 ? 'var(--amber)' : 'var(--red)';
+  }
+}
 
 // ── KALSHI PANEL UPDATER ──────────────────────────────────────────────────────
 // Called after renderGames() because innerHTML scripts don't execute
