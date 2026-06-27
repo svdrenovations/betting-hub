@@ -224,7 +224,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 // Set correct page class before render to avoid flash to games page
 (function(){
   var p=new URLSearchParams(location.search).get('page');
-  var valid=['games','tracker','kalshi','stats','scoreboard'];
+  var valid=['games','tracker','kalshi','stats','msd','scoreboard'];
   if(p&&valid.includes(p)&&p!=='games'){
     document.addEventListener('DOMContentLoaded',function(){
       document.querySelectorAll('.page').forEach(function(el){el.classList.remove('on');});
@@ -244,7 +244,8 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     <a class="nav-tab" href="?page=tracker" onclick="goPage('tracker',this);return false;">Tracker</a>
     <a class="nav-tab" href="?page=kalshi" onclick="goPage('kalshi',this);return false;">Kalshi</a>
     <a class="nav-tab" href="?page=stats" onclick="goPage('stats',this);return false;">Stats</a>
-    <a class="nav-tab" href="?page=scoreboard" onclick="goPage('scoreboard',this);return false;">Model vs Sim vs Det</a>
+    <a class="nav-tab" href="?page=msd" onclick="goPage('msd',this);return false;">Model vs Sim vs Det</a>
+    <a class="nav-tab" href="?page=scoreboard" onclick="goPage('scoreboard',this);return false;">Scoreboard</a>
   </div>
   <div class="nav-record mono" id="nav-record">—</div>
   <div style="display:flex;align-items:center;gap:6px">
@@ -354,7 +355,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 </div>
 
 <!-- SCOREBOARD PAGE -->
-<div class="page" id="page-scoreboard">
+<div class="page" id="page-msd">
 <div class="container">
   <div class="topbar">
     <div class="topbar-left"><h2>Model vs Sim vs Det</h2><p>True W/L of each engine's recommended plays</p></div>
@@ -1872,8 +1873,9 @@ function goPage(name,btn){
   if(btn)btn.classList.add('on');
   if(name==='tracker')renderTracker();
   if(name==='stats')renderStats();
-  if(name==='scoreboard'){sbGames=null;renderScoreboard();}
+  if(name==='msd'){sbGames=null;renderScoreboard();}
   if(name==='kalshi'){loadKalshiBets().then(()=>renderKalshi());}
+  if(name==='scoreboard'){loadLiveScoreboard();}
 }
 
 async function openDeepLinkGame(){
@@ -1928,6 +1930,8 @@ async function loadGames(forceRefresh=false){
     document.getElementById('game-sit-filters').style.display='flex';
     renderGames();
     renderBestPlays();
+    // Update live banners for in-progress games
+    setTimeout(updateCardLiveBanners, 1000);
   }catch(err){
     document.getElementById('games-container').innerHTML=`<div class="empty-state"><div class="empty-title">Could not load games</div><div class="empty-sub">${err.message}</div></div>`;
     document.getElementById('games-subtitle').textContent='Error loading games';
@@ -2155,7 +2159,8 @@ function gameCardHTML(g){
         ${g.ml_away_prob&&g.ml_home_prob?`<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);margin-top:3px">${Math.round(g.ml_away_prob)}% / ${Math.round(g.ml_home_prob)}%</div>`:''}
       </div>
     </div>
-    <div class="card-body">
+    <div id="live-banner-${g.id}" style="display:none"></div>
+  <div class="card-body">
       <div class="sit-flags">${pitcherMarkerHTML(g)}${lineupMarkerHTML(g)}${sitFlagHTML(g.situations,g.fade_reason)}</div>
       ${weatherHTML(g)}
       ${oddsTableHTML(g)}
@@ -2170,6 +2175,7 @@ function gameCardHTML(g){
       <div class="card-actions">
         ${g.analyzed?`<button class="btn-expand" onclick="toggleExpand('${g.id}')">${isExpanded?'− collapse':'+ details'}</button>`:''}
         <button class="btn-expand" onclick="showLiveLines('${g.id}','${g.away_team}','${g.home_team}')">live lines</button>
+        <button class="btn-expand" onclick="openLiveScorecard(${g.gamePk||0})" id="live-score-btn-${g.id}">live score</button>
         ${g.analyzed&&edge!=='skip'&&edge!=='none'&&isUnlocked()?`<button class="btn-log" onclick="openLog('${g.id}')">Log bet +</button>`:''}
       </div>
     </div>
@@ -2539,7 +2545,7 @@ async function settleBets(){
   renderTracker();updateNavRecord();
   if(settled>0){
     alert(`✓ Settled ${settled} bet${settled>1?'s':''} automatically`);
-    if(document.getElementById('page-scoreboard').classList.contains('on')){sbGames=null;renderScoreboard();}
+    if(document.getElementById('page-msd').classList.contains('on')){sbGames=null;renderScoreboard();}
   } else alert('No completed games found yet. Check back after games finish.');
 }
 
@@ -2844,7 +2850,7 @@ function applyLockState() {
   if (games.length) renderGames();
   if (bets.length) { if(document.getElementById('page-tracker').classList.contains('on')) renderTracker(); }
   if (kalshiBets.length) { if(document.getElementById('page-kalshi').classList.contains('on')) renderKalshi(); }
-  if (sbGames) { if(document.getElementById('page-scoreboard').classList.contains('on')) renderScoreboard(); }
+  if (sbGames) { if(document.getElementById('page-msd').classList.contains('on')) renderScoreboard(); }
   // Show/hide settle buttons in nav
   document.querySelectorAll('[onclick="settleBets()"]').forEach(b => b.style.display = unlocked ? '' : 'none');
   document.querySelectorAll('[onclick="triggerAnalysis()"]').forEach(b => b.style.display = unlocked ? '' : 'none');
@@ -2894,6 +2900,384 @@ function requireUnlocked(action) {
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
+// ── GAME CARD LIVE SCORE ─────────────────────────────────────────────────────
+const cardLiveCache = {};
+async function openLiveScorecard(gamePk) {
+  if (!gamePk) return;
+  // Navigate to scoreboard page and expand that game
+  goPage('scoreboard');
+  // Wait for scoreboard to load then expand the game
+  const tryExpand = async (attempts) => {
+    if (attempts <= 0) return;
+    if (!liveScoreboardData.length) { setTimeout(() => tryExpand(attempts-1), 500); return; }
+    const g = liveScoreboardData.find(g => g.gamePk === gamePk);
+    if (g) {
+      expandedGameIds.add(gamePk);
+      renderLiveScoreboard();
+      await loadGameDetail(gamePk);
+      // Scroll to game
+      setTimeout(() => {
+        const el = document.querySelector(`[onclick="toggleLiveGame(${gamePk})"]`);
+        if (el) el.scrollIntoView({behavior:'smooth',block:'center'});
+      }, 100);
+    } else {
+      setTimeout(() => tryExpand(attempts-1), 500);
+    }
+  };
+  setTimeout(() => tryExpand(10), 200);
+}
+
+async function updateCardLiveBanners() {
+  if (!games.length) return;
+  const dateStr = isoDate(currentDate);
+  try {
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${dateStr}&gameType=R&hydrate=linescore`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const livegames = data.dates?.[0]?.games || [];
+    for (const lg of livegames) {
+      const state = lg.status?.abstractGameState;
+      if (state !== 'Live' && state !== 'Final') continue;
+      // Match to our game cards by team name
+      const g = games.find(x => {
+        const awayMatch = (lg.teams?.away?.team?.name||'').includes(x.away_team?.split(' ').pop()||'X');
+        const homeMatch = (lg.teams?.home?.team?.name||'').includes(x.home_team?.split(' ').pop()||'X');
+        return awayMatch && homeMatch;
+      });
+      if (!g) continue;
+      const bannerEl = document.getElementById('live-banner-' + g.id);
+      if (!bannerEl) continue;
+      const ls = lg.linescore || {};
+      const awayScore = lg.teams?.away?.score ?? 0;
+      const homeScore = lg.teams?.home?.score ?? 0;
+      const inningOrd = ls.currentInningOrdinal || '';
+      const half = ls.inningHalf || '';
+      const outs = ls.outs ?? 0;
+      const isFinal = state === 'Final';
+      const on1 = !!(ls.offense?.first);
+      const on2 = !!(ls.offense?.second);
+      const on3 = !!(ls.offense?.third);
+      const halfIcon = half === 'Top' ? '▲' : '▼';
+      const diamond = `<svg width="22" height="18" viewBox="0 0 28 24" style="flex-shrink:0;vertical-align:middle">
+        <rect x="9" y="1" width="8" height="8" rx="1.5" fill="${on2?'#34d399':'none'}" stroke="${on2?'#34d399':'#4a5268'}" stroke-width="1.5" transform="rotate(45 13 5)"/>
+        <rect x="17" y="9" width="8" height="8" rx="1.5" fill="${on1?'#34d399':'none'}" stroke="${on1?'#34d399':'#4a5268'}" stroke-width="1.5" transform="rotate(45 21 13)"/>
+        <rect x="1" y="9" width="8" height="8" rx="1.5" fill="${on3?'#34d399':'none'}" stroke="${on3?'#34d399':'#4a5268'}" stroke-width="1.5" transform="rotate(45 5 13)"/>
+      </svg>`;
+      const gamePk = lg.gamePk;
+      bannerEl.style.display = 'block';
+      bannerEl.innerHTML = `<div style="background:${isFinal?'var(--s2)':'#0a1a10'};border-bottom:1px solid ${isFinal?'var(--border)':'#1a3d2a'};padding:7px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer" onclick="openLiveScorecard(${gamePk})">
+        <div style="display:flex;align-items:center;gap:8px">
+          ${isFinal?'':'<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#34d399"></span>'}
+          <span style="font-size:11px;font-weight:600;color:${isFinal?'var(--text)':'#34d399'};font-family:DM Mono,monospace">${isFinal?'Final':'Live · '+halfIcon+' '+inningOrd+' · '+outs+' out'+(outs!==1?'s':'')}</span>
+          ${isFinal?'':diamond}
+        </div>
+        <div style="font-family:DM Mono,monospace;font-size:14px;font-weight:700">
+          <span style="color:${awayScore>homeScore?'#34d399':'var(--text)'}">${awayScore}</span>
+          <span style="color:var(--dim);margin:0 6px">–</span>
+          <span style="color:${homeScore>awayScore?'#34d399':'var(--text)'}">${homeScore}</span>
+        </div>
+      </div>`;
+    }
+  } catch(e) {}
+}
+
+// ── LIVE SCOREBOARD ───────────────────────────────────────────────────────────
+let liveScoreboardData = [];
+let liveScoreboardInterval = null;
+let expandedGameIds = new Set();
+
+async function loadLiveScoreboard() {
+  const el = document.getElementById('live-scoreboard-container');
+  const sub = document.getElementById('sb-subtitle');
+  if (!el) return;
+  const dateStr = isoDate(currentDate);
+  try {
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${dateStr}&gameType=R&hydrate=linescore,boxscore,game(content(summary))&language=en`);
+    if (!res.ok) throw new Error('MLB API ' + res.status);
+    const data = await res.json();
+    liveScoreboardData = data.dates?.[0]?.games || [];
+    if (sub) sub.textContent = `${liveScoreboardData.length} games · ${dateStr}`;
+    renderLiveScoreboard();
+    // Auto-refresh every 60s if any game is live
+    const hasLive = liveScoreboardData.some(g => g.status?.abstractGameState === 'Live');
+    if (hasLive && !liveScoreboardInterval) {
+      liveScoreboardInterval = setInterval(loadLiveScoreboard, 60000);
+    } else if (!hasLive && liveScoreboardInterval) {
+      clearInterval(liveScoreboardInterval);
+      liveScoreboardInterval = null;
+    }
+  } catch(e) {
+    if (el) el.innerHTML = `<div class="empty-state"><div class="empty-title">Could not load scoreboard</div><div class="empty-sub">${e.message}</div></div>`;
+  }
+}
+
+function renderLiveScoreboard() {
+  const el = document.getElementById('live-scoreboard-container');
+  if (!el || !liveScoreboardData.length) return;
+  el.innerHTML = liveScoreboardData.map(g => liveGameHTML(g)).join('');
+}
+
+function liveGameHTML(g) {
+  const gid = g.gamePk;
+  const state = g.status?.abstractGameState || 'Preview';
+  const detail = g.status?.detailedState || '';
+  const away = g.teams?.away;
+  const home = g.teams?.home;
+  const awayName = away?.team?.name || '?';
+  const homeName = home?.team?.name || '?';
+  const awayScore = away?.score ?? '—';
+  const homeScore = home?.score ?? '—';
+  const ls = g.linescore || {};
+  const inning = ls.currentInning || 0;
+  const inningOrd = ls.currentInningOrdinal || '';
+  const half = ls.inningHalf || '';
+  const outs = ls.outs ?? 0;
+  const isLive = state === 'Live';
+  const isFinal = state === 'Final';
+  const isPreview = state === 'Preview';
+  const awayWin = isFinal && away?.isWinner;
+  const homeWin = isFinal && home?.isWinner;
+  const expanded = expandedGameIds.has(gid);
+
+  // Runners
+  const runners = ls.offense || {};
+  const on1 = !!runners.first;
+  const on2 = !!runners.second;
+  const on3 = !!runners.third;
+
+  // Status badge
+  let statusBadge = '';
+  if (isLive) {
+    const halfIcon = half === 'Top' ? '▲' : '▼';
+    statusBadge = `<span style="color:var(--green);font-family:DM Mono,monospace;font-size:11px;font-weight:600">${halfIcon} ${inningOrd} · ${outs} out${outs!==1?'s':''}</span>`;
+  } else if (isFinal) {
+    statusBadge = `<span style="color:var(--text);font-family:DM Mono,monospace;font-size:11px">Final${inning>9?' ('+inning+')':''}</span>`;
+  } else {
+    const ct = g.gameDate ? new Date(g.gameDate).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/New_York'}) + ' ET' : detail;
+    statusBadge = `<span style="color:var(--text);font-family:DM Mono,monospace;font-size:11px">${ct}</span>`;
+  }
+
+  // Linescore innings
+  let inningRow = '';
+  if ((isLive || isFinal) && ls.innings?.length) {
+    const awayRuns = ls.innings.map(i => i.away?.runs ?? (i.away?.inning ? '—' : '')).join('</td><td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:11px">');
+    const homeRuns = ls.innings.map(i => i.home?.runs ?? (i.home?.inning ? '—' : '')).join('</td><td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:11px">');
+    const inningNums = ls.innings.map(i => i.num).join('</td><td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:10px;color:var(--text)">');
+    const awayH = ls.teams?.away?.hits ?? '';
+    const homeH = ls.teams?.home?.hits ?? '';
+    const awayE = ls.teams?.away?.errors ?? '';
+    const homeE = ls.teams?.home?.errors ?? '';
+    inningRow = `<div style="overflow-x:auto;margin:8px 0">
+      <table style="border-collapse:collapse;min-width:100%">
+        <thead><tr>
+          <td style="padding:3px 8px;font-family:DM Mono,monospace;font-size:10px;color:var(--text);white-space:nowrap"></td>
+          <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:10px;color:var(--text)">${inningNums}</td>
+          <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:10px;color:var(--text);border-left:1px solid var(--border)">R</td>
+          <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:10px;color:var(--text)">H</td>
+          <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:10px;color:var(--text)">E</td>
+        </tr></thead>
+        <tbody>
+          <tr style="border-top:1px solid var(--border)">
+            <td style="padding:3px 8px;font-family:DM Mono,monospace;font-size:11px;white-space:nowrap;color:var(--text)">${awayName.split(' ').pop()}</td>
+            <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:11px">${awayRuns}</td>
+            <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:11px;font-weight:700;color:${awayWin?'var(--green)':'var(--text)'};border-left:1px solid var(--border)">${awayScore}</td>
+            <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:11px;color:var(--text)">${awayH}</td>
+            <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:11px;color:var(--text)">${awayE}</td>
+          </tr>
+          <tr style="border-top:1px solid var(--border)">
+            <td style="padding:3px 8px;font-family:DM Mono,monospace;font-size:11px;white-space:nowrap;color:var(--text)">${homeName.split(' ').pop()}</td>
+            <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:11px">${homeRuns}</td>
+            <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:11px;font-weight:700;color:${homeWin?'var(--green)':'var(--text)'};border-left:1px solid var(--border)">${homeScore}</td>
+            <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:11px;color:var(--text)">${homeH}</td>
+            <td style="padding:3px 8px;text-align:center;font-family:DM Mono,monospace;font-size:11px;color:var(--text)">${homeE}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>`;
+  }
+
+  // Runners diamond
+  const diamond = `<svg width="32" height="28" viewBox="0 0 32 28" style="flex-shrink:0">
+    <rect x="9" y="1" width="8" height="8" rx="1.5" fill="${on2?'var(--green)':'none'}" stroke="${on2?'var(--green)':'var(--dim)'}" stroke-width="1.5" transform="rotate(45 13 5)"/>
+    <rect x="17" y="9" width="8" height="8" rx="1.5" fill="${on1?'var(--green)':'none'}" stroke="${on1?'var(--green)':'var(--dim)'}" stroke-width="1.5" transform="rotate(45 21 13)"/>
+    <rect x="1" y="9" width="8" height="8" rx="1.5" fill="${on3?'var(--green)':'none'}" stroke="${on3?'var(--green)':'var(--dim)'}" stroke-width="1.5" transform="rotate(45 5 13)"/>
+  </svg>`;
+
+  // Pitching line
+  const offense = runners;
+  const pitcher = ls.defense?.pitcher?.fullName || '';
+  const batter = offense?.batter?.fullName || '';
+  const pitcherLine = pitcher ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);margin-top:4px">P: ${pitcher}${batter?' · AB: '+batter:''}</div>` : '';
+
+  // Expanded content: box score + play by play
+  let expandedHTML = '';
+  if (expanded) {
+    expandedHTML = `<div id="expand-${gid}" style="border-top:1px solid var(--border);padding:10px 14px">
+      <div id="boxscore-${gid}"><div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text)">Loading box score…</div></div>
+      <div id="pbp-${gid}" style="margin-top:12px"><div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text)">Loading plays…</div></div>
+    </div>`;
+  }
+
+  return `<div style="background:var(--s1);border:1px solid ${isLive?'var(--green)':'var(--border)'};border-radius:10px;margin-bottom:10px;overflow:hidden">
+    <div style="padding:10px 14px;cursor:pointer;display:flex;align-items:center;justify-content:space-between" onclick="toggleLiveGame(${gid})">
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <div style="font-family:DM Mono,monospace;font-size:13px">
+            <span style="color:${awayWin?'var(--green)':'var(--text)'};font-weight:${awayWin?'700':'400'}">${awayName.split(' ').pop()}</span>
+            <span style="color:${awayWin?'var(--green)':'var(--text)'};font-weight:700;margin:0 4px">${isPreview?'–':awayScore}</span>
+            <span style="color:var(--text);font-size:11px">vs</span>
+            <span style="color:${homeWin?'var(--green)':'var(--text)'};font-weight:700;margin:0 4px">${isPreview?'–':homeScore}</span>
+            <span style="color:${homeWin?'var(--green)':'var(--text)'};font-weight:${homeWin?'700':'400'}">${homeName.split(' ').pop()}</span>
+          </div>
+          ${statusBadge}
+          ${isLive?diamond:''}
+        </div>
+        <div style="font-size:11px;color:var(--text);margin-top:2px">${awayName} @ ${homeName}</div>
+        ${isLive?pitcherLine:''}
+      </div>
+      <span style="font-family:DM Mono,monospace;font-size:12px;color:var(--text)">${expanded?'▲':'▾'}</span>
+    </div>
+    ${inningRow}
+    ${expandedHTML}
+  </div>`;
+}
+
+async function toggleLiveGame(gid) {
+  if (expandedGameIds.has(gid)) {
+    expandedGameIds.delete(gid);
+    renderLiveScoreboard();
+  } else {
+    expandedGameIds.add(gid);
+    renderLiveScoreboard();
+    await loadGameDetail(gid);
+  }
+}
+
+async function loadGameDetail(gid) {
+  const boxEl = document.getElementById('boxscore-' + gid);
+  const pbpEl = document.getElementById('pbp-' + gid);
+  try {
+    const [boxRes, pbpRes] = await Promise.all([
+      fetch(`https://statsapi.mlb.com/api/v1/game/${gid}/boxscore`),
+      fetch(`https://statsapi.mlb.com/api/v1/game/${gid}/playByPlay`)
+    ]);
+    if (boxRes.ok) {
+      const box = await boxRes.json();
+      if (boxEl) boxEl.innerHTML = renderBoxScore(box);
+    }
+    if (pbpRes.ok) {
+      const pbp = await pbpRes.json();
+      if (pbpEl) pbpEl.innerHTML = renderPbp(pbp);
+    }
+  } catch(e) {
+    if (boxEl) boxEl.innerHTML = `<div style="font-size:11px;color:var(--red)">Could not load detail: ${e.message}</div>`;
+  }
+}
+
+function renderBoxScore(box) {
+  const teams = box.teams || {};
+  let html = '';
+  for (const side of ['away','home']) {
+    const t = teams[side];
+    if (!t) continue;
+    const name = t.team?.name || side;
+    const batters = Object.values(t.batters || {}).map(id => t.players?.['ID'+id]).filter(Boolean);
+    const pitchers = Object.values(t.pitchers || {}).map(id => t.players?.['ID'+id]).filter(Boolean);
+    html += `<div style="margin-bottom:14px">
+      <div style="font-size:11px;font-family:DM Mono,monospace;color:var(--green);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">${name}</div>
+      <div style="overflow-x:auto">
+      <table style="border-collapse:collapse;width:100%;min-width:360px">
+        <thead><tr style="border-bottom:1px solid var(--border)">
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left">Batter</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">AB</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">R</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">H</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">RBI</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">BB</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">K</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">AVG</th>
+        </tr></thead>
+        <tbody>${batters.map(p => {
+          const s = p.stats?.batting || {};
+          const ss = p.seasonStats?.batting || {};
+          const pos = p.position?.abbreviation || '';
+          return `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;white-space:nowrap">${p.person?.fullName||''} <span style="color:var(--text)">${pos}</span></td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center">${s.atBats??''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center">${s.runs??''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center;font-weight:${(s.hits||0)>0?'700':'400'}">${s.hits??''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center">${s.rbi??''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center">${s.baseOnBalls??''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center">${s.strikeOuts??''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center;color:var(--text)">${ss.avg||''}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+      <div style="overflow-x:auto;margin-top:8px">
+      <table style="border-collapse:collapse;width:100%;min-width:360px">
+        <thead><tr style="border-bottom:1px solid var(--border)">
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left">Pitcher</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">IP</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">H</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">R</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">ER</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">BB</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">K</th>
+          <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:center">ERA</th>
+        </tr></thead>
+        <tbody>${pitchers.map(p => {
+          const s = p.stats?.pitching || {};
+          const ss = p.seasonStats?.pitching || {};
+          return `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;white-space:nowrap">${p.person?.fullName||''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center">${s.inningsPitched||''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center">${s.hits??''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center">${s.runs??''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center">${s.earnedRuns??''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center">${s.baseOnBalls??''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center">${s.strikeOuts??''}</td>
+            <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;text-align:center;color:var(--text)">${ss.era||''}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>
+    </div>`;
+  }
+  return html || '<div style="font-size:11px;color:var(--text)">No box score data</div>';
+}
+
+function renderPbp(pbp) {
+  const plays = (pbp.allPlays || []).slice().reverse().slice(0, 50);
+  if (!plays.length) return '<div style="font-size:11px;color:var(--text)">No play data yet</div>';
+  const rows = plays.map(p => {
+    const res = p.result || {};
+    const about = p.about || {};
+    const half = about.halfInning === 'top' ? '▲' : '▼';
+    const inning = about.inning || '';
+    const desc = res.description || '';
+    const event = res.event || '';
+    const eventColor = ['Home Run','Double','Triple','Single'].includes(event)?'var(--green)':['Strikeout','Groundout','Flyout','Lineout','Pop Out','Double Play'].includes(event)?'var(--red)':'var(--text)';
+    const count = p.count ? `${p.count.balls}-${p.count.strikes}` : '';
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);white-space:nowrap">${half}${inning}</td>
+      <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;color:${eventColor};white-space:nowrap">${event}</td>
+      <td style="padding:3px 6px;font-size:11px;font-family:DM Mono,monospace;color:var(--text)">${desc}</td>
+    </tr>`;
+  }).join('');
+  return `<div style="font-size:11px;font-family:DM Mono,monospace;color:var(--green);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Play by play (last 50)</div>
+  <div style="overflow-x:auto">
+  <table style="border-collapse:collapse;width:100%">
+    <thead><tr style="border-bottom:1px solid var(--border)">
+      <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left">Inn</th>
+      <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left">Event</th>
+      <th style="padding:3px 6px;font-size:10px;font-family:DM Mono,monospace;color:var(--text);text-align:left">Description</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+// Stop polling when leaving scoreboard page
+const _origGoPage = goPage;
+
 document.getElementById('date-display').textContent=fmtDate(currentDate);
 // Apply lock state on load — auto-unlocks on devices where password was previously entered
 setTimeout(applyLockState, 0);
@@ -2907,7 +3291,7 @@ loadBetsFromSupabase().then(()=>{
   updateNavRecord();
   // Handle ?page= param after bets are loaded so tracker/kalshi have data
   const p=new URLSearchParams(location.search).get('page');
-  if(p&&p!=='games'&&['tracker','kalshi','stats','scoreboard'].includes(p)){
+  if(p&&p!=='games'&&['tracker','kalshi','stats','msd','scoreboard'].includes(p)){
     // Switch page visibility first
     document.querySelectorAll('.page').forEach(el=>el.classList.remove('on'));
     document.querySelectorAll('.nav-tab').forEach(el=>el.classList.remove('on'));
@@ -2928,6 +3312,19 @@ loadBetsFromSupabase().then(()=>{
   }
 });
 </script>
+
+<!-- SCOREBOARD PAGE -->
+<div class="page" id="page-scoreboard">
+<div class="container">
+  <div class="topbar">
+    <div class="topbar-left"><h2>Live scoreboard</h2><p id="sb-subtitle">Today's games</p></div>
+    <button class="btn" onclick="loadLiveScoreboard()">Refresh ↻</button>
+  </div>
+  <div id="live-scoreboard-container">
+    <div class="empty-state"><div class="empty-title">Loading…</div></div>
+  </div>
+</div>
+</div>
 
 <div class="container" style="padding-top:0">
   <div class="disc">For entertainment and educational purposes only. Not financial advice. Always verify lines at your sportsbook. Gamble responsibly.</div>
