@@ -224,7 +224,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 // Set correct page class before render to avoid flash to games page
 (function(){
   var p=new URLSearchParams(location.search).get('page');
-  var valid=['games','tracker','kalshi','stats','msd','scoreboard'];
+  var valid=['games','tracker','kalshi','stats','msd','scoreboard','plus'];
   if(p&&valid.includes(p)&&p!=='games'){
     document.addEventListener('DOMContentLoaded',function(){
       document.querySelectorAll('.page').forEach(function(el){el.classList.remove('on');});
@@ -359,7 +359,10 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 <div class="container">
   <div class="topbar">
     <div class="topbar-left"><h2>Models</h2><p>True W/L of each engine's recommended plays</p></div>
-    <button class="btn" onclick="sbExportCSV()">Export CSV</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn" onclick="settleGameScores(this)">Settle scores →</button>
+      <button class="btn" onclick="sbExportCSV()">Export CSV</button>
+    </div>
   </div>
   <div id="scoreboard-container">
     <div class="empty-state"><div class="empty-title">Loading…</div></div>
@@ -1689,8 +1692,6 @@ function sbSortPlays(plays){
   });
 }
 const SIM_VALID_FROM='2026-06-18';
-const SIM_PLUS_VALID_FROM='2026-06-27';
-const DET_PLUS_VALID_FROM='2026-06-27';
 function sbKey(date,matchup,mk,side,source){return`${date}|${matchup}|${mk}|${side}|${source}`;}
 function sbParsePlay(verdict){if(!verdict)return null;const m=String(verdict).toUpperCase().trim().match(/^(BET|LEAN)\s+(AWAY|HOME|OVER|UNDER)$/);return m?{strength:m[1],side:m[2]}:null;}
 function sbOddsFor(mk,side,g){if(mk==='ml')return parseFloat(side==='AWAY'?g.away_ml:g.home_ml);if(mk==='rl')return parseFloat(side==='AWAY'?g.away_rl_odds:g.home_rl_odds);if(mk==='total')return parseFloat(side==='OVER'?g.over_odds:g.under_odds);return NaN;}
@@ -1719,6 +1720,44 @@ function sbBuildPlays(games){
     if(ev==null||ev<6)return null;
     return{side,ev:+ev.toFixed(1),odds,strength:ev>=10?'BET':'LEAN'};
   }
+  function getAgreement(ms,ss,ds){
+    const sides=[ms,ss,ds].filter(s=>s!=null);
+    const n=sides.length;
+    if(n===0)return{tag:'none',pair:null};
+    if(n===1)return{tag:'solo',pair:null};
+    if(n===3&&ms===ss&&ss===ds)return{tag:'all3',pair:'all3'};
+    if(n===2||n===3){
+      const msOk=ms!=null,ssOk=ss!=null,dsOk=ds!=null;
+      if(msOk&&ssOk&&ms===ss)return{tag:dsOk?'agree2_dis1':'agree2_none1',pair:'model+sim'};
+      if(msOk&&dsOk&&ms===ds)return{tag:ssOk?'agree2_dis1':'agree2_none1',pair:'model+det'};
+      if(ssOk&&dsOk&&ss===ds)return{tag:msOk?'agree2_dis1':'agree2_none1',pair:'sim+det'};
+      return{tag:'agree2_dis1',pair:null};
+    }
+    return{tag:'none',pair:null};
+  }
+  function thirdLabel(source,ms,ss,ds,agreement){
+    if(agreement.tag==='all3')return'';
+    if(agreement.tag==='solo')return'';
+    if(source==='model'){
+      if(ss!=null&&ds!=null&&ss===ds)return ss===ms?'sim+det agree':'sim+det disagree';
+      if(ss!=null)return ss===ms?'sim agrees':'sim disagrees';
+      if(ds!=null)return ds===ms?'det agrees':'det disagrees';
+      return'sim+det no play';
+    }
+    if(source==='sim'){
+      if(ms!=null&&ds!=null&&ms===ds)return ms===ss?'model+det agree':'model+det disagree';
+      if(ms!=null)return ms===ss?'model agrees':'model disagrees';
+      if(ds!=null)return ds===ss?'det agrees':'det disagrees';
+      return'model+det no play';
+    }
+    if(source==='det'){
+      if(ms!=null&&ss!=null&&ms===ss)return ms===ds?'model+sim agree':'model+sim disagree';
+      if(ms!=null)return ms===ds?'model agrees':'model disagrees';
+      if(ss!=null)return ss===ds?'sim agrees':'sim disagrees';
+      return'model+sim no play';
+    }
+    return'';
+  }
   for(const g of games){
     for(const[mk,lbl]of SB_MKTS){
       const mp=sbParsePlay(g[mk+'_verdict']);
@@ -1727,47 +1766,14 @@ function sbBuildPlays(games){
       const sp=simValid?sbParsePlay(g['sim_'+mk+'_verdict']):null;
       const sev=simValid?parseFloat(g['sim_'+mk+'_ev']):NaN;
       const det=detFor(mk,g);
-      const splusValid=g.game_date>=SIM_PLUS_VALID_FROM;
-      const spp=splusValid?sbParsePlay(g['sim_plus_'+mk+'_verdict']):null;
-      const spev=splusValid?parseFloat(g['sim_plus_'+mk+'_ev']):NaN;
-      const dplusValid=g.game_date>=DET_PLUS_VALID_FROM;
-      const dpp=dplusValid&&g['det_plus_proj_away']!=null?{side:(sbParsePlay(g['det_plus_'+mk+'_verdict'])||{}).side,ev:parseFloat(g['det_plus_'+mk+'_ev']),verdict:g['det_plus_'+mk+'_verdict'],odds:sbOddsFor(mk,(sbParsePlay(g['det_plus_'+mk+'_verdict'])||{}).side,g)}:null;
-      // Each engine's side (null = no qualifying play)
       const ms=(mp&&!neg(mev))?mp.side:null;
       const ss=(sp&&!neg(sev))?sp.side:null;
       const ds=det?det.side:null;
-      const sps=(spp&&!neg(spev)&&(sbParsePlay(g['sim_plus_'+mk+'_verdict'])?.side))?sbParsePlay(g['sim_plus_'+mk+'_verdict']).side:null;
-      const dps=dpp&&dpp.side&&!neg(dpp.ev)?dpp.side:null;
-      // Emit sim+ row
-      if(sps){const odds=sbOddsFor(mk,sps,g);const result=sbGrade(mk,sps,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;out.push({date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,agreement:'solo',pair:null,source:'sim+',side:sps,strength:spev>=10?'BET':'LEAN',ev:(spev==null||isNaN(spev))?null:spev,odds,line:sbLineLabel(mk,sps,g),result,units,mStatus:'none',sStatus:'none',dStatus:'none',confidence:(g.confidence||'').toUpperCase(),final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''});}
-      // Emit det+ row
-      if(dps){const odds=dpp.odds||sbOddsFor(mk,dps,g);const result=sbGrade(mk,dps,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;out.push({date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,agreement:'solo',pair:null,source:'det+',side:dps,strength:dpp.ev>=10?'BET':'LEAN',ev:(dpp.ev==null||isNaN(dpp.ev))?null:dpp.ev,odds,line:sbLineLabel(mk,dps,g),result,units,mStatus:'none',sStatus:'none',dStatus:'none',confidence:(g.confidence||'').toUpperCase(),final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''});}
-      // Only emit a row if at least one engine has a play
-      if(!ms&&!ss&&!ds)continue;
-      // Determine the "primary" side and source for this row
-      // Priority: if any two agree, use that side; else use first engine that has a play
-      let primarySide=null,primarySource=null,primaryEv=null,primaryOdds=null,primaryStrength=null;
-      if(ms&&ss&&ms===ss){primarySide=ms;primarySource=ms===ds?'all3':'model+sim';primaryEv=(mev==null||isNaN(mev))?null:mev;primaryOdds=sbOddsFor(mk,ms,g);primaryStrength=mp.strength;}
-      else if(ms&&ds&&ms===ds){primarySide=ms;primarySource='model+det';primaryEv=(mev==null||isNaN(mev))?null:mev;primaryOdds=sbOddsFor(mk,ms,g);primaryStrength=mp.strength;}
-      else if(ss&&ds&&ss===ds){primarySide=ss;primarySource='sim+det';primaryEv=det.ev;primaryOdds=sbOddsFor(mk,ss,g);primaryStrength=det.strength;}
-      else if(ms){primarySide=ms;primarySource='model';primaryEv=(mev==null||isNaN(mev))?null:mev;primaryOdds=sbOddsFor(mk,ms,g);primaryStrength=mp.strength;}
-      else if(ss){primarySide=ss;primarySource='sim';primaryEv=(sev==null||isNaN(sev))?null:sev;primaryOdds=sbOddsFor(mk,ss,g);primaryStrength=sp.strength;}
-      else{primarySide=ds;primarySource='det';primaryEv=det.ev;primaryOdds=det.odds;primaryStrength=det.strength;}
-      // Engine status for each engine relative to primarySide
-      const mStatus=ms==null?'none':ms===primarySide?'agree':'disagree';
-      const sStatus=ss==null?'none':ss===primarySide?'agree':'disagree';
-      const dStatus=ds==null?'none':ds===primarySide?'agree':'disagree';
-      const result=sbGrade(mk,primarySide,g);
-      const units=result==='win'?sbProfit(primaryOdds):result==='loss'?-1:0;
-      out.push({
-        date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,
-        source:primarySource,side:primarySide,strength:primaryStrength,
-        ev:primaryEv,odds:primaryOdds,line:sbLineLabel(mk,primarySide,g),
-        result,units,mStatus,sStatus,dStatus,
-        confidence:(g.confidence||'').toUpperCase(),
-        final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',
-        actualTotal:g.actual_total??''
-      });
+      const agreement=getAgreement(ms,ss,ds);
+      const base={date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,agreement:agreement.tag,pair:agreement.pair,confidence:(g.confidence||'').toUpperCase(),final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''};
+      if(ms){const odds=sbOddsFor(mk,ms,g);const result=sbGrade(mk,ms,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;const third=thirdLabel('model',ms,ss,ds,agreement);out.push({...base,source:'model',side:ms,strength:mp.strength,ev:(mev==null||isNaN(mev))?null:mev,odds,line:sbLineLabel(mk,ms,g),result,units,disagreed:!!(ss&&ss!==ms)||!!(ds&&ds!==ms),third});}
+      if(ss){const odds=sbOddsFor(mk,ss,g);const result=sbGrade(mk,ss,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;const third=thirdLabel('sim',ms,ss,ds,agreement);out.push({...base,source:'sim',side:ss,strength:sp.strength,ev:(sev==null||isNaN(sev))?null:sev,odds,line:sbLineLabel(mk,ss,g),result,units,disagreed:!!(ms&&ms!==ss)||!!(ds&&ds!==ss),third});}
+      if(det){const result=sbGrade(mk,ds,g);const units=result==='win'?sbProfit(det.odds):result==='loss'?-1:0;const third=thirdLabel('det',ms,ss,ds,agreement);out.push({...base,source:'det',side:ds,strength:det.strength,ev:det.ev,odds:det.odds,line:sbLineLabel(mk,ds,g),result,units,disagreed:!!(ms&&ms!==ds)||!!(ss&&ss!==ds),third});}
     }
   }
   return out.filter(x=>!(sbExcluded&&sbExcluded.has(sbKey(x.date,x.matchup,x.mk,x.side,x.source))));
@@ -1779,21 +1785,16 @@ function sbPasses(x){const f=sbFilter;
     const hasSim=f.source.includes('sim');
     const hasDet=f.source.includes('det');
     const count=f.source.length;
-    const hasSimPlus=f.source.includes('sim+');
-    const hasDetPlus=f.source.includes('det+');
     if(count===1){
       if(hasMod&&!x.source.includes('model')&&x.source!=='all3')return false;
       if(hasSim&&x.source!=='sim'&&x.source!=='all3'&&!x.source.includes('sim+'))return false;
       if(hasDet&&x.source!=='det'&&x.source!=='all3'&&!x.source.includes('det+'))return false;
-      if(hasSimPlus&&x.source!=='sim+')return false;
-      if(hasDetPlus&&x.source!=='det+')return false;
     } else if(count===2){
-      // Two engines — show rows where both those engines agreed
       if(hasSim&&hasDet&&x.source!=='sim+det'&&x.source!=='all3')return false;
       if(hasMod&&hasDet&&x.source!=='model+det'&&x.source!=='all3')return false;
       if(hasMod&&hasSim&&x.source!=='model+sim'&&x.source!=='all3')return false;
     } else if(count===3){
-      if(x.source!=='all3')return false;
+      if(x.agreement!=='all3')return false;
     }
   }
   if(f.result.length&&!f.result.includes(x.result))return false;
@@ -1805,6 +1806,70 @@ function sbPasses(x){const f=sbFilter;
   return true;
 }
 function sbStats(plays){let w=0,l=0,p=0,pend=0,units=0,evs=0,evn=0;for(const x of plays){if(x.result==='win'){w++;units+=x.units;}else if(x.result==='loss'){l++;units+=x.units;}else if(x.result==='push')p++;else pend++;if(x.ev!=null){evs+=x.ev;evn++;}}const dec=w+l,settled=w+l+p;return{w,l,p,pend,units,win:dec?Math.round(100*w/dec):null,roi:settled?(units/settled*100):null,ev:evn?(evs/evn):null,n:plays.length,settled};}
+
+async function settleGameScores(btn) {
+  if (!requireUnlocked()) return;
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Settling…'; }
+  // Get today's date from current scoreboard filter or use today
+  const dateStr = sbFilter.from || isoDate(currentDate);
+  let settled = 0, errors = 0;
+  try {
+    // Fetch final scores from MLB Stats API
+    const res = await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${dateStr}&gameType=R&hydrate=linescore`);
+    if (!res.ok) throw new Error('MLB API ' + res.status);
+    const data = await res.json();
+    const mlbGames = data.dates?.[0]?.games || [];
+    // Get our games for this date from Supabase
+    const sbRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${dateStr}&select=id,away_team,home_team,away_final,home_final`, {
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!sbRes.ok) throw new Error('Supabase ' + sbRes.status);
+    const sbGamesLocal = await sbRes.json();
+    for (const sg of sbGamesLocal) {
+      // Skip already settled
+      if (sg.away_final != null && sg.home_final != null) continue;
+      // Match to MLB game
+      const awayLast = (sg.away_team || '').split(' ').pop();
+      const homeLast = (sg.home_team || '').split(' ').pop();
+      const mlbGame = mlbGames.find(g => {
+        const at = g.teams?.away?.team?.name || '';
+        const ht = g.teams?.home?.team?.name || '';
+        return (at.includes(awayLast) || awayLast.includes(at.split(' ').pop())) &&
+               (ht.includes(homeLast) || homeLast.includes(ht.split(' ').pop()));
+      });
+      if (!mlbGame) continue;
+      if (mlbGame.status?.abstractGameState !== 'Final') continue;
+      const awayScore = mlbGame.teams?.away?.score;
+      const homeScore = mlbGame.teams?.home?.score;
+      if (awayScore == null || homeScore == null) continue;
+      const actualTotal = awayScore + homeScore;
+      // Write to Supabase
+      const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?id=eq.${sg.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, Prefer: 'return=minimal' },
+        body: JSON.stringify({ away_final: awayScore, home_final: homeScore, actual_total: actualTotal })
+      });
+      if (patchRes.ok) {
+        settled++;
+        console.log(`Settled: ${sg.away_team} ${awayScore} - ${sg.home_team} ${homeScore}`);
+      } else errors++;
+    }
+  } catch(e) {
+    alert('Settle error: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
+  if (settled > 0) {
+    alert(`✓ Settled ${settled} game${settled > 1 ? 's' : ''}`);
+    sbGames = null;
+    renderScoreboard();
+  } else if (errors > 0) {
+    alert(`Could not settle ${errors} game(s). Check console.`);
+  } else {
+    alert('No new completed games found to settle.');
+  }
+}
 
 async function renderScoreboard(){
   const el=document.getElementById('scoreboard-container');
@@ -1857,11 +1922,11 @@ function scoreboardHTML(){
   const tog=(key,v,l)=>`<button class="filter-btn ${sbFilter[key].includes(v)?'on':''}" onclick="sbToggle('${key}','${v}')">${l}</button>`;
   const anyBtn=(key,l)=>`<button class="filter-btn ${sbFilter[key].length===0?'on':''}" onclick="sbClear('${key}')">${l}</button>`;
   const inp=(which)=>`<input type="date" value="${sbFilter[which]}" onchange="sbDate('${which}',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">`;
-  const filterBar=`<div class="tracker-filters">`+[['model','Model'],['sim','Sim'],['det','Det'],['sim+','Sim+'],['det+','Det+']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('conf','Any conf')+[['HIGH','High'],['MEDIUM','Medium'],['LOW','Low']].map(([v,l])=>tog('conf',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10–14.9%'],['d','15–19.9%'],['e','20–24.9%'],['f','25%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to')}</div>`;
+  const filterBar=`<div class="tracker-filters">`+[['model','Model'],['sim','Sim'],['det','Det']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('conf','Any conf')+[['HIGH','High'],['MEDIUM','Medium'],['LOW','Low']].map(([v,l])=>tog('conf',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10–14.9%'],['d','15–19.9%'],['e','20–24.9%'],['f','25%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to')}</div>`;
   const u=(st.units>=0?'+':'')+st.units.toFixed(2);
   const statBox=(label,big,sub,color)=>`<div style="flex:1;min-width:150px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px"><div style="font-size:11px;color:var(--text);text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:24px;font-weight:700;font-family:DM Mono,monospace;${color?`color:${color}`:''}">${big}</div><div style="font-size:12px;color:var(--text)">${sub}</div></div>`;
   const statsPanel=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px">${statBox('Record',`${st.w}-${st.l}${st.p?`-${st.p}`:''}`,st.win!=null?`${st.win}% win`:'no settled plays')}${statBox('Units · 1u/play',u+'u',st.roi!=null?`${st.roi>=0?'+':''}${st.roi.toFixed(1)}% ROI`:'—',st.units>0?'var(--green)':st.units<0?'var(--red)':'')}${statBox('Plays',String(st.n),`${st.settled} settled · ${st.pend} pending`)}${statBox('Avg EV',st.ev!=null?`+${st.ev.toFixed(1)}%`:'—','at analysis-time line')}</div>`;
-  const srcColor=s=>s==='model'?'var(--text)':s==='det'?'var(--purple)':s==='sim'?'var(--amber)':s==='sim+'?'#5eead4':s==='det+'?'#c084fc':'var(--green)';
+  const srcColor=s=>s==='model'?'var(--text)':s==='det'?'var(--purple)':s==='sim'?'var(--amber)':'var(--green)';
   const srcBadge=(s)=>{
     const color=srcColor(s);
     return`<span style="color:${color};font-family:DM Mono,monospace;font-size:11px">${s}</span>`;
@@ -1892,6 +1957,7 @@ function goPage(name,btn){
   if(name==='msd'){sbGames=null;renderScoreboard();}
   if(name==='kalshi'){loadKalshiBets().then(()=>renderKalshi());}
   if(name==='scoreboard'){loadLiveScoreboard();}
+  if(name==='plus'){plusGames=null;renderPlus();}
 }
 
 async function openDeepLinkGame(){
@@ -2920,6 +2986,150 @@ function requireUnlocked(action) {
 }
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
+// ── PLUS PAGE ─────────────────────────────────────────────────────────────────
+let plusGames=null,plusExcluded=null;
+let plusFilter={source:[],result:[],market:[],ev:[],conf:[],from:'',to:''};
+let plusSort={col:'date',dir:'desc'};
+const PLUS_VALID_FROM='2026-06-27';
+const PLUS_MKTS=[['ml','ML'],['rl','RL'],['total','Total']];
+
+function plusKey(date,matchup,mk,side,source){return`${date}|${matchup}|${mk}|${side}|${source}`;}
+function plusParsePlay(verdict){if(!verdict||verdict==='SKIP')return null;const m=String(verdict).toUpperCase().trim().match(/^(BET|LEAN)\s+(AWAY|HOME|OVER|UNDER)$/);return m?{strength:m[1],side:m[2]}:null;}
+function plusOddsFor(mk,side,g){if(mk==='ml')return parseFloat(side==='AWAY'?g.away_ml:g.home_ml);if(mk==='rl')return parseFloat(side==='AWAY'?g.away_rl_odds:g.home_rl_odds);if(mk==='total')return parseFloat(side==='OVER'?g.over_odds:g.under_odds);return NaN;}
+function plusProfit(odds){if(isNaN(odds))return 0;return odds>0?odds/100:100/Math.abs(odds);}
+function plusRLLine(side,g){let ln=parseFloat(side==='AWAY'?g.away_rl:g.home_rl);if(!isNaN(ln))return ln;return side==='AWAY'?-1.5:1.5;}
+function plusTotalLine(g){if(g.total_line!=null&&g.total_line!=='')return parseFloat(g.total_line);return NaN;}
+function plusGrade(mk,side,g){const a=g.away_final,h=g.home_final,tot=g.actual_total;if(a==null||h==null||tot==null)return'pending';if(mk==='ml')return side==='AWAY'?(a>h?'win':'loss'):(h>a?'win':'loss');if(mk==='rl'){const ln=plusRLLine(side,g);const margin=side==='AWAY'?(a-h):(h-a);return(margin+ln)>0?'win':'loss';}if(mk==='total'){const line=plusTotalLine(g);if(isNaN(line))return'pending';if(tot===line)return'push';return side==='OVER'?(tot>line?'win':'loss'):(tot<line?'win':'loss');}return'pending';}
+function plusLineLabel(mk,side,g){const odds=plusOddsFor(mk,side,g);const o=isNaN(odds)?'?':(odds>0?'+'+odds:String(odds));if(mk==='ml')return o;if(mk==='rl'){const ln=plusRLLine(side,g);return`${ln>0?'+':''}${ln} ${o}`;}return`${side==='OVER'?'O':'U'}${(()=>{const t=plusTotalLine(g);return isNaN(t)?'?':t;})()} ${o}`;}
+
+function plusBuildPlays(games){
+  const out=[];
+  const neg=e=>(e!=null&&!isNaN(e)&&e<0);
+  for(const g of games){
+    if(g.game_date<PLUS_VALID_FROM)continue;
+    for(const[mk,lbl]of PLUS_MKTS){
+      const spp=plusParsePlay(g['sim_plus_'+mk+'_verdict']);
+      const spev=parseFloat(g['sim_plus_'+mk+'_ev']);
+      if(spp&&!neg(spev)){
+        const side=spp.side,odds=plusOddsFor(mk,side,g),result=plusGrade(mk,side,g),units=result==='win'?plusProfit(odds):result==='loss'?-1:0;
+        out.push({date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,source:'sim+',side,strength:spp.strength,ev:(spev==null||isNaN(spev))?null:spev,odds,line:plusLineLabel(mk,side,g),result,units,final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''});
+      }
+      const dpp=plusParsePlay(g['det_plus_'+mk+'_verdict']);
+      const dpev=parseFloat(g['det_plus_'+mk+'_ev']);
+      if(dpp&&!neg(dpev)){
+        const side=dpp.side,odds=plusOddsFor(mk,side,g),result=plusGrade(mk,side,g),units=result==='win'?plusProfit(odds):result==='loss'?-1:0;
+        out.push({date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,source:'det+',side,strength:dpp.strength,ev:(dpev==null||isNaN(dpev))?null:dpev,odds,line:plusLineLabel(mk,side,g),result,units,final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''});
+      }
+    }
+  }
+  return out.filter(x=>!(plusExcluded&&plusExcluded.has(plusKey(x.date,x.matchup,x.mk,x.side,x.source))));
+}
+
+function plusPasses(x){const f=plusFilter;
+  if(f.source.length){if(f.source.length===1){if(f.source[0]==='sim+'&&x.source!=='sim+')return false;if(f.source[0]==='det+'&&x.source!=='det+')return false;}}
+  if(f.result.length&&!f.result.includes(x.result))return false;
+  if(f.market.length&&!f.market.includes(x.mk))return false;
+  if(f.ev.length){const e=x.ev;const ok=f.ev.some(b=>b==='z'?(e!=null&&e>=0&&e<2):b==='a'?(e!=null&&e>=2&&e<6):b==='b'?(e!=null&&e>=6&&e<10):b==='c'?(e!=null&&e>=10&&e<15):b==='d'?(e!=null&&e>=15&&e<20):b==='e'?(e!=null&&e>=20&&e<25):b==='f'?(e!=null&&e>=25):false);if(!ok)return false;}
+  if(f.from&&x.date<f.from)return false;
+  if(f.to&&x.date>f.to)return false;
+  return true;
+}
+
+function plusStats(plays){let w=0,l=0,p=0,pend=0,units=0,evs=0,evn=0;for(const x of plays){if(x.result==='win'){w++;units+=x.units;}else if(x.result==='loss'){l++;units+=x.units;}else if(x.result==='push')p++;else pend++;if(x.ev!=null){evs+=x.ev;evn++;}}const dec=w+l,settled=w+l+p;return{w,l,p,pend,units,win:dec?Math.round(100*w/dec):null,roi:settled?(units/settled*100):null,ev:evn?(evs/evn):null,n:plays.length,settled};}
+
+function plusSetSource(v){const i=plusFilter.source.indexOf(v);if(i>=0)plusFilter.source.splice(i,1);else plusFilter.source.push(v);renderPlus();}
+function plusToggle(key,v){const a=plusFilter[key];const i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);renderPlus();}
+function plusClear(key){plusFilter[key]=[];renderPlus();}
+function plusDate(which,v){plusFilter[which]=v;renderPlus();}
+function plusSetSort(col){if(plusSort.col===col)plusSort.dir=plusSort.dir==='asc'?'desc':'asc';else{plusSort.col=col;plusSort.dir='desc';}renderPlus();}
+function plusSortPlays(plays){const{col,dir}=plusSort,s=dir==='asc'?1:-1;return plays.slice().sort((a,b)=>{let va,vb;if(col==='date'){va=a.date;vb=b.date;}else if(col==='ev'){va=a.ev??-999;vb=b.ev??-999;}else if(col==='units'){va=a.result==='pending'?null:a.units;vb=b.result==='pending'?null:b.units;}else if(col==='result'){va={win:1,loss:2,push:3,pending:4}[a.result]??5;vb={win:1,loss:2,push:3,pending:4}[b.result]??5;}else{va=a[col];vb=b[col];}if(va==null&&vb==null)return 0;if(va==null)return 1;if(vb==null)return-1;if(va<vb)return-1*s;if(va>vb)return 1*s;return 0;});}
+
+async function plusDeletePlay(keyEnc,labelEnc){
+  if(!requireUnlocked())return;
+  const key=decodeURIComponent(keyEnc),label=decodeURIComponent(labelEnc);
+  if(!confirm(`Remove?\n\n${label}`))return;
+  const[game_date,matchup,market,side,source]=key.split('|');
+  try{const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_excluded_plays`,{method:'POST',headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`,'Content-Type':'application/json','Prefer':'return=minimal'},body:JSON.stringify({game_date,matchup,market,side,source})});if(!res.ok)throw new Error('Supabase '+res.status);if(plusExcluded)plusExcluded.add(key);renderPlus();}
+  catch(e){alert('Error: '+e.message);}
+}
+
+function plusExportCSV(){
+  const plays=plusBuildPlays(plusGames||[]).filter(plusPasses);
+  if(!plays.length){alert('No plays.');return;}
+  const cols=[['date',x=>x.date],['matchup',x=>x.matchup],['source',x=>x.source],['market',x=>x.lbl],['side',x=>x.side.toLowerCase()],['line',x=>x.line],['odds',x=>isNaN(x.odds)?'':x.odds],['ev_pct',x=>x.ev!=null?x.ev:''],['result',x=>x.result],['units',x=>x.result==='pending'?'':x.units.toFixed(2)],['final_score',x=>x.final],['actual_total',x=>x.actualTotal]];
+  const esc=v=>`"${(v==null?'':v).toString().replace(/"/g,'""')}"`;
+  const csv=[cols.map(c=>c[0]).join(','),...plays.map(x=>cols.map(c=>esc(c[1](x))).join(','))].join('\n');
+  const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='plus_plays_'+isoDate(new Date())+'.csv';a.click();
+}
+
+async function plusSettleScores(btn){
+  if(!requireUnlocked())return;
+  const origText=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='Settling…';}
+  const dateStr=plusFilter.from||isoDate(currentDate);
+  let settled=0;
+  try{
+    const res=await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${dateStr}&gameType=R&hydrate=linescore`);
+    if(!res.ok)throw new Error('MLB API '+res.status);
+    const data=await res.json();
+    const mlbGames=data.dates?.[0]?.games||[];
+    const sbRes=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${dateStr}&select=id,away_team,home_team,away_final,home_final`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
+    if(!sbRes.ok)throw new Error('Supabase '+sbRes.status);
+    const sbGamesLocal=await sbRes.json();
+    for(const sg of sbGamesLocal){
+      if(sg.away_final!=null&&sg.home_final!=null)continue;
+      const awayLast=(sg.away_team||'').split(' ').pop(),homeLast=(sg.home_team||'').split(' ').pop();
+      const mlbGame=mlbGames.find(g=>{const at=g.teams?.away?.team?.name||'',ht=g.teams?.home?.team?.name||'';return(at.includes(awayLast)||awayLast.includes(at.split(' ').pop()))&&(ht.includes(homeLast)||homeLast.includes(ht.split(' ').pop()));});
+      if(!mlbGame||mlbGame.status?.abstractGameState!=='Final')continue;
+      const awayScore=mlbGame.teams?.away?.score,homeScore=mlbGame.teams?.home?.score;
+      if(awayScore==null||homeScore==null)continue;
+      const patchRes=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?id=eq.${sg.id}`,{method:'PATCH',headers:{'Content-Type':'application/json',apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`,'Prefer':'return=minimal'},body:JSON.stringify({away_final:awayScore,home_final:homeScore,actual_total:awayScore+homeScore})});
+      if(patchRes.ok)settled++;
+    }
+  }catch(e){alert('Error: '+e.message);}
+  finally{if(btn){btn.disabled=false;btn.textContent=origText;}}
+  if(settled>0){alert(`✓ Settled ${settled} game${settled>1?'s':''}`);plusGames=null;renderPlus();}
+  else alert('No new completed games found.');
+}
+
+async function renderPlus(){
+  const el=document.getElementById('plus-container');
+  if(!el)return;
+  if(plusGames===null){
+    el.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
+    try{
+      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,sim_plus_ml_verdict,sim_plus_ml_ev,sim_plus_rl_verdict,sim_plus_rl_ev,sim_plus_total_verdict,sim_plus_total_ev,det_plus_ml_verdict,det_plus_ml_ev,det_plus_rl_verdict,det_plus_rl_ev,det_plus_total_verdict,det_plus_total_ev';
+      const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?analyzed=eq.true&select=${cols}&order=game_date.desc&limit=2000`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
+      if(!res.ok)throw new Error('Supabase '+res.status);
+      plusGames=await res.json();
+    }catch(e){el.innerHTML=`<div class="empty-state"><div class="empty-title">Could not load</div><div class="empty-sub">${e.message}</div></div>`;return;}
+  }
+  if(plusExcluded===null){
+    try{const r=await fetch(`${SUPABASE_URL}/rest/v1/mlb_excluded_plays?select=game_date,matchup,market,side,source`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});plusExcluded=new Set((r.ok?await r.json():[]).map(e=>plusKey(e.game_date,e.matchup,e.market,e.side,e.source)));}
+    catch(e){plusExcluded=new Set();}
+  }
+  const all=plusBuildPlays(plusGames);
+  if(!all.length){el.innerHTML='<div class="empty-state"><div class="empty-title">No Plus plays yet</div><div class="empty-sub">Upload the new analyze.js and re-run analysis to populate Sim+ and Det+ data.</div></div>';return;}
+  const plays=all.filter(plusPasses);
+  const st=plusStats(plays);
+  const srcBtn=(v,l)=>`<button class="filter-btn ${plusFilter.source.includes(v)?'on':''}" onclick="plusSetSource('${v}')">${l}</button>`;
+  const tog=(key,v,l)=>`<button class="filter-btn ${plusFilter[key].includes(v)?'on':''}" onclick="plusToggle('${key}','${v}')">${l}</button>`;
+  const anyBtn=(key,l)=>`<button class="filter-btn ${plusFilter[key].length===0?'on':''}" onclick="plusClear('${key}')">${l}</button>`;
+  const inp=(which)=>`<input type="date" value="${plusFilter[which]}" onchange="plusDate('${which}',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">`;
+  const filterBar=`<div class="tracker-filters">`+[['sim+','Sim+'],['det+','Det+']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10–14.9%'],['d','15–19.9%'],['e','20–24.9%'],['f','25%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to')}</div>`;
+  const u=(st.units>=0?'+':'')+st.units.toFixed(2);
+  const statBox=(label,big,sub,color)=>`<div style="flex:1;min-width:150px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px"><div style="font-size:11px;color:var(--text);text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:24px;font-weight:700;font-family:DM Mono,monospace;${color?`color:${color}`:''}">${big}</div><div style="font-size:12px;color:var(--text)">${sub}</div></div>`;
+  const statsPanel=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px">${statBox('Record',`${st.w}-${st.l}${st.p?`-${st.p}`:''}`,st.win!=null?`${st.win}% win`:'no settled plays')}${statBox('Units · 1u/play',u+'u',st.roi!=null?`${st.roi>=0?'+':''}${st.roi.toFixed(1)}% ROI`:'—',st.units>0?'var(--green)':st.units<0?'var(--red)':'')}${statBox('Plays',String(st.n),`${st.settled} settled · ${st.pend} pending`)}${statBox('Avg EV',st.ev!=null?`+${st.ev.toFixed(1)}%`:'—','at analysis-time line')}</div>`;
+  const srcColor=s=>s==='sim+'?'#5eead4':'#c084fc';
+  const resCell=x=>{const c=x.result==='win'?'var(--green)':x.result==='loss'?'var(--red)':'var(--text)';const t=x.result==='win'?'W':x.result==='loss'?'L':x.result==='push'?'P':'·';return`<span style="color:${c};font-weight:600">${t}</span>`;};
+  const uCell=x=>{if(x.result==='pending')return'<span style="color:var(--text)">—</span>';const c=x.units>0?'var(--green)':x.units<0?'var(--red)':'var(--text)';return`<span class="mono" style="color:${c}">${x.units>0?'+':''}${x.units.toFixed(2)}</span>`;};
+  const thP=(col,lbl)=>{const active=plusSort.col===col;return`<th onclick="plusSetSort('${col}')" style="${active?'color:var(--green)':''}cursor:pointer;user-select:none">${lbl}${active?(plusSort.dir==='asc'?' ▲':' ▼'):''}</th>`;};
+  const sorted=plusSortPlays(plays);
+  const rows=sorted.map(x=>`<tr><td class="mono" style="font-size:11px">${x.date}</td><td style="font-size:12px">${x.matchup}</td><td style="font-size:11px;font-family:DM Mono,monospace;color:${srcColor(x.source)}">${x.source}</td><td style="font-size:11px">${x.lbl}</td><td class="mono" style="font-size:11px">${x.side.toLowerCase()}</td><td class="mono" style="font-size:11px">${x.line}</td><td class="mono" style="font-size:11px;color:var(--amber)">${x.ev!=null?`+${x.ev.toFixed(1)}%`:'—'}</td><td>${resCell(x)}</td><td>${uCell(x)}</td><td style="text-align:center">${isUnlocked()?`<button onclick="plusDeletePlay('${encodeURIComponent(plusKey(x.date,x.matchup,x.mk,x.side,x.source))}','${encodeURIComponent(x.date+' · '+x.matchup+' · '+x.source+' '+x.lbl+' '+x.side.toLowerCase())}')" style="background:none;border:1px solid var(--border);color:var(--text);border-radius:5px;cursor:pointer;font-size:11px;line-height:1;padding:3px 7px">✕</button>`:''}</td></tr>`).join('');
+  const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr>${thP('date','Date')}${thP('matchup','Matchup')}${thP('source','Source')}${thP('market','Mkt')}${thP('side','Side')}${thP('line','Line')}${thP('ev','EV')}${thP('result','Res')}${thP('units','Units')}<th></th></tr></thead><tbody>${rows||`<tr><td colspan="10" style="color:var(--text);padding:18px;text-align:center">No plays match these filters.</td></tr>`}</tbody></table></div>`;
+  el.innerHTML=filterBar+statsPanel+table;
+}
+
 // ── GAME CARD LIVE SCORE ─────────────────────────────────────────────────────
 const cardLiveCache = {};
 async function openLiveScorecard(gamePk) {
@@ -3311,7 +3521,7 @@ loadBetsFromSupabase().then(()=>{
   updateNavRecord();
   // Handle ?page= param after bets are loaded so tracker/kalshi have data
   const p=new URLSearchParams(location.search).get('page');
-  if(p&&p!=='games'&&['tracker','kalshi','stats','msd','scoreboard'].includes(p)){
+  if(p&&p!=='games'&&['tracker','kalshi','stats','msd','scoreboard','plus'].includes(p)){
     // Switch page visibility first
     document.querySelectorAll('.page').forEach(el=>el.classList.remove('on'));
     document.querySelectorAll('.nav-tab').forEach(el=>el.classList.remove('on'));
@@ -3326,6 +3536,8 @@ loadBetsFromSupabase().then(()=>{
     else if(p==='stats'){renderStats();}
     else if(p==='scoreboard'){loadLiveScoreboard();}
     else if(p==='msd'){sbGames=null;renderScoreboard();}
+    else if(p==='scoreboard'){loadLiveScoreboard();}
+    else if(p==='plus'){plusGames=null;renderPlus();}
   } else if(new URLSearchParams(location.search).get('game')){
     openDeepLinkGame();
   } else {
