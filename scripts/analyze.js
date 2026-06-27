@@ -282,6 +282,78 @@ function projectRuns({ offenseStats, offenseMatchups, offenseHandedness, isOffen
   const raw = baselineRuns * of_ * park * wx * plat * statcastAdj;
   return { runs: +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2) };
 }
+
+// ── DET+ ENGINE ───────────────────────────────────────────────────────────────
+// Adds: xERA blending, batter Statcast (barrel/hardHit), temperature park factor
+function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isOffenseHome, defPitcher, defStatcast, defPitcherHand, isPitcherHome, defBullpen, parkFactors, weather, batterStatcastList }) {
+  const avgIP = parseFloat(defPitcher?.avgIP || 6.0);
+
+  // ERA blend: xERA takes 40% weight when available (more predictive than raw ERA)
+  const starterERA = (() => {
+    if (!defPitcher) return LEAGUE_AVG_ERA;
+    const seasonERA = parseFloat(defPitcher.era || LEAGUE_AVG_ERA);
+    const rawRecent = parseFloat(defPitcher.recentERA || seasonERA);
+    const recentERA = Math.min(rawRecent, Math.max(seasonERA * 3.0, 9.0));
+    const splitERA = isPitcherHome && defPitcher.homeERA ? parseFloat(defPitcher.homeERA) : !isPitcherHome && defPitcher.awayERA ? parseFloat(defPitcher.awayERA) : seasonERA;
+    // xERA from Statcast cache — more stable than raw ERA
+    const xERA = defStatcast?.xera ? parseFloat(defStatcast.xera) : null;
+    if (xERA && !isNaN(xERA) && xERA > 1.0 && xERA < 8.0) {
+      // Blend: xERA 40%, season 35%, split 15%, recent 10%
+      return (xERA * 0.40) + (seasonERA * 0.35) + (splitERA * 0.15) + (recentERA * 0.10);
+    }
+    return (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20);
+  })();
+
+  const starterRuns = (starterERA / 9) * avgIP;
+  const bullpenIP = Math.max(0, 9 - avgIP);
+  const bullpenERA = parseFloat(defBullpen?.weightedERA || LEAGUE_AVG_ERA);
+  const bullpenRuns = (bullpenERA / 9) * bullpenIP;
+  const baselineRuns = starterRuns + bullpenRuns;
+
+  const of_ = computeOffenseFactor(offenseStats, offenseMatchups, isOffenseHome);
+  const park = parseFloat(parkFactors?.runFactor || 1.0);
+  const wx = computeWeatherRunFactor(weather, parkFactors);
+  const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
+
+  // Statcast pitcher adjustments (same as det)
+  let statcastAdj = 1.0;
+  if (defStatcast) {
+    if (defStatcast.whiffRate != null) { const w = parseFloat(defStatcast.whiffRate); if (!isNaN(w)) statcastAdj *= Math.min(Math.max(1 - ((w - 25) * 0.010), 0.85), 1.15); }
+    if (defStatcast.hardHitRate != null) { const hh = parseFloat(defStatcast.hardHitRate); if (!isNaN(hh)) statcastAdj *= Math.min(Math.max(1 + ((hh - 38) * 0.008), 0.88), 1.12); }
+    if (defStatcast.veloTrend === 'DOWN') statcastAdj *= 1.06;
+    else if (defStatcast.veloTrend === 'UP') statcastAdj *= 0.96;
+  }
+
+  // NEW: Batter Statcast adjustment — aggregate hard hit and barrel rate of lineup vs this pitcher
+  let batterAdj = 1.0;
+  if (batterStatcastList && batterStatcastList.length > 0) {
+    const valid = batterStatcastList.filter(b => b && b.hardHitRate != null);
+    if (valid.length >= 3) {
+      const avgHH = valid.reduce((s, b) => s + parseFloat(b.hardHitRate || 0), 0) / valid.length;
+      const avgBarrel = valid.reduce((s, b) => s + parseFloat(b.barrelRate || 0), 0) / valid.length;
+      const leagueHH = 38.0, leagueBarrel = 8.0;
+      const hhAdj = Math.min(Math.max(1 + ((avgHH - leagueHH) / leagueHH) * 0.12, 0.90), 1.12);
+      const barrelAdj = Math.min(Math.max(1 + ((avgBarrel - leagueBarrel) / leagueBarrel) * 0.08, 0.92), 1.10);
+      batterAdj = (hhAdj + barrelAdj) / 2;
+    }
+  }
+
+  // NEW: Temperature park factor — cold suppresses offense, heat boosts it
+  let tempAdj = 1.0;
+  if (weather && !weather.dome && weather.temp != null) {
+    const temp = parseFloat(weather.temp);
+    if (temp <= 45) tempAdj = 0.91;
+    else if (temp <= 55) tempAdj = 0.95;
+    else if (temp <= 65) tempAdj = 0.98;
+    else if (temp >= 90) tempAdj = 1.06;
+    else if (temp >= 82) tempAdj = 1.03;
+  }
+
+  const raw = baselineRuns * of_ * park * wx * plat * statcastAdj * batterAdj * tempAdj;
+  return { runs: +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2) };
+}
+// ── END DET+ ENGINE ───────────────────────────────────────────────────────────
+
 // ── END DETERMINISTIC ENGINE ──────────────────────────────────────────────────
 
 const ROOF_STATUS_URLS = { 'Arizona Diamondbacks': 'https://www.mlb.com/dbacks/ballpark/information/roof', 'Milwaukee Brewers': 'https://www.mlb.com/brewers/ballpark/roof-status' };
@@ -956,6 +1028,14 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       sim_ml_verdict: analysis.simMl ?? null, sim_ml_ev: analysis.simMlEV ?? null,
       sim_rl_verdict: analysis.simRl ?? null, sim_rl_ev: analysis.simRlEV ?? null,
       sim_total_verdict: analysis.simTotal ?? null, sim_total_ev: analysis.simTotalEV ?? null,
+      sim_plus_away_runs: analysis.simPlusAwayRuns ?? null, sim_plus_home_runs: analysis.simPlusHomeRuns ?? null,
+      sim_plus_ml_verdict: analysis.simPlusMl ?? null, sim_plus_ml_ev: analysis.simPlusMlEV ?? null,
+      sim_plus_rl_verdict: analysis.simPlusRl ?? null, sim_plus_rl_ev: analysis.simPlusRlEV ?? null,
+      sim_plus_total_verdict: analysis.simPlusTotal ?? null, sim_plus_total_ev: analysis.simPlusTotalEV ?? null,
+      det_plus_proj_away: detPlusProj?.awayRuns ?? null, det_plus_proj_home: detPlusProj?.homeRuns ?? null,
+      det_plus_ml_verdict: detPlusVerdicts?.ml ?? null, det_plus_ml_ev: detPlusVerdicts?.mlEV ?? null,
+      det_plus_rl_verdict: detPlusVerdicts?.rl ?? null, det_plus_rl_ev: detPlusVerdicts?.rlEV ?? null,
+      det_plus_total_verdict: detPlusVerdicts?.total ?? null, det_plus_total_ev: detPlusVerdicts?.totalEV ?? null,
       rl_away_prob: analysis.rlAwayProb ?? null, rl_home_prob: analysis.rlHomeProb ?? null,
       f5_verdict: analysis.f5, f5_ev: analysis.f5EV, f5_line: analysis.f5Line, f5_proj_total: analysis.f5ProjTotal,
       best_market: analysis.best, best_play: analysis.bestPlay,
@@ -1262,6 +1342,38 @@ async function main() {
       const detProj = { awayRuns: awayRunProj.runs, homeRuns: homeRunProj.runs };
       console.log(`  DET (background): ${game.away_team} ${detProj.awayRuns} - ${game.home_team} ${detProj.homeRuns} (tot ${+(parseFloat(detProj.awayRuns)+parseFloat(detProj.homeRuns)).toFixed(2)}) | LLM ${analysis.projAwayRuns ?? '?'} - ${analysis.projHomeRuns ?? '?'}`);
 
+      // ── DET+ (enhanced det with xERA + batter Statcast + temp adjustment) ─
+      const awayBatStatcast = awayMatchups?.lineup?.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null) || [];
+      const homeBatStatcast = homeMatchups?.lineup?.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null) || [];
+      const awayRunProjPlus = projectRunsPlus({ offenseStats: awayStats, offenseMatchups: awayMatchups, offenseHandedness: awayMatchups?.handedness, isOffenseHome: false, defPitcher: homePitcherInfo, defStatcast: homeStatcast, defPitcherHand: homePitcherInfo?.throwHand, isPitcherHome: true, defBullpen: homeBullpen, parkFactors, weather, batterStatcastList: awayBatStatcast });
+      const homeRunProjPlus = projectRunsPlus({ offenseStats: homeStats, offenseMatchups: homeMatchups, offenseHandedness: homeMatchups?.handedness, isOffenseHome: true, defPitcher: awayPitcherInfo, defStatcast: awayStatcast, defPitcherHand: awayPitcherInfo?.throwHand, isPitcherHome: false, defBullpen: awayBullpen, parkFactors, weather, batterStatcastList: homeBatStatcast });
+      const detPlusProj = { awayRuns: awayRunProjPlus.runs, homeRuns: homeRunProjPlus.runs };
+      console.log(`  DET+ ${game.away_team} ${detPlusProj.awayRuns} - ${game.home_team} ${detPlusProj.homeRuns} (tot ${+(parseFloat(detPlusProj.awayRuns)+parseFloat(detPlusProj.homeRuns)).toFixed(2)})`);
+      // Derive det+ verdicts using same ncdf math as client scoreboard
+      const detPlusVerdicts = (() => {
+        const da = parseFloat(detPlusProj.awayRuns), dh = parseFloat(detPlusProj.homeRuns);
+        if (isNaN(da) || isNaN(dh)) return {};
+        const mu = da - dh, MSD = 4.0, TSD = 5.5;
+        const ncdf = x => { const t=1/(1+0.2316419*Math.abs(x)),d2=0.3989423*Math.exp(-x*x/2),p=d2*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274)))); return x>0?1-p:p; };
+        const pA=(1-ncdf((0.5-mu)/MSD)),pH=ncdf((-0.5-mu)/MSD),den=(pA+pH)||1;
+        const paMl=pA/den, phMl=pH/den;
+        const mlAway = evPct(paMl, lines.awayML), mlHome = evPct(phMl, lines.homeML);
+        const mlSide = pickSide([{ev:mlAway,label:'AWAY'},{ev:mlHome,label:'HOME'}]);
+        let aRL=parseFloat(lines.awayRL),hRL=parseFloat(lines.homeRL);
+        if(isNaN(aRL))aRL=mu>0?-1.5:1.5; if(isNaN(hRL))hRL=mu>0?1.5:-1.5;
+        const pArl=1-ncdf((-aRL-mu)/MSD), pHrl=ncdf((hRL-mu)/MSD);
+        const rlAway=evPct(pArl,lines.awayRLOdds), rlHome=evPct(pHrl,lines.homeRLOdds);
+        const rlSide=pickSide([{ev:rlAway,label:'AWAY'},{ev:rlHome,label:'HOME'}]);
+        const proj=da+dh, totalLine=parseFloat(lines.total)||NaN;
+        let totSide=null;
+        if(!isNaN(totalLine)){const pO=1/(1+Math.exp(1.7*(totalLine-proj)/TSD));const ovEV=evPct(pO,lines.overOdds),unEV=evPct(1-pO,lines.underOdds);totSide=pickSide([{ev:ovEV,label:'OVER'},{ev:unEV,label:'UNDER'}]);}
+        return {
+          ml: mlSide?verdictFor(mlSide.ev,mlSide.label):'SKIP', mlEV: mlSide?mlSide.ev:null,
+          rl: rlSide?verdictFor(rlSide.ev,rlSide.label):'SKIP', rlEV: rlSide?rlSide.ev:null,
+          total: totSide?verdictFor(totSide.ev,totSide.label):'SKIP', totalEV: totSide?totSide.ev:null,
+        };
+      })();
+
       // ── SIM (shadow mode) ─────────────────────────────────────────────────
       try {
         if (awayMatchups?.lineup?.length >= 9 && homeMatchups?.lineup?.length >= 9 && awayPitcherInfo?.id && homePitcherInfo?.id && awayTeamId && homeTeamId) {
@@ -1300,6 +1412,58 @@ async function main() {
           console.log(`  SIM ${game.away_team} ${analysis.simAwayRuns} - ${analysis.simHomeRuns} ${game.home_team} | ML:${analysis.simMl} RL:${analysis.simRl} TOT:${analysis.simTotal}`);
         }
       } catch (e) { console.log(`  sim shadow error: ${e.message}`); }
+
+      // ── SIM+ (enhanced sim with per-batter Statcast + arsenal) ───────────
+      try {
+        if (awayMatchups?.lineup?.length >= 9 && homeMatchups?.lineup?.length >= 9 && awayPitcherInfo?.id && homePitcherInfo?.id && awayTeamId && homeTeamId) {
+          // Wire in arsenal from statcast cache
+          const awayArsenalData = _statcastCache?.pitchers?.[String(awayPitcherInfo.id)]?.arsenal ? { arsenal: _statcastCache.pitchers[String(awayPitcherInfo.id)].arsenal } : null;
+          const homeArsenalData = _statcastCache?.pitchers?.[String(homePitcherInfo.id)]?.arsenal ? { arsenal: _statcastCache.pitchers[String(homePitcherInfo.id)].arsenal } : null;
+          const simPlusProbs = await simulateGame({
+            awayLineupIds: awayMatchups.lineup.map(p => p.id), homeLineupIds: homeMatchups.lineup.map(p => p.id),
+            awayStarterId: awayPitcherInfo.id, homeStarterId: homePitcherInfo.id,
+            awayTeamId, homeTeamId,
+            awayStarterHand: awayPitcherInfo?.throwHand || 'R', homeStarterHand: homePitcherInfo?.throwHand || 'R',
+            awayStarterStatcast: awayStatcast || null, homeStarterStatcast: homeStatcast || null,
+            awayStarterInfo: awayPitcherInfo || null, homeStarterInfo: homePitcherInfo || null,
+            awayLineupHandedness: awayMatchups.handedness || null, homeLineupHandedness: homeMatchups.handedness || null,
+            awayPitcherDetail: awayPitcherInfo || null, homePitcherDetail: homePitcherInfo || null,
+            awayBatterStatcast: awayMatchups.lineup.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null),
+            homeBatterStatcast: homeMatchups.lineup.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null),
+            awayArsenal: awayArsenalData, homeArsenal: homeArsenalData,
+            parkFactors: getParkFactors(game.home_team, venueName),
+            weather: weather ? { wxHR: (() => {
+              if (!weather || weather.dome) return 1.0;
+              let mult = 1.0;
+              const temp = weather.temp || 72; const effWind = weather.effWind || 0; const flags = weather.flags || [];
+              // Enhanced: temp effect is more granular
+              if (temp >= 90) mult *= 1.07; else if (temp >= 82) mult *= 1.04;
+              else if (temp <= 45) mult *= 0.88; else if (temp <= 55) mult *= 0.93;
+              if (flags.some(f => (f||'').includes('OUT to CF'))) mult *= 1 + Math.min(effWind * 0.009, 0.16);
+              if (flags.some(f => (f||'').includes('IN from CF'))) mult *= 1 - Math.min(effWind * 0.009, 0.13);
+              return mult;
+            })() } : null,
+            totalLine: parseFloat(lines.total) || null, f5Line: f5Lines?.f5Total || null,
+          });
+          analysis.simPlusAwayRuns = +simPlusProbs.meanAway.toFixed(2);
+          analysis.simPlusHomeRuns = +simPlusProbs.meanHome.toFixed(2);
+          const spMl = pickSide([{ ev: evPct(simPlusProbs.pAwayML, lines.awayML), label: 'AWAY' }, { ev: evPct(simPlusProbs.pHomeML, lines.homeML), label: 'HOME' }]);
+          analysis.simPlusMl = spMl ? verdictFor(spMl.ev, spMl.label) : 'SKIP';
+          analysis.simPlusMlEV = spMl ? spMl.ev : null;
+          const aRLpt2 = parseFloat(lines.awayRL);
+          const awayIsFav2 = !isNaN(aRLpt2) ? aRLpt2 < 0 : (parseFloat(lines.awayML) < parseFloat(lines.homeML));
+          let spPAwayRL, spPHomeRL;
+          if (simPlusProbs.pAwayBy2 != null && simPlusProbs.pHomeBy2 != null) { spPAwayRL = awayIsFav2 ? simPlusProbs.pAwayBy2 : (1 - simPlusProbs.pHomeBy2); spPHomeRL = awayIsFav2 ? (1 - simPlusProbs.pAwayBy2) : simPlusProbs.pHomeBy2; }
+          else { spPAwayRL = simPlusProbs.pAwayRL; spPHomeRL = simPlusProbs.pHomeRL; }
+          const spRl = pickSide([{ ev: evPct(spPAwayRL, lines.awayRLOdds), label: 'AWAY' }, { ev: evPct(spPHomeRL, lines.homeRLOdds), label: 'HOME' }]);
+          analysis.simPlusRl = spRl ? verdictFor(spRl.ev, spRl.label) : 'SKIP';
+          analysis.simPlusRlEV = spRl ? spRl.ev : null;
+          const spTot = pickSide([{ ev: evPct(simPlusProbs.pOver, lines.overOdds), label: 'OVER' }, { ev: evPct(simPlusProbs.pUnder, lines.underOdds), label: 'UNDER' }]);
+          analysis.simPlusTotal = spTot ? verdictFor(spTot.ev, spTot.label) : 'SKIP';
+          analysis.simPlusTotalEV = spTot ? spTot.ev : null;
+          console.log(`  SIM+ ${game.away_team} ${analysis.simPlusAwayRuns} - ${analysis.simPlusHomeRuns} ${game.home_team} | ML:${analysis.simPlusMl} RL:${analysis.simPlusRl} TOT:${analysis.simPlusTotal}`);
+        }
+      } catch (e) { console.log(`  sim+ error: ${e.message}`); }
 
       // ── SWEEP FADE ────────────────────────────────────────────────────────
       const _gd = new Date(game.commence_time).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
