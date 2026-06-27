@@ -1780,7 +1780,11 @@ function sbBuildPlays(games){
   return out.filter(x=>!(sbExcluded&&sbExcluded.has(sbKey(x.date,x.matchup,x.mk,x.side,x.source))));
 }
 function sbPasses(x){const f=sbFilter;
-  if(f.source){if(f.source==='model'&&x.source!=='model')return false;if(f.source==='sim'&&x.source!=='sim')return false;if(f.source==='det'&&x.source!=='det')return false;}
+  if(f.source){
+    if(f.source==='model'&&!['model','model+sim','model+det','all3'].includes(x.source))return false;
+    if(f.source==='sim'&&!['sim','sim+det','model+sim','all3'].includes(x.source))return false;
+    if(f.source==='det'&&!['det','sim+det','model+det','all3'].includes(x.source))return false;
+  }
   if(f.agreement){
     if(f.agreement==='all3'&&x.agreement!=='all3')return false;
     if(f.agreement==='agree2_dis1'&&x.agreement!=='agree2_dis1')return false;
