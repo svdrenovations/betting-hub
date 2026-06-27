@@ -1731,9 +1731,50 @@ function sbBuildPlays(games){
       const ds=det?det.side:null;
       const{tag:agreement,pair}=agreementInfo(ms,ss,ds);
       const base={date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,agreement,pair,confidence:(g.confidence||'').toUpperCase(),final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''};
-      if(ms){const odds=sbOddsFor(mk,mp.side,g);const result=sbGrade(mk,mp.side,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;out.push({...base,source:'model',side:mp.side,strength:mp.strength,ev:(mev==null||isNaN(mev))?null:mev,odds,line:sbLineLabel(mk,mp.side,g),result,units,disagreed:!!(ss&&ss!==ms)});}
-      if(ss){const odds=sbOddsFor(mk,sp.side,g);const result=sbGrade(mk,sp.side,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;out.push({...base,source:'sim',side:sp.side,strength:sp.strength,ev:(sev==null||isNaN(sev))?null:sev,odds,line:sbLineLabel(mk,sp.side,g),result,units,disagreed:!!(ms&&ms!==ss)});}
-      if(det){const result=sbGrade(mk,det.side,g);const units=result==='win'?sbProfit(det.odds):result==='loss'?-1:0;out.push({...base,source:'det',side:det.side,strength:det.strength,ev:det.ev,odds:det.odds,line:sbLineLabel(mk,det.side,g),result,units,disagreed:false});}
+      // Emit deduped rows — sim+det agreement = one row, not two
+      const simDetAgree=ss&&ds&&ss===ds;
+      const modelSimAgree=ms&&ss&&ms===ss;
+      const modelDetAgree=ms&&ds&&ms===ds;
+      if(agreement==='all3'){
+        // One row representing all 3 — use model odds/ev as primary, note all agree
+        const odds=sbOddsFor(mk,ms,g);const result=sbGrade(mk,ms,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;
+        out.push({...base,source:'all3',side:ms,strength:mp.strength,ev:(mev==null||isNaN(mev))?null:mev,odds,line:sbLineLabel(mk,ms,g),result,units,disagreed:false});
+      } else if(simDetAgree&&!ms){
+        // sim+det agree, model has no play — one row
+        const odds=sbOddsFor(mk,ss,g);const result=sbGrade(mk,ss,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;
+        out.push({...base,source:'sim+det',side:ss,strength:det.strength,ev:det.ev,odds,line:sbLineLabel(mk,ss,g),result,units,disagreed:false});
+      } else if(simDetAgree&&ms&&ms!==ss){
+        // sim+det agree, model disagrees — one sim+det row + one model row
+        const odds=sbOddsFor(mk,ss,g);const result=sbGrade(mk,ss,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;
+        out.push({...base,source:'sim+det',side:ss,strength:det.strength,ev:det.ev,odds,line:sbLineLabel(mk,ss,g),result,units,disagreed:true});
+        const modOdds=sbOddsFor(mk,ms,g);const modResult=sbGrade(mk,ms,g);const modUnits=modResult==='win'?sbProfit(modOdds):modResult==='loss'?-1:0;
+        out.push({...base,source:'model',side:ms,strength:mp.strength,ev:(mev==null||isNaN(mev))?null:mev,odds:modOdds,line:sbLineLabel(mk,ms,g),result:modResult,units:modUnits,disagreed:true});
+      } else if(modelSimAgree&&!ds){
+        // model+sim agree, det no play
+        const odds=sbOddsFor(mk,ms,g);const result=sbGrade(mk,ms,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;
+        out.push({...base,source:'model+sim',side:ms,strength:mp.strength,ev:(mev==null||isNaN(mev))?null:mev,odds,line:sbLineLabel(mk,ms,g),result,units,disagreed:false});
+      } else if(modelSimAgree&&ds&&ds!==ms){
+        // model+sim agree, det disagrees
+        const odds=sbOddsFor(mk,ms,g);const result=sbGrade(mk,ms,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;
+        out.push({...base,source:'model+sim',side:ms,strength:mp.strength,ev:(mev==null||isNaN(mev))?null:mev,odds,line:sbLineLabel(mk,ms,g),result,units,disagreed:true});
+        const detResult=sbGrade(mk,ds,g);const detUnits=detResult==='win'?sbProfit(det.odds):detResult==='loss'?-1:0;
+        out.push({...base,source:'det',side:ds,strength:det.strength,ev:det.ev,odds:det.odds,line:sbLineLabel(mk,ds,g),result:detResult,units:detUnits,disagreed:true});
+      } else if(modelDetAgree&&!ss){
+        // model+det agree, sim no play
+        const odds=sbOddsFor(mk,ms,g);const result=sbGrade(mk,ms,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;
+        out.push({...base,source:'model+det',side:ms,strength:mp.strength,ev:(mev==null||isNaN(mev))?null:mev,odds,line:sbLineLabel(mk,ms,g),result,units,disagreed:false});
+      } else if(modelDetAgree&&ss&&ss!==ms){
+        // model+det agree, sim disagrees
+        const odds=sbOddsFor(mk,ms,g);const result=sbGrade(mk,ms,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;
+        out.push({...base,source:'model+det',side:ms,strength:mp.strength,ev:(mev==null||isNaN(mev))?null:mev,odds,line:sbLineLabel(mk,ms,g),result,units,disagreed:true});
+        const simOdds=sbOddsFor(mk,ss,g);const simResult=sbGrade(mk,ss,g);const simUnits=simResult==='win'?sbProfit(simOdds):simResult==='loss'?-1:0;
+        out.push({...base,source:'sim',side:ss,strength:sp.strength,ev:(sev==null||isNaN(sev))?null:sev,odds:simOdds,line:sbLineLabel(mk,ss,g),result:simResult,units:simUnits,disagreed:true});
+      } else {
+        // All solo or no overlap — emit each engine separately
+        if(ms){const odds=sbOddsFor(mk,ms,g);const result=sbGrade(mk,ms,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;out.push({...base,source:'model',side:ms,strength:mp.strength,ev:(mev==null||isNaN(mev))?null:mev,odds,line:sbLineLabel(mk,ms,g),result,units,disagreed:false});}
+        if(ss){const odds=sbOddsFor(mk,ss,g);const result=sbGrade(mk,ss,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;out.push({...base,source:'sim',side:ss,strength:sp.strength,ev:(sev==null||isNaN(sev))?null:sev,odds,line:sbLineLabel(mk,ss,g),result,units,disagreed:false});}
+        if(det){const result=sbGrade(mk,det.side,g);const units=result==='win'?sbProfit(det.odds):result==='loss'?-1:0;out.push({...base,source:'det',side:det.side,strength:det.strength,ev:det.ev,odds:det.odds,line:sbLineLabel(mk,det.side,g),result,units,disagreed:false});}
+      }
     }
   }
   return out.filter(x=>!(sbExcluded&&sbExcluded.has(sbKey(x.date,x.matchup,x.mk,x.side,x.source))));
@@ -1745,9 +1786,9 @@ function sbPasses(x){const f=sbFilter;
     if(f.agreement==='agree2_dis1'&&x.agreement!=='agree2_dis1')return false;
     if(f.agreement==='agree2_none1'&&x.agreement!=='agree2_none1')return false;
     if(f.agreement==='solo'&&x.agreement!=='solo')return false;
-    if(f.agreement==='sim+det'&&x.pair!=='sim+det')return false;
-    if(f.agreement==='model+det'&&x.pair!=='model+det')return false;
-    if(f.agreement==='model+sim'&&x.pair!=='model+sim')return false;
+    if(f.agreement==='sim+det'&&(x.source!=='sim+det'||x.disagreed))return false;
+    if(f.agreement==='model+det'&&(x.source!=='model+det'||x.disagreed))return false;
+    if(f.agreement==='model+sim'&&(x.source!=='model+sim'||x.disagreed))return false;
   }if(f.result.length&&!f.result.includes(x.result))return false;if(f.market.length&&!f.market.includes(x.mk))return false;if(f.conf.length&&!f.conf.includes((x.confidence||'').toUpperCase()))return false;if(f.ev.length){const e=x.ev;const ok=f.ev.some(b=>b==='neg'?(e!=null&&e<0):b==='z'?(e!=null&&e>=0&&e<2):b==='a'?(e!=null&&e>=2&&e<6):b==='b'?(e!=null&&e>=6&&e<10):b==='c'?(e!=null&&e>=10):false);if(!ok)return false;}if(f.from&&x.date<f.from)return false;if(f.to&&x.date>f.to)return false;return true;}
 function sbStats(plays){let w=0,l=0,p=0,pend=0,units=0,evs=0,evn=0;for(const x of plays){if(x.result==='win'){w++;units+=x.units;}else if(x.result==='loss'){l++;units+=x.units;}else if(x.result==='push')p++;else pend++;if(x.ev!=null){evs+=x.ev;evn++;}}const dec=w+l,settled=w+l+p;return{w,l,p,pend,units,win:dec?Math.round(100*w/dec):null,roi:settled?(units/settled*100):null,ev:evn?(evs/evn):null,n:plays.length,settled};}
 
@@ -1808,14 +1849,13 @@ function scoreboardHTML(){
   const statBox=(label,big,sub,color)=>`<div style="flex:1;min-width:150px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px"><div style="font-size:11px;color:var(--text);text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:24px;font-weight:700;font-family:DM Mono,monospace;${color?`color:${color}`:''}">${big}</div><div style="font-size:12px;color:var(--text)">${sub}</div></div>`;
   const statsPanel=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px">${statBox('Record',`${st.w}-${st.l}${st.p?`-${st.p}`:''}`,st.win!=null?`${st.win}% win`:'no settled plays')}${statBox('Units · 1u/play',u+'u',st.roi!=null?`${st.roi>=0?'+':''}${st.roi.toFixed(1)}% ROI`:'—',st.units>0?'var(--green)':st.units<0?'var(--red)':'')}${statBox('Plays',String(st.n),`${st.settled} settled · ${st.pend} pending`)}${statBox('Avg EV',st.ev!=null?`+${st.ev.toFixed(1)}%`:'—','at analysis-time line')}</div>`;
   const srcBadge=(s,pair,agreement)=>{
-    const base=s==='model'?'<span style="color:var(--text)">model</span>':s==='det'?'<span style="color:var(--purple)">det</span>':'<span style="color:var(--amber)">sim</span>';
-    if(agreement==='all3')return '<span style="color:var(--green);font-weight:600">all 3 ✓</span>';
-    if(pair&&pair.includes('+')){
-      const pairColor=pair==='sim+det'?'var(--green)':pair==='model+det'?'var(--purple)':'var(--amber)';
-      const suffix=agreement==='agree2_dis1'?' ⇄':'';
-      return `<span style="font-size:10px;font-family:DM Mono,monospace;color:${pairColor}">${pair}${suffix}</span>`;
-    }
-    return base;
+    if(s==='all3')return '<span style="color:var(--green);font-weight:600">all 3 ✓</span>';
+    if(s==='sim+det')return `<span style="font-size:10px;font-family:DM Mono,monospace;color:var(--green)">sim+det${agreement==='agree2_dis1'?' ⇄':''}</span>`;
+    if(s==='model+sim')return `<span style="font-size:10px;font-family:DM Mono,monospace;color:var(--amber)">model+sim${agreement==='agree2_dis1'?' ⇄':''}</span>`;
+    if(s==='model+det')return `<span style="font-size:10px;font-family:DM Mono,monospace;color:var(--purple)">model+det${agreement==='agree2_dis1'?' ⇄':''}</span>`;
+    if(s==='model')return '<span style="color:var(--text)">model</span>';
+    if(s==='det')return '<span style="color:var(--purple)">det</span>';
+    return '<span style="color:var(--amber)">sim</span>';
   };
   const resCell=x=>{const c=x.result==='win'?'var(--green)':x.result==='loss'?'var(--red)':x.result==='push'?'var(--text)':'var(--text)';const t=x.result==='win'?'W':x.result==='loss'?'L':x.result==='push'?'P':'·';return`<span style="color:${c};font-weight:600">${t}</span>`;};
   const uCell=x=>{if(x.result==='pending')return'<span style="color:var(--text)">—</span>';const c=x.units>0?'var(--green)':x.units<0?'var(--red)':'var(--text)';return`<span class="mono" style="color:${c}">${x.units>0?'+':''}${x.units.toFixed(2)}</span>`;};
