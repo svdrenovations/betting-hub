@@ -1659,8 +1659,7 @@ function sbBuildPlays(games){
   const out=[];
   const neg=e=>(e!=null&&!isNaN(e)&&e<0);
   const ncdf=x=>{const t=1/(1+0.2316419*Math.abs(x)),d2=0.3989423*Math.exp(-x*x/2),p=d2*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;};
-  // ── Pre-compute det side per game+mk ──────────────────────────────────────
-  function detSideFor(mk,g){
+  function detFor(mk,g){
     const da=parseFloat(g.det_proj_away),dh=parseFloat(g.det_proj_home);
     if(isNaN(da)||isNaN(dh)||da<3||dh<3)return null;
     const mu=da-dh,MSD=4.0,TSD=5.5;
@@ -1673,17 +1672,26 @@ function sbBuildPlays(games){
     const payout=isNaN(odds)?0:(odds>0?odds/100:100/Math.abs(odds));
     const ev=!isNaN(odds)?(prob*payout-(1-prob))*100:null;
     if(ev==null||ev<6)return null;
-    return{side,prob,ev:+ev.toFixed(1),odds,strength:ev>=10?'BET':'LEAN'};
+    return{side,ev:+ev.toFixed(1),odds,strength:ev>=10?'BET':'LEAN'};
   }
-  // ── Compute agreement tag for a game+mk ──────────────────────────────────
-  function agreementTag(modelSide,simSide,detSide){
-    const sides=[modelSide,simSide,detSide].filter(s=>s!=null);
-    if(sides.length===0)return'none';
-    if(sides.length===1)return'solo';
-    if(sides.length===2)return sides[0]===sides[1]?'agree2_none1':'dis2_none1';
-    // all 3 have plays
-    if(sides[0]===sides[1]&&sides[1]===sides[2])return'all3';
-    return'agree2_dis1';
+  function agreementInfo(ms,ss,ds){
+    // ms/ss/ds = side string or null
+    const has={model:ms!=null,sim:ss!=null,det:ds!=null};
+    const sides=[ms,ss,ds].filter(s=>s!=null);
+    const n=sides.length;
+    if(n===0)return{tag:'none',pair:null};
+    if(n===1){const who=has.model?'model':has.sim?'sim':'det';return{tag:'solo',pair:who};}
+    if(n===2){
+      const names=Object.keys(has).filter(k=>has[k]);
+      const agree=sides[0]===sides[1];
+      return{tag:agree?'agree2_none1':'dis2_none1',pair:names.join('+')};
+    }
+    // all 3
+    if(ms===ss&&ss===ds)return{tag:'all3',pair:'model+sim+det'};
+    // find the 2 that agree
+    if(ms===ss)return{tag:'agree2_dis1',pair:'model+sim'};
+    if(ms===ds)return{tag:'agree2_dis1',pair:'model+det'};
+    return{tag:'agree2_dis1',pair:'sim+det'};
   }
   for(const g of games){
     for(const[mk,lbl]of SB_MKTS){
@@ -1692,29 +1700,15 @@ function sbBuildPlays(games){
       const simValid=g.game_date>=SIM_VALID_FROM;
       const sp=simValid?sbParsePlay(g['sim_'+mk+'_verdict']):null;
       const sev=simValid?parseFloat(g['sim_'+mk+'_ev']):NaN;
-      const det=detSideFor(mk,g);
-      const modelSide=(mp&&!neg(mev))?mp.side:null;
-      const simSide=(sp&&!neg(sev))?sp.side:null;
-      const detSide=det?det.side:null;
-      const agreement=agreementTag(modelSide,simSide,detSide);
-      const base={date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,agreement,confidence:(g.confidence||'').toUpperCase(),final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''};
-      // Model play
-      if(modelSide){
-        const odds=sbOddsFor(mk,mp.side,g);const result=sbGrade(mk,mp.side,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;
-        const dis=!!(simSide&&simSide!==modelSide);
-        out.push({...base,source:'model',side:mp.side,strength:mp.strength,ev:(mev==null||isNaN(mev))?null:mev,odds,line:sbLineLabel(mk,mp.side,g),result,units,disagreed:dis});
-      }
-      // Sim play
-      if(simSide){
-        const odds=sbOddsFor(mk,sp.side,g);const result=sbGrade(mk,sp.side,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;
-        const dis=!!(modelSide&&modelSide!==simSide);
-        out.push({...base,source:'sim',side:sp.side,strength:sp.strength,ev:(sev==null||isNaN(sev))?null:sev,odds,line:sbLineLabel(mk,sp.side,g),result,units,disagreed:dis});
-      }
-      // Det play
-      if(det){
-        const result=sbGrade(mk,det.side,g);const units=result==='win'?sbProfit(det.odds):result==='loss'?-1:0;
-        out.push({...base,source:'det',side:det.side,strength:det.strength,ev:det.ev,odds:det.odds,line:sbLineLabel(mk,det.side,g),result,units,disagreed:false});
-      }
+      const det=detFor(mk,g);
+      const ms=(mp&&!neg(mev))?mp.side:null;
+      const ss=(sp&&!neg(sev))?sp.side:null;
+      const ds=det?det.side:null;
+      const{tag:agreement,pair}=agreementInfo(ms,ss,ds);
+      const base={date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,agreement,pair,confidence:(g.confidence||'').toUpperCase(),final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''};
+      if(ms){const odds=sbOddsFor(mk,mp.side,g);const result=sbGrade(mk,mp.side,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;out.push({...base,source:'model',side:mp.side,strength:mp.strength,ev:(mev==null||isNaN(mev))?null:mev,odds,line:sbLineLabel(mk,mp.side,g),result,units,disagreed:!!(ss&&ss!==ms)});}
+      if(ss){const odds=sbOddsFor(mk,sp.side,g);const result=sbGrade(mk,sp.side,g);const units=result==='win'?sbProfit(odds):result==='loss'?-1:0;out.push({...base,source:'sim',side:sp.side,strength:sp.strength,ev:(sev==null||isNaN(sev))?null:sev,odds,line:sbLineLabel(mk,sp.side,g),result,units,disagreed:!!(ms&&ms!==ss)});}
+      if(det){const result=sbGrade(mk,det.side,g);const units=result==='win'?sbProfit(det.odds):result==='loss'?-1:0;out.push({...base,source:'det',side:det.side,strength:det.strength,ev:det.ev,odds:det.odds,line:sbLineLabel(mk,det.side,g),result,units,disagreed:false});}
     }
   }
   return out.filter(x=>!(sbExcluded&&sbExcluded.has(sbKey(x.date,x.matchup,x.mk,x.side,x.source))));
@@ -1780,10 +1774,17 @@ function scoreboardHTML(){
   const u=(st.units>=0?'+':'')+st.units.toFixed(2);
   const statBox=(label,big,sub,color)=>`<div style="flex:1;min-width:150px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px"><div style="font-size:11px;color:var(--text);text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:24px;font-weight:700;font-family:DM Mono,monospace;${color?`color:${color}`:''}">${big}</div><div style="font-size:12px;color:var(--text)">${sub}</div></div>`;
   const statsPanel=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px">${statBox('Record',`${st.w}-${st.l}${st.p?`-${st.p}`:''}`,st.win!=null?`${st.win}% win`:'no settled plays')}${statBox('Units · 1u/play',u+'u',st.roi!=null?`${st.roi>=0?'+':''}${st.roi.toFixed(1)}% ROI`:'—',st.units>0?'var(--green)':st.units<0?'var(--red)':'')}${statBox('Plays',String(st.n),`${st.settled} settled · ${st.pend} pending`)}${statBox('Avg EV',st.ev!=null?`+${st.ev.toFixed(1)}%`:'—','at analysis-time line')}</div>`;
-  const srcBadge=s=>s==='agreed'?'<span style="color:var(--green)">agreed</span>':s==='model'?'<span style="color:var(--text)">model</span>':s==='det'?'<span style="color:var(--purple)">det</span>':'<span style="color:var(--amber)">sim</span>';
+  const srcBadge=(s,pair,agreement)=>{
+    const base=s==='model'?'<span style="color:var(--text)">model</span>':s==='det'?'<span style="color:var(--purple)">det</span>':'<span style="color:var(--amber)">sim</span>';
+    if((agreement==='agree2_dis1'||agreement==='agree2_none1')&&pair&&pair.includes('+')){
+      return `<span style="font-size:10px;font-family:DM Mono,monospace;color:var(--green)">${pair}</span>`;
+    }
+    if(agreement==='all3')return '<span style="color:var(--green)">all 3</span>';
+    return base;
+  };
   const resCell=x=>{const c=x.result==='win'?'var(--green)':x.result==='loss'?'var(--red)':x.result==='push'?'var(--text)':'var(--text)';const t=x.result==='win'?'W':x.result==='loss'?'L':x.result==='push'?'P':'·';return`<span style="color:${c};font-weight:600">${t}</span>`;};
   const uCell=x=>{if(x.result==='pending')return'<span style="color:var(--text)">—</span>';const c=x.units>0?'var(--green)':x.units<0?'var(--red)':'var(--text)';return`<span class="mono" style="color:${c}">${x.units>0?'+':''}${x.units.toFixed(2)}</span>`;};
-  const rows=plays.map(x=>`<tr><td class="mono" style="font-size:11px">${x.date}</td><td style="font-size:12px">${x.matchup}</td><td style="font-size:11px">${srcBadge(x.source)}${x.disagreed?' <span style="color:var(--red);font-size:9px">⇄</span>':''}</td><td style="font-size:11px">${x.lbl}</td><td class="mono" style="font-size:11px">${x.side.toLowerCase()}</td><td class="mono" style="font-size:11px">${x.line}</td><td class="mono" style="font-size:11px;color:var(--amber)">${x.ev!=null?`+${x.ev.toFixed(1)}%`:'—'}</td><td style="font-size:11px;color:${x.confidence==='HIGH'?'var(--green)':x.confidence==='MEDIUM'?'var(--amber)':'var(--text)'}">${x.confidence||'—'}</td><td>${resCell(x)}</td><td>${uCell(x)}</td><td style="text-align:center">${isUnlocked()?`<button onclick="sbDeletePlay('${encodeURIComponent(sbKey(x.date,x.matchup,x.mk,x.side,x.source))}','${encodeURIComponent(x.date+' · '+x.matchup+' · '+x.source+' '+x.lbl+' '+x.side.toLowerCase())}')" style="background:none;border:1px solid var(--border);color:var(--text);border-radius:5px;cursor:pointer;font-size:11px;line-height:1;padding:3px 7px">✕</button>`:''}</td></tr>`).join('');
+  const rows=plays.map(x=>`<tr><td class="mono" style="font-size:11px">${x.date}</td><td style="font-size:12px">${x.matchup}</td><td style="font-size:11px">${srcBadge(x.source,x.pair,x.agreement)}${x.disagreed?' <span style="color:var(--red);font-size:9px">⇄</span>':''}</td><td style="font-size:11px">${x.lbl}</td><td class="mono" style="font-size:11px">${x.side.toLowerCase()}</td><td class="mono" style="font-size:11px">${x.line}</td><td class="mono" style="font-size:11px;color:var(--amber)">${x.ev!=null?`+${x.ev.toFixed(1)}%`:'—'}</td><td style="font-size:11px;color:${x.confidence==='HIGH'?'var(--green)':x.confidence==='MEDIUM'?'var(--amber)':'var(--text)'}">${x.confidence||'—'}</td><td>${resCell(x)}</td><td>${uCell(x)}</td><td style="text-align:center">${isUnlocked()?`<button onclick="sbDeletePlay('${encodeURIComponent(sbKey(x.date,x.matchup,x.mk,x.side,x.source))}','${encodeURIComponent(x.date+' · '+x.matchup+' · '+x.source+' '+x.lbl+' '+x.side.toLowerCase())}')" style="background:none;border:1px solid var(--border);color:var(--text);border-radius:5px;cursor:pointer;font-size:11px;line-height:1;padding:3px 7px">✕</button>`:''}</td></tr>`).join('');
   const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr><th>Date</th><th>Matchup</th><th>Source</th><th>Mkt</th><th>Side</th><th>Line</th><th>EV</th><th>Conf</th><th>Res</th><th>Units</th><th></th></tr></thead><tbody>${rows||`<tr><td colspan="11" style="color:var(--text);padding:18px;text-align:center">No plays match these filters.</td></tr>`}</tbody></table></div>`;
   return filterBar+statsPanel+table;
 }
