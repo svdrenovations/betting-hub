@@ -1817,6 +1817,14 @@ function sbPasses(x){const f=sbFilter;
     if(f.agreement==='model+det'&&x.pair!=='model+det')return false;
     if(f.agreement==='model+sim'&&x.pair!=='model+sim')return false;
   }
+  if(f.result.length&&!f.result.includes(x.result))return false;
+  if(f.market.length&&!f.market.includes(x.mk))return false;
+  if(f.conf.length&&!f.conf.includes((x.confidence||'').toUpperCase()))return false;
+  if(f.ev.length){const e=x.ev;const ok=f.ev.some(b=>b==='neg'?(e!=null&&e<0):b==='z'?(e!=null&&e>=0&&e<2):b==='a'?(e!=null&&e>=2&&e<6):b==='b'?(e!=null&&e>=6&&e<10):b==='c'?(e!=null&&e>=10):false);if(!ok)return false;}
+  if(f.from&&x.date<f.from)return false;
+  if(f.to&&x.date>f.to)return false;
+  return true;
+}
 function sbStats(plays){let w=0,l=0,p=0,pend=0,units=0,evs=0,evn=0;for(const x of plays){if(x.result==='win'){w++;units+=x.units;}else if(x.result==='loss'){l++;units+=x.units;}else if(x.result==='push')p++;else pend++;if(x.ev!=null){evs+=x.ev;evn++;}}const dec=w+l,settled=w+l+p;return{w,l,p,pend,units,win:dec?Math.round(100*w/dec):null,roi:settled?(units/settled*100):null,ev:evn?(evs/evn):null,n:plays.length,settled};}
 
 async function renderScoreboard(){
