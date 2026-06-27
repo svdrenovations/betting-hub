@@ -1584,6 +1584,8 @@ async function showLiveLines(gameId,awayTeam,homeTeam){
 }
 
 // ── SUPABASE BETS ─────────────────────────────────────────────────────────────
+function updateNavRecord(){const s=bets.filter(b=>b.result==='win'||b.result==='loss');const w=bets.filter(b=>b.result==='win').length;document.getElementById('nav-record').textContent=s.length?`${w}-${s.length-w}`:'—';}
+
 async function loadBetsFromSupabase(){
   try{
     const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?order=id.desc&limit=500`,{headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}});
