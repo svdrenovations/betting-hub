@@ -1644,7 +1644,7 @@ function isoDate(d){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,
 
 // ── MODEL vs SIM SCOREBOARD ───────────────────────────────────────────────────
 let sbGames=null,sbExcluded=null;
-let sbFilter={source:'all',result:[],market:[],ev:[],conf:[],from:'',to:''};
+let sbFilter={source:'',result:[],market:[],ev:[],conf:[],from:'',to:''};
 const SIM_VALID_FROM='2026-06-18';
 function sbKey(date,matchup,mk,side,source){return`${date}|${matchup}|${mk}|${side}|${source}`;}
 function sbParsePlay(verdict){if(!verdict)return null;const m=String(verdict).toUpperCase().trim().match(/^(BET|LEAN)\s+(AWAY|HOME|OVER|UNDER)$/);return m?{strength:m[1],side:m[2]}:null;}
@@ -1698,7 +1698,7 @@ function sbBuildPlays(games){
   }
   return out.filter(x=>!(sbExcluded&&sbExcluded.has(sbKey(x.date,x.matchup,x.mk,x.side,x.source))));
 }
-function sbPasses(x){const f=sbFilter;if(f.source==='model'&&!(x.source==='model'||x.source==='agreed'))return false;if(f.source==='sim'&&!(x.source==='sim'||x.source==='agreed'))return false;if(f.source==='agreed'&&x.source!=='agreed')return false;if(f.source==='disagreed'&&!x.disagreed)return false;if(f.source==='det'&&x.source!=='det')return false;if(f.result.length&&!f.result.includes(x.result))return false;if(f.market.length&&!f.market.includes(x.mk))return false;if(f.conf.length&&!f.conf.includes((x.confidence||'').toUpperCase()))return false;if(f.ev.length){const e=x.ev;const ok=f.ev.some(b=>b==='neg'?(e!=null&&e<0):b==='z'?(e!=null&&e>=0&&e<2):b==='a'?(e!=null&&e>=2&&e<6):b==='b'?(e!=null&&e>=6&&e<10):b==='c'?(e!=null&&e>=10):false);if(!ok)return false;}if(f.from&&x.date<f.from)return false;if(f.to&&x.date>f.to)return false;return true;}
+function sbPasses(x){const f=sbFilter;if(f.source&&f.source!==''){if(f.source==='model'&&!(x.source==='model'||x.source==='agreed'))return false;if(f.source==='sim'&&!(x.source==='sim'||x.source==='agreed'))return false;if(f.source==='agreed'&&x.source!=='agreed')return false;if(f.source==='disagreed'&&!x.disagreed)return false;if(f.source==='det'&&x.source!=='det')return false;}if(f.result.length&&!f.result.includes(x.result))return false;if(f.market.length&&!f.market.includes(x.mk))return false;if(f.conf.length&&!f.conf.includes((x.confidence||'').toUpperCase()))return false;if(f.ev.length){const e=x.ev;const ok=f.ev.some(b=>b==='neg'?(e!=null&&e<0):b==='z'?(e!=null&&e>=0&&e<2):b==='a'?(e!=null&&e>=2&&e<6):b==='b'?(e!=null&&e>=6&&e<10):b==='c'?(e!=null&&e>=10):false);if(!ok)return false;}if(f.from&&x.date<f.from)return false;if(f.to&&x.date>f.to)return false;return true;}
 function sbStats(plays){let w=0,l=0,p=0,pend=0,units=0,evs=0,evn=0;for(const x of plays){if(x.result==='win'){w++;units+=x.units;}else if(x.result==='loss'){l++;units+=x.units;}else if(x.result==='push')p++;else pend++;if(x.ev!=null){evs+=x.ev;evn++;}}const dec=w+l,settled=w+l+p;return{w,l,p,pend,units,win:dec?Math.round(100*w/dec):null,roi:settled?(units/settled*100):null,ev:evn?(evs/evn):null,n:plays.length,settled};}
 
 async function renderScoreboard(){
@@ -1751,7 +1751,7 @@ function scoreboardHTML(){
   const tog=(key,v,l)=>`<button class="filter-btn ${sbFilter[key].includes(v)?'on':''}" onclick="sbToggle('${key}','${v}')">${l}</button>`;
   const anyBtn=(key,l)=>`<button class="filter-btn ${sbFilter[key].length===0?'on':''}" onclick="sbClear('${key}')">${l}</button>`;
   const inp=(which)=>`<input type="date" value="${sbFilter[which]}" onchange="sbDate('${which}',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">`;
-  const filterBar=`<div class="tracker-filters">`+[['all','All'],['model','Model'],['sim','Sim'],['agreed','Agreed'],['disagreed','Disagreed'],['det','Det']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('conf','Any conf')+[['HIGH','High'],['MEDIUM','Medium'],['LOW','Low']].map(([v,l])=>tog('conf',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to')}</div>`;
+  const filterBar=`<div class="tracker-filters">`+[['model','Model'],['sim','Sim'],['agreed','Agreed'],['disagreed','Disagreed'],['det','Det']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('conf','Any conf')+[['HIGH','High'],['MEDIUM','Medium'],['LOW','Low']].map(([v,l])=>tog('conf',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to')}</div>`;
   const u=(st.units>=0?'+':'')+st.units.toFixed(2);
   const statBox=(label,big,sub,color)=>`<div style="flex:1;min-width:150px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px"><div style="font-size:11px;color:var(--text);text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:24px;font-weight:700;font-family:DM Mono,monospace;${color?`color:${color}`:''}">${big}</div><div style="font-size:12px;color:var(--text)">${sub}</div></div>`;
   const statsPanel=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px">${statBox('Record',`${st.w}-${st.l}${st.p?`-${st.p}`:''}`,st.win!=null?`${st.win}% win`:'no settled plays')}${statBox('Units · 1u/play',u+'u',st.roi!=null?`${st.roi>=0?'+':''}${st.roi.toFixed(1)}% ROI`:'—',st.units>0?'var(--green)':st.units<0?'var(--red)':'')}${statBox('Plays',String(st.n),`${st.settled} settled · ${st.pend} pending`)}${statBox('Avg EV',st.ev!=null?`+${st.ev.toFixed(1)}%`:'—','at analysis-time line')}</div>`;
@@ -2429,8 +2429,10 @@ async function settleBets(){
   }
   if(btn){btn.disabled=false;btn.textContent='Settle pending →';}
   renderTracker();updateNavRecord();
-  if(settled>0)alert(`✓ Settled ${settled} bet${settled>1?'s':''} automatically`);
-  else alert('No completed games found yet. Check back after games finish.');
+  if(settled>0){
+    alert(`✓ Settled ${settled} bet${settled>1?'s':''} automatically`);
+    if(document.getElementById('page-scoreboard').classList.contains('on')){sbGames=null;renderScoreboard();}
+  } else alert('No completed games found yet. Check back after games finish.');
 }
 
 function updateNavRecord(){const s=bets.filter(b=>b.result==='win'||b.result==='loss');const w=bets.filter(b=>b.result==='win').length;document.getElementById('nav-record').textContent=s.length?`${w}-${s.length-w}`:'—';}
