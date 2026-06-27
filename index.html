@@ -24,7 +24,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .nav-logo{font-weight:600;font-size:16px;letter-spacing:-.3px}
 .nav-logo span{color:var(--green)}
 .nav-tabs{display:flex}
-.nav-tab{padding:0 16px;height:56px;display:flex;align-items:center;font-size:13px;font-weight:500;color:var(--text);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent}
+.nav-tab{padding:0 16px;height:56px;display:flex;align-items:center;font-size:13px;font-weight:500;color:var(--text);border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;text-decoration:none}
 .nav-tab.on{color:var(--green);border-bottom-color:var(--green)}
 .nav-record{font-family:DM Mono,monospace;font-size:12px;color:var(--text)}
 .container{max-width:1100px;margin:0 auto;padding:1.5rem}
@@ -226,11 +226,11 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 <nav>
   <div class="nav-logo">MLB <span>Hub</span></div>
   <div class="nav-tabs">
-    <button class="nav-tab on" onclick="goPage('games',this)">Games</button>
-    <button class="nav-tab" onclick="goPage('tracker',this)">Tracker</button>
-    <button class="nav-tab" onclick="goPage('kalshi',this)">Kalshi</button>
-    <button class="nav-tab" onclick="goPage('stats',this)">Stats</button>
-    <button class="nav-tab" onclick="goPage('scoreboard',this)">Model vs Sim vs Det</button>
+    <a class="nav-tab on" href="?page=games" onclick="goPage('games',this);return false;">Games</a>
+    <a class="nav-tab" href="?page=tracker" onclick="goPage('tracker',this);return false;">Tracker</a>
+    <a class="nav-tab" href="?page=kalshi" onclick="goPage('kalshi',this);return false;">Kalshi</a>
+    <a class="nav-tab" href="?page=stats" onclick="goPage('stats',this);return false;">Stats</a>
+    <a class="nav-tab" href="?page=scoreboard" onclick="goPage('scoreboard',this);return false;">Model vs Sim vs Det</a>
   </div>
   <div class="nav-record mono" id="nav-record">—</div>
   <div style="display:flex;align-items:center;gap:6px">
@@ -1912,6 +1912,7 @@ function goPage(name,btn){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
   document.querySelectorAll('.nav-tab').forEach(b=>b.classList.remove('on'));
   document.getElementById('page-'+name).classList.add('on');
+  history.replaceState(null,'','?page='+name);
   if(!btn)btn=[...document.querySelectorAll('.nav-tab')].find(b=>(b.getAttribute('onclick')||'').includes(`'${name}'`));
   if(btn)btn.classList.add('on');
   if(name==='tracker')renderTracker();
@@ -1926,7 +1927,9 @@ async function openDeepLinkGame(){
   if(!matchup)return false;
   const dateStr=params.get('date');
   goPage('games');
-  if(dateStr&&/^\d{4}-\d{2}-\d{2}$/.test(dateStr)){const[y,m,d]=dateStr.split('-').map(Number);currentDate=new Date(y,m-1,d);document.getElementById('date-display').textContent=fmtDate(currentDate);}
+  if(dateStr&&/^\d{4}-\d{2}-\d{2}$/.test(dateStr)){const[y,m,d]=dateStr.split('-').map(Number);currentDate=new Date(y,m-1,d);document.getElementById('date-display').textContent=fmtDate(currentDate);
+// Handle ?page= param for new-tab navigation
+(()=>{const p=new URLSearchParams(location.search).get('page');if(p&&['games','tracker','kalshi','stats','scoreboard'].includes(p))goPage(p);})();}
   await loadGames();
   const norm=s=>(s||'').trim().toLowerCase();
   const g=games.find(x=>norm(`${x.away_team} @ ${x.home_team}`)===norm(matchup));
@@ -2060,8 +2063,8 @@ function simMarketCell(label,verdict,ev,breakeven,gId,engine){
   const border=isPlay?'border-color:var(--purple)':'';
   const evHtml=(ev!=null&&ev!==0&&isPlay)?`<div class="ev-val" style="color:var(--purple)">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV</div>`:'';
   const breakHtml=(breakeven&&isPlay)?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>`:'';
-  const clickable=hasEdge&&gId&&engine?`style="${border}cursor:pointer" onclick="quickLogEngine('${gId}','${label}','${v}','${engine}')"` :`style="${border}"`;
-  return`<div class="market-cell" ${clickable}><div class="market-label">${label}</div><div class="market-val" style="color:${valColor};font-weight:600">${v}</div>${evHtml}${breakHtml}</div>`;
+  const clickable=hasEdge&&gId&&engine?`onclick="quickLogEngine('${gId}','${label}','${v}','${engine}')"` :'';
+  return`<div class="market-cell" style="${border}${hasEdge&&gId&&engine?'cursor:pointer':''}" ${clickable}><div class="market-label">${label}</div><div class="market-val" style="color:${valColor};font-weight:600">${v}</div>${evHtml}${breakHtml}</div>`;
 }
 
 function deriveDetVerdict(mk,g){
