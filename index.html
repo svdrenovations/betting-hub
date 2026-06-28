@@ -1310,6 +1310,10 @@ function kalshiPanelHTML(g, bets) {
     + ' data-date="' + g.game_date + '"'
     + ' data-ct="' + (g.commence_time||'').replace(/"/g,'&quot;') + '"'
     + ' data-total="' + (g.total||'') + '"'
+    + ' data-detAway="' + (g.det_proj_away||'') + '"'
+    + ' data-detHome="' + (g.det_proj_home||'') + '"'
+    + ' data-simAway="' + (g.sim_away_runs||'') + '"'
+    + ' data-simHome="' + (g.sim_home_runs||'') + '"'
     + ' data-sits="' + (g.situations||[]).join(',').replace(/"/g,'&quot;') + '"'
     + ' data-matchup="' + (g.away_team+' @ '+g.home_team).replace(/"/g,'&quot;') + '"'
     + ' data-plays="' + playsJson.replace(/"/g,'&quot;') + '"'
@@ -2606,7 +2610,22 @@ function triggerAllKalshiFetches() {
         if (m.key === 'total') askSize = kd.total_size || 0;
         // For totals: recalculate model prob using Kalshi's actual line (e.g. 8.5 not 9.0)
         // since the .5 line has a different true probability than the DK flat line
+        // Recalculate prob from the selected engine's projections
+        const _kEng = kalshiEngine[gid] || 'model';
+        const _ncdf = x => { const t=1/(1+0.2316419*Math.abs(x)),d2=0.3989423*Math.exp(-x*x/2),p=d2*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274)))); return x>0?1-p:p; };
+        const _MSD=4.0, _TSD=5.5;
         let kalshiModelP = m.p;
+        if (_kEng === 'det' || _kEng === 'sim') {
+          const _da = _kEng==='det' ? parseFloat(kdataEl.dataset.detAway||0) : parseFloat(kdataEl.dataset.simAway||0);
+          const _dh = _kEng==='det' ? parseFloat(kdataEl.dataset.detHome||0) : parseFloat(kdataEl.dataset.simHome||0);
+          if (!isNaN(_da) && !isNaN(_dh) && _da > 0 && _dh > 0) {
+            const _mu = _da - _dh;
+            const _v = (m.verdict||'').toUpperCase();
+            if (m.key==='ml') { const pA=(1-_ncdf((0.5-_mu)/_MSD)),pH=_ncdf((-0.5-_mu)/_MSD),den=(pA+pH)||1; kalshiModelP=_v.includes('AWAY')?pA/den:pH/den; }
+            else if (m.key==='rl') { const aRL=parseFloat(m.rawAwayRL)||((_mu>0)?-1.5:1.5); const pA=1-_ncdf((-aRL-_mu)/_MSD),pH=_ncdf((aRL+_mu)/_MSD); kalshiModelP=_v.includes('AWAY')?pA/(pA+pH):pH/(pA+pH); }
+            else if (m.key==='total') { const _line=parseFloat(m.line||0); if(!isNaN(_line)&&_line>0){const pO=1/(1+Math.exp(1.7*(_line-(_da+_dh))/_TSD));kalshiModelP=_v.includes('OVER')?pO:1-pO;} }
+          }
+        }
         const dkTotalLine = parseFloat(m.line || 0);
         const kalshiTotalLine = kd.total_line || null;
         if (m.key === 'total' && kalshiTotalLine != null && Math.abs(kalshiTotalLine - dkTotalLine) > 0.1) {
