@@ -286,19 +286,42 @@ function projectRuns({ offenseStats, offenseMatchups, offenseHandedness, isOffen
 // ── DET+ ENGINE ───────────────────────────────────────────────────────────────
 // Adds: xERA blending, batter Statcast (barrel/hardHit), temperature park factor
 function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isOffenseHome, defPitcher, defStatcast, defPitcherHand, isPitcherHome, defBullpen, parkFactors, weather, batterStatcastList }) {
-  const avgIP = parseFloat(defPitcher?.avgIP || 6.0);
 
-  // ERA blend: xERA takes 40% weight when available (more predictive than raw ERA)
+  // IMPROVEMENT 2 & 3: Starter innings with bullpen game detection
+  const avgIPRaw = parseFloat(defPitcher?.avgIP || 6.0);
+  let avgIP = Math.min(Math.max(avgIPRaw, 3.0), 7.0);
+  let bullpenGameAdj = 0;
+  if (defPitcher) {
+    // Signal 1: Low avgIP = opener/bulk pattern
+    if (avgIP < 4.5) bullpenGameAdj -= 0.5;
+    // Signal 2: Recent ERA much worse than season ERA = short leash
+    if (defPitcher.recentERA && defPitcher.era) {
+      const recentERA = parseFloat(defPitcher.recentERA);
+      const seasonERA = parseFloat(defPitcher.era);
+      if (!isNaN(recentERA) && !isNaN(seasonERA) && recentERA > seasonERA * 1.5 && recentERA > 6.0) bullpenGameAdj -= 0.75;
+    }
+    // Signal 3: Velo drop magnitude
+    if (defStatcast?.veloTrend != null) {
+      const trend = parseFloat(defStatcast.veloTrend);
+      if (!isNaN(trend)) { if (trend < -2.0) bullpenGameAdj -= 1.0; else if (trend < -1.0) bullpenGameAdj -= 0.5; }
+    }
+    // Signal 4: Odds API opener/bullpen note
+    if (defPitcher.note) {
+      const note = (defPitcher.note || '').toLowerCase();
+      if (note.includes('opener') || note.includes('bullpen')) bullpenGameAdj -= 2.0;
+    }
+    avgIP = Math.min(Math.max(avgIP + bullpenGameAdj, 2.0), 7.0);
+  }
+
+  // ERA blend: xERA takes 40% weight when available
   const starterERA = (() => {
     if (!defPitcher) return LEAGUE_AVG_ERA;
     const seasonERA = parseFloat(defPitcher.era || LEAGUE_AVG_ERA);
     const rawRecent = parseFloat(defPitcher.recentERA || seasonERA);
     const recentERA = Math.min(rawRecent, Math.max(seasonERA * 3.0, 9.0));
     const splitERA = isPitcherHome && defPitcher.homeERA ? parseFloat(defPitcher.homeERA) : !isPitcherHome && defPitcher.awayERA ? parseFloat(defPitcher.awayERA) : seasonERA;
-    // xERA from Statcast cache — more stable than raw ERA
     const xERA = defStatcast?.xera ? parseFloat(defStatcast.xera) : null;
     if (xERA && !isNaN(xERA) && xERA > 1.0 && xERA < 8.0) {
-      // Blend: xERA 40%, season 35%, split 15%, recent 10%
       return (xERA * 0.40) + (seasonERA * 0.35) + (splitERA * 0.15) + (recentERA * 0.10);
     }
     return (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20);
@@ -306,8 +329,24 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
 
   const starterRuns = (starterERA / 9) * avgIP;
   const bullpenIP = Math.max(0, 9 - avgIP);
+
+  // IMPROVEMENT 1: Bullpen fatigue — taxed arms allow more runs
   const bullpenERA = parseFloat(defBullpen?.weightedERA || LEAGUE_AVG_ERA);
-  const bullpenRuns = (bullpenERA / 9) * bullpenIP;
+  const fatigueNote = (defBullpen?.fatigueNote || '').toLowerCase();
+  let fatigueMultiplier = 1.0;
+  if (fatigueNote.includes('taxed')) fatigueMultiplier = 1.12;
+  else if (fatigueNote.includes('heavy')) fatigueMultiplier = 1.20;
+  const adjustedBullpenERA = bullpenERA * fatigueMultiplier;
+
+  // IMPROVEMENT 3: K-BB% as quality signal on top of ERA
+  const kbbPct = parseFloat(defBullpen?.kbbPct || 0);
+  let kbbAdj = 1.0;
+  if (!isNaN(kbbPct)) {
+    // League avg K-BB% ~14%. Higher = better bullpen (fewer runs), lower = worse
+    kbbAdj = Math.min(Math.max(1 - ((kbbPct - 14) * 0.005), 0.92), 1.08);
+  }
+
+  const bullpenRuns = (adjustedBullpenERA / 9) * bullpenIP * kbbAdj;
   const baselineRuns = starterRuns + bullpenRuns;
 
   const of_ = computeOffenseFactor(offenseStats, offenseMatchups, isOffenseHome);
@@ -315,16 +354,29 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
   const wx = computeWeatherRunFactor(weather, parkFactors);
   const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
 
-  // Statcast pitcher adjustments (same as det)
+  // Statcast pitcher adjustments
   let statcastAdj = 1.0;
   if (defStatcast) {
     if (defStatcast.whiffRate != null) { const w = parseFloat(defStatcast.whiffRate); if (!isNaN(w)) statcastAdj *= Math.min(Math.max(1 - ((w - 25) * 0.010), 0.85), 1.15); }
     if (defStatcast.hardHitRate != null) { const hh = parseFloat(defStatcast.hardHitRate); if (!isNaN(hh)) statcastAdj *= Math.min(Math.max(1 + ((hh - 38) * 0.008), 0.88), 1.12); }
-    if (defStatcast.veloTrend === 'DOWN') statcastAdj *= 1.06;
-    else if (defStatcast.veloTrend === 'UP') statcastAdj *= 0.96;
+    // IMPROVEMENT 5: Velo trend with magnitude instead of binary UP/DOWN
+    if (defStatcast.veloTrend != null) {
+      const trend = parseFloat(defStatcast.veloTrend);
+      if (!isNaN(trend)) {
+        if (trend < -2.0) statcastAdj *= 1.09;
+        else if (trend < -1.0) statcastAdj *= 1.05;
+        else if (trend < -0.5) statcastAdj *= 1.02;
+        else if (trend > 2.0) statcastAdj *= 0.93;
+        else if (trend > 1.0) statcastAdj *= 0.96;
+        else if (trend > 0.5) statcastAdj *= 0.98;
+      } else {
+        if (defStatcast.veloTrend === 'DOWN') statcastAdj *= 1.06;
+        else if (defStatcast.veloTrend === 'UP') statcastAdj *= 0.96;
+      }
+    }
   }
 
-  // NEW: Batter Statcast adjustment — aggregate hard hit and barrel rate of lineup vs this pitcher
+  // Batter Statcast adjustment
   let batterAdj = 1.0;
   if (batterStatcastList && batterStatcastList.length > 0) {
     const valid = batterStatcastList.filter(b => b && b.hardHitRate != null);
@@ -338,7 +390,17 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
     }
   }
 
-  // NEW: Temperature park factor — cold suppresses offense, heat boosts it
+  // IMPROVEMENT 4: Lineup matchup quality vs this specific pitcher
+  let matchupAdj = 1.0;
+  if (offenseMatchups && offenseMatchups.meaningful >= 3) {
+    const matchupOPS = parseFloat(offenseMatchups.avgOPS || 0);
+    const leagueOPS = 0.720;
+    if (!isNaN(matchupOPS) && matchupOPS > 0) {
+      matchupAdj = Math.min(Math.max(1 + ((matchupOPS - leagueOPS) / leagueOPS) * 0.15, 0.88), 1.14);
+    }
+  }
+
+  // Temperature park factor
   let tempAdj = 1.0;
   if (weather && !weather.dome && weather.temp != null) {
     const temp = parseFloat(weather.temp);
@@ -349,7 +411,7 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
     else if (temp >= 82) tempAdj = 1.03;
   }
 
-  const raw = baselineRuns * of_ * park * wx * plat * statcastAdj * batterAdj * tempAdj;
+  const raw = baselineRuns * of_ * park * wx * plat * statcastAdj * batterAdj * matchupAdj * tempAdj;
   return { runs: +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2) };
 }
 // ── END DET+ ENGINE ───────────────────────────────────────────────────────────
