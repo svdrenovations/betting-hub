@@ -336,11 +336,9 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 <div class="page" id="page-stats">
 <div class="container">
   <div class="topbar">
-    <div class="topbar-left"><h2>My edge stats</h2><p>Where your real edge lives</p></div>
+    <div class="topbar-left"><h2>Stats</h2><p>Performance breakdown by filter</p></div>
   </div>
-  <div id="stats-content">
-    <div class="empty-state"><div class="empty-title">No data yet</div><div class="empty-sub">Log and settle bets to see your stats.</div></div>
-  </div>
+  <div id="stats-content"></div>
 </div>
 </div>
 
@@ -1672,7 +1670,7 @@ function isoDate(d){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,
 
 // ── MODEL vs SIM SCOREBOARD ───────────────────────────────────────────────────
 let sbGames=null,sbExcluded=null;
-let sbFilter={source:[],result:[],market:[],ev:[],conf:[],from:'',to:''};
+let sbFilter={source:[],result:[],market:[],mktType:[],price:[],situation:[],ev:[],conf:[],from:'',to:''};
 let sbSort={col:'date',dir:'desc'};
 function sbSetSort(col){if(sbSort.col===col)sbSort.dir=sbSort.dir==='asc'?'desc':'asc';else{sbSort.col=col;sbSort.dir='desc';}renderScoreboard();}
 function sbSortPlays(plays){const{col,dir}=sbSort,s=dir==='asc'?1:-1;return plays.slice().sort((a,b)=>{let va,vb;if(col==='date'){va=a.date;vb=b.date;}else if(col==='ev'){va=a.ev??-999;vb=b.ev??-999;}else if(col==='units'){va=a.result==='pending'?null:a.units;vb=b.result==='pending'?null:b.units;}else if(col==='result'){va={win:1,loss:2,push:3,pending:4}[a.result]??5;vb={win:1,loss:2,push:3,pending:4}[b.result]??5;}else{va=a[col];vb=b[col];}if(va==null&&vb==null)return 0;if(va==null)return 1;if(vb==null)return-1;if(va<vb)return-1*s;if(va>vb)return 1*s;return 0;});}
@@ -1739,7 +1737,22 @@ function sbBuildPlays(games){
       const dStatus=ds==null?'none':ds===primarySide?'agree':'disagree';
       const dpStatus=dps==null?'none':dps===primarySide?'agree':'disagree';
       const result=sbGrade(mk,primarySide,g),units=result==='win'?sbProfit(primaryOdds):result==='loss'?-1:0;
-      out.push({date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,source:primarySource,side:primarySide,strength:primaryStrength,ev:(primaryEv==null||isNaN(primaryEv))?null:primaryEv,odds:primaryOdds,line:sbLineLabel(mk,primarySide,g),result,units,mStatus,sStatus,dStatus,confidence:(g.confidence||'').toUpperCase(),final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''});
+      // Market type and price bucket
+      const awayML=parseFloat(g.away_ml),homeML=parseFloat(g.home_ml);
+      let mktType='';
+      if(mk==='ml'){const isFav=primarySide==='HOME'?homeML<0:awayML<0;mktType=primarySide==='HOME'?(isFav?'ml-home-fav':'ml-home-dog'):(isFav?'ml-away-fav':'ml-away-dog');}
+      else if(mk==='rl'){mktType=primarySide==='HOME'?(parseFloat(g.home_rl||0)<0?'rl-15-home':'rl-p15-home'):(parseFloat(g.away_rl||0)<0?'rl-15-away':'rl-p15-away');}
+      else{mktType='total';}
+      const priceBucket=primaryOdds<=-150?'heavy-fav':primaryOdds<0?'fav':primaryOdds<=150?'dog':'big-dog';
+      // Situations
+      const sitArr=Array.isArray(g.situations)?g.situations:(typeof g.situations==='string'&&g.situations?JSON.parse(g.situations):[]);
+      const predAwayDet=parseFloat(g.det_proj_away),predHomeDet=parseFloat(g.det_proj_home);
+      const predAwaySim=parseFloat(g.sim_away_runs),predHomeSim=parseFloat(g.sim_home_runs);
+      const predAway=primarySource.includes('sim')&&!isNaN(predAwaySim)?predAwaySim:(!isNaN(predAwayDet)?predAwayDet:null);
+      const predHome=primarySource.includes('sim')&&!isNaN(predHomeSim)?predHomeSim:(!isNaN(predHomeDet)?predHomeDet:null);
+      const predScore=(predAway!=null&&predHome!=null)?`${predAway.toFixed(1)}-${predHome.toFixed(1)}`:'—';
+      const finalScore=(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'—';
+      out.push({date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,source:primarySource,side:primarySide,strength:primaryStrength,ev:(primaryEv==null||isNaN(primaryEv))?null:primaryEv,odds:primaryOdds,line:sbLineLabel(mk,primarySide,g),result,units,mStatus,sStatus,dStatus,confidence:(g.confidence||'').toUpperCase(),final:finalScore,actualTotal:g.actual_total??'',predScore,mktType,priceBucket,situations:sitArr});
     }
   }
   return out.filter(x=>!(sbExcluded&&sbExcluded.has(sbKey(x.date,x.matchup,x.mk,x.side,x.source))));
@@ -1763,6 +1776,9 @@ function sbPasses(x){const f=sbFilter;
   if(f.ev.length){const e=x.ev;const ok=f.ev.some(b=>b==='z'?(e!=null&&e>=0&&e<2):b==='a'?(e!=null&&e>=2&&e<6):b==='b'?(e!=null&&e>=6&&e<10):b==='c'?(e!=null&&e>=10&&e<15):b==='d'?(e!=null&&e>=15&&e<20):b==='e'?(e!=null&&e>=20&&e<25):b==='f'?(e!=null&&e>=25):false);if(!ok)return false;}
   if(f.from&&x.date<f.from)return false;
   if(f.to&&x.date>f.to)return false;
+  if(f.mktType&&f.mktType.length&&!f.mktType.includes(x.mktType))return false;
+  if(f.price&&f.price.length&&!f.price.includes(x.priceBucket))return false;
+  if(f.situation&&f.situation.length&&!f.situation.some(s=>x.situations&&x.situations.includes(s)))return false;
   return true;
 }
 function sbStats(plays){let w=0,l=0,p=0,pend=0,units=0,evs=0,evn=0;for(const x of plays){if(x.result==='win'){w++;units+=x.units;}else if(x.result==='loss'){l++;units+=x.units;}else if(x.result==='push')p++;else pend++;if(x.ev!=null){evs+=x.ev;evn++;}}const dec=w+l,settled=w+l+p;return{w,l,p,pend,units,win:dec?Math.round(100*w/dec):null,roi:settled?(units/settled*100):null,ev:evn?(evs/evn):null,n:plays.length,settled};}
@@ -1772,7 +1788,7 @@ async function renderScoreboard(){
   if(sbGames===null){
     el.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
     try{
-      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev,det_proj_away,det_proj_home,det_ml_verdict,det_ml_ev,det_rl_verdict,det_rl_ev,det_total_verdict,det_total_ev,det_plus_proj_away,det_plus_proj_home,det_plus_ml_verdict,det_plus_ml_ev,det_plus_rl_verdict,det_plus_rl_ev,det_plus_total_verdict,det_plus_total_ev,confidence';
+      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev,det_proj_away,det_proj_home,det_ml_verdict,det_ml_ev,det_rl_verdict,det_rl_ev,det_total_verdict,det_total_ev,det_plus_proj_away,det_plus_proj_home,det_plus_ml_verdict,det_plus_ml_ev,det_plus_rl_verdict,det_plus_rl_ev,det_plus_total_verdict,det_plus_total_ev,confidence,situations,sim_away_runs,sim_home_runs';
       const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?analyzed=eq.true&select=${cols}&order=game_date.desc&limit=2000`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
       if(!res.ok)throw new Error('Supabase '+res.status);
       sbGames=await res.json();
@@ -1783,6 +1799,106 @@ async function renderScoreboard(){
   }
   el.innerHTML=scoreboardHTML();
 }
+function renderStats() {
+  const el = document.getElementById('stats-content');
+  if (!el) return;
+  // Reuse sbGames — load if needed
+  if (sbGames === null) { renderScoreboard(); return; }
+  const plays = sbBuildPlays(sbGames || []).filter(x => x.result === 'win' || x.result === 'loss' || x.result === 'push');
+
+  function statRow(label, subset) {
+    const w = subset.filter(x=>x.result==='win').length;
+    const l = subset.filter(x=>x.result==='loss').length;
+    const p = subset.filter(x=>x.result==='push').length;
+    const tot = w+l+p;
+    if (!tot) return '';
+    const units = subset.reduce((s,x)=>s+x.units,0);
+    const pct = tot ? Math.round(w/tot*100) : 0;
+    const uStr = (units>=0?'+':'')+units.toFixed(2)+'u';
+    const color = units>=0?'var(--green)':'var(--red)';
+    return `<tr>
+      <td style="padding:7px 10px;font-size:12px">${label}</td>
+      <td style="padding:7px 10px;font-family:DM Mono,monospace;font-size:12px">${w}-${l}${p?'-'+p:''}</td>
+      <td style="padding:7px 10px;font-family:DM Mono,monospace;font-size:12px">${pct}%</td>
+      <td style="padding:7px 10px;font-family:DM Mono,monospace;font-size:12px;color:${color}">${uStr}</td>
+      <td style="padding:7px 10px;font-family:DM Mono,monospace;font-size:12px">${tot}</td>
+    </tr>`;
+  }
+
+  function section(title, groups) {
+    const rows = groups.map(([label, subset]) => statRow(label, subset)).filter(Boolean).join('');
+    if (!rows) return '';
+    return `<div style="margin-bottom:24px">
+      <div style="font-size:11px;color:var(--text);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;font-family:DM Mono,monospace">${title}</div>
+      <table style="width:100%;border-collapse:collapse;background:var(--s1);border-radius:8px;overflow:hidden">
+        <thead><tr style="border-bottom:1px solid var(--border)">
+          <th style="padding:6px 10px;font-size:10px;color:var(--text);text-align:left;font-family:DM Mono,monospace;text-transform:uppercase">Category</th>
+          <th style="padding:6px 10px;font-size:10px;color:var(--text);text-align:left;font-family:DM Mono,monospace;text-transform:uppercase">Record</th>
+          <th style="padding:6px 10px;font-size:10px;color:var(--text);text-align:left;font-family:DM Mono,monospace;text-transform:uppercase">Win%</th>
+          <th style="padding:6px 10px;font-size:10px;color:var(--text);text-align:left;font-family:DM Mono,monospace;text-transform:uppercase">Units</th>
+          <th style="padding:6px 10px;font-size:10px;color:var(--text);text-align:left;font-family:DM Mono,monospace;text-transform:uppercase">Plays</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  }
+
+  // Filter rows
+  const inp=(which,val,key)=>`<input type="date" value="${val}" onchange="statsFilter.${key}=this.value;renderStats()" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">`;
+  const tog2=(key,v,l)=>`<button class="filter-btn ${statsFilter[key].includes(v)?'on':''}" onclick="statsToggle('${key}','${v}')">${l}</button>`;
+  const any2=(key,l)=>`<button class="filter-btn ${statsFilter[key].length===0?'on':''}" onclick="statsClear('${key}')">${l}</button>`;
+  const src2=(v,l)=>`<button class="filter-btn ${statsFilter.source.includes(v)?'on':''}" onclick="statsSetSource('${v}')">${l}</button>`;
+
+  const filterBar = `<div class="tracker-filters">`+[['model','Model'],['sim','Sim'],['det','Det']].map(([v,l])=>src2(v,l)).join('')+`</div>`
+    +`<div class="tracker-filters">`+any2('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog2('market',v,l)).join('')+`</div>`
+    +`<div class="tracker-filters">`+any2('mktType','All mkts')+[['ml-home-fav','ML home fav'],['ml-home-dog','ML home dog'],['ml-away-fav','ML away fav'],['ml-away-dog','ML away dog'],['rl-15-home','RL -1.5 home'],['rl-15-away','RL -1.5 away'],['rl-p15-home','RL +1.5 home'],['rl-p15-away','RL +1.5 away'],['total','Total']].map(([v,l])=>tog2('mktType',v,l)).join('')+`</div>`
+    +`<div class="tracker-filters">`+any2('price','Any price')+[['heavy-fav','Heavy fav ≤-150'],['fav','Fav -150 to 0'],['dog','Dog 0 to +150'],['big-dog','Big dog +150+']].map(([v,l])=>tog2('price',v,l)).join('')+`</div>`
+    +`<div class="tracker-filters">`+any2('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10–14.9%'],['d','15–19.9%'],['e','20–24.9%'],['f','25%+']].map(([v,l])=>tog2('ev',v,l)).join('')+`</div>`
+    +`<div class="tracker-filters">`+any2('conf','Any conf')+[['HIGH','High'],['MEDIUM','Medium'],['LOW','Low']].map(([v,l])=>tog2('conf',v,l)).join('')+`</div>`
+    +`<div class="tracker-filters">`+any2('situation','Any situation')+[['weather','Weather'],['fade','Fade'],['sharp','Sharp'],['debut','Debut'],['series','Series']].map(([v,l])=>tog2('situation',v,l)).join('')+`</div>`
+    +`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from',statsFilter.from,'from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to',statsFilter.to,'to')}</div>`;
+
+  // Apply statsFilter to plays
+  function stPasses(x) {
+    const f=statsFilter;
+    if(f.source.length){const hasMod=f.source.includes('model'),hasSim=f.source.includes('sim'),hasDet=f.source.includes('det'),count=f.source.length;if(count===1){if(hasMod&&!['model','model+sim','model+det','all3'].includes(x.source))return false;if(hasSim&&!['sim','model+sim','sim+det','all3'].includes(x.source))return false;if(hasDet&&!['det','model+det','sim+det','all3'].includes(x.source))return false;}else if(count===2){if(hasSim&&hasDet&&!['sim+det','all3'].includes(x.source))return false;if(hasMod&&hasDet&&!['model+det','all3'].includes(x.source))return false;if(hasMod&&hasSim&&!['model+sim','all3'].includes(x.source))return false;}else if(count===3){if(x.source!=='all3')return false;}}
+    if(f.market.length&&!f.market.includes(x.mk))return false;
+    if(f.mktType&&f.mktType.length&&!f.mktType.includes(x.mktType))return false;
+    if(f.price&&f.price.length&&!f.price.includes(x.priceBucket))return false;
+    if(f.conf.length&&!f.conf.includes((x.confidence||'').toUpperCase()))return false;
+    if(f.ev.length){const e=x.ev;const ok=f.ev.some(b=>b==='z'?(e!=null&&e>=0&&e<2):b==='a'?(e!=null&&e>=2&&e<6):b==='b'?(e!=null&&e>=6&&e<10):b==='c'?(e!=null&&e>=10&&e<15):b==='d'?(e!=null&&e>=15&&e<20):b==='e'?(e!=null&&e>=20&&e<25):b==='f'?(e!=null&&e>=25):false);if(!ok)return false;}
+    if(f.from&&x.date<f.from)return false;
+    if(f.to&&x.date>f.to)return false;
+    if(f.situation&&f.situation.length&&!f.situation.some(s=>x.situations&&x.situations.includes(s)))return false;
+    return true;
+  }
+
+  const filtered = plays.filter(stPasses);
+
+  const bySource = (src) => filtered.filter(x=>x.source===src||x.source.includes(src));
+  const byMkt = (mk) => filtered.filter(x=>x.mk===mk);
+  const byEV = (min,max) => filtered.filter(x=>x.ev!=null&&x.ev>=min&&(max==null||x.ev<max));
+  const byConf = (c) => filtered.filter(x=>(x.confidence||'').toUpperCase()===c);
+  const byMktType = (mt) => filtered.filter(x=>x.mktType===mt);
+  const byPrice = (p) => filtered.filter(x=>x.priceBucket===p);
+  const bySit = (s) => filtered.filter(x=>x.situations&&x.situations.includes(s));
+
+  el.innerHTML = filterBar + `<div style="margin-top:16px">`
+    + section('By Engine', [['All',filtered],['Model',bySource('model')],['Sim',bySource('sim')],['Det',bySource('det')],['Sim+Det',filtered.filter(x=>x.source==='sim+det')],['All3',filtered.filter(x=>x.source==='all3')]])
+    + section('By Market', [['ML',byMkt('ml')],['RL',byMkt('rl')],['Total',byMkt('total')]])
+    + section('By Market Type', [['ML Home Fav',byMktType('ml-home-fav')],['ML Home Dog',byMktType('ml-home-dog')],['ML Away Fav',byMktType('ml-away-fav')],['ML Away Dog',byMktType('ml-away-dog')],['RL -1.5 Home',byMktType('rl-15-home')],['RL -1.5 Away',byMktType('rl-15-away')],['RL +1.5 Home',byMktType('rl-p15-home')],['RL +1.5 Away',byMktType('rl-p15-away')],['Total',byMktType('total')]])
+    + section('By Price', [['Heavy Fav ≤-150',byPrice('heavy-fav')],['Fav -150 to 0',byPrice('fav')],['Dog 0 to +150',byPrice('dog')],['Big Dog +150+',byPrice('big-dog')]])
+    + section('By EV Bucket', [['0–2%',byEV(0,2)],['2–5.9%',byEV(2,6)],['6–9.9%',byEV(6,10)],['10–14.9%',byEV(10,15)],['15–19.9%',byEV(15,20)],['20–24.9%',byEV(20,25)],['25%+',byEV(25,null)]])
+    + section('By Confidence', [['High',byConf('HIGH')],['Medium',byConf('MEDIUM')],['Low',byConf('LOW')]])
+    + section('By Situation', [['Weather',bySit('weather')],['Fade',bySit('fade')],['Sharp',bySit('sharp')],['Debut',bySit('debut')],['Series',bySit('series')]])
+    + `</div>`;
+}
+
+let statsFilter={source:[],market:[],mktType:[],price:[],ev:[],conf:[],situation:[],from:'',to:''};
+function statsSetSource(v){const i=statsFilter.source.indexOf(v);if(i>=0)statsFilter.source.splice(i,1);else statsFilter.source.push(v);renderStats();}
+function statsToggle(key,v){const a=statsFilter[key];const i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);renderStats();}
+function statsClear(key){statsFilter[key]=[];renderStats();}
+
 function sbSetSource(v){const i=sbFilter.source.indexOf(v);if(i>=0)sbFilter.source.splice(i,1);else sbFilter.source.push(v);renderScoreboard();}
 function sbToggle(key,v){const a=sbFilter[key];const i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);renderScoreboard();}
 function sbClear(key){sbFilter[key]=[];renderScoreboard();}
@@ -1817,7 +1933,7 @@ function scoreboardHTML(){
   const tog=(key,v,l)=>`<button class="filter-btn ${sbFilter[key].includes(v)?'on':''}" onclick="sbToggle('${key}','${v}')">${l}</button>`;
   const anyBtn=(key,l)=>`<button class="filter-btn ${sbFilter[key].length===0?'on':''}" onclick="sbClear('${key}')">${l}</button>`;
   const inp=(which)=>`<input type="date" value="${sbFilter[which]}" onchange="sbDate('${which}',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">`;
-  const filterBar=`<div class="tracker-filters">`+[['model','Model'],['sim','Sim'],['det','Det']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('conf','Any conf')+[['HIGH','High'],['MEDIUM','Medium'],['LOW','Low']].map(([v,l])=>tog('conf',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10–14.9%'],['d','15–19.9%'],['e','20–24.9%'],['f','25%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to')}</div>`;
+  const filterBar=`<div class="tracker-filters">`+[['model','Model'],['sim','Sim'],['det','Det']].map(([v,l])=>srcBtn(v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('result','Any result')+[['win','Won'],['loss','Lost'],['push','Push'],['pending','Pending']].map(([v,l])=>tog('result',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('market','All mkts')+[['ml','ML'],['rl','RL'],['total','Total']].map(([v,l])=>tog('market',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('conf','Any conf')+[['HIGH','High'],['MEDIUM','Medium'],['LOW','Low']].map(([v,l])=>tog('conf',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('ev','Any EV')+[['z','0–2%'],['a','2–5.9%'],['b','6–9.9%'],['c','10–14.9%'],['d','15–19.9%'],['e','20–24.9%'],['f','25%+']].map(([v,l])=>tog('ev',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('mktType','All mkts')+[['ml-home-fav','ML home fav'],['ml-home-dog','ML home dog'],['ml-away-fav','ML away fav'],['ml-away-dog','ML away dog'],['rl-15-home','RL -1.5 home'],['rl-15-away','RL -1.5 away'],['rl-p15-home','RL +1.5 home'],['rl-p15-away','RL +1.5 away'],['total','Total']].map(([v,l])=>tog('mktType',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('price','Any price')+[['heavy-fav','Heavy fav ≤-150'],['fav','Fav -150 to 0'],['dog','Dog 0 to +150'],['big-dog','Big dog +150+']].map(([v,l])=>tog('price',v,l)).join('')+`</div>`+`<div class="tracker-filters">`+anyBtn('situation','Any situation')+[['weather','Weather'],['fade','Fade'],['sharp','Sharp'],['debut','Debut'],['series','Series'],['revenge','Revenge'],['mustwin','Must win']].map(([v,l])=>tog('situation',v,l)).join('')+`</div>`+`<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>${inp('from')}<span style="font-size:11px;color:var(--text)">To</span>${inp('to')}</div>`;
   const u=(st.units>=0?'+':'')+st.units.toFixed(2);
   const statBox=(label,big,sub,color)=>`<div style="flex:1;min-width:150px;background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px"><div style="font-size:11px;color:var(--text);text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:24px;font-weight:700;font-family:DM Mono,monospace;${color?`color:${color}`:''}">${big}</div><div style="font-size:12px;color:var(--text)">${sub}</div></div>`;
   const statsPanel=`<div style="display:flex;gap:14px;flex-wrap:wrap;margin:16px 0 20px">${statBox('Record',`${st.w}-${st.l}${st.p?`-${st.p}`:''}`,st.win!=null?`${st.win}% win`:'no settled plays')}${statBox('Units · 1u/play',u+'u',st.roi!=null?`${st.roi>=0?'+':''}${st.roi.toFixed(1)}% ROI`:'—',st.units>0?'var(--green)':st.units<0?'var(--red)':'')}${statBox('Plays',String(st.n),`${st.settled} settled · ${st.pend} pending`)}${statBox('Avg EV',st.ev!=null?`+${st.ev.toFixed(1)}%`:'—','at analysis-time line')}</div>`;
@@ -1828,8 +1944,8 @@ function scoreboardHTML(){
   const thSb=(col,lbl)=>{const active=sbSort.col===col;return`<th onclick="sbSetSort('${col}')" style="${active?'color:var(--green)':''}cursor:pointer;user-select:none">${lbl}${active?(sbSort.dir==='asc'?' ▲':' ▼'):''}</th>`;};
   const resCell=x=>{const c=x.result==='win'?'var(--green)':x.result==='loss'?'var(--red)':x.result==='push'?'var(--text)':'var(--text)';const t=x.result==='win'?'W':x.result==='loss'?'L':x.result==='push'?'P':'·';return`<span style="color:${c};font-weight:600">${t}</span>`;};
   const uCell=x=>{if(x.result==='pending')return'<span style="color:var(--text)">—</span>';const c=x.units>0?'var(--green)':x.units<0?'var(--red)':'var(--text)';return`<span class="mono" style="color:${c}">${x.units>0?'+':''}${x.units.toFixed(2)}</span>`;};
-  const rows=sorted.map(x=>`<tr><td class="mono" style="font-size:11px">${x.date}</td><td style="font-size:12px">${x.matchup}</td><td style="font-size:11px">${srcBadge(x.source)}</td><td style="padding:9px 10px">${engineBadge(x.mStatus,x.sStatus,x.dStatus)}</td><td style="font-size:11px">${x.lbl}</td><td class="mono" style="font-size:11px">${x.side.toLowerCase()}</td><td class="mono" style="font-size:11px">${x.line}</td><td class="mono" style="font-size:11px;color:var(--amber)">${x.ev!=null?`+${x.ev.toFixed(1)}%`:'—'}</td><td style="font-size:11px;color:${x.confidence==='HIGH'?'var(--green)':x.confidence==='MEDIUM'?'var(--amber)':'var(--text)'}">${x.confidence||'—'}</td><td>${resCell(x)}</td><td>${uCell(x)}</td><td style="text-align:center">${isUnlocked()?`<button onclick="sbDeletePlay('${encodeURIComponent(sbKey(x.date,x.matchup,x.mk,x.side,x.source))}','${encodeURIComponent(x.date+' · '+x.matchup+' · '+x.source+' '+x.lbl+' '+x.side.toLowerCase())}')" style="background:none;border:1px solid var(--border);color:var(--text);border-radius:5px;cursor:pointer;font-size:11px;line-height:1;padding:3px 7px">✕</button>`:''}</td></tr>`).join('');
-  const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr>${thSb('date','Date')}${thSb('matchup','Matchup')}${thSb('source','Source')}<th style="font-family:DM Mono,monospace;font-size:10px;color:var(--text);padding:7px 10px;border-bottom:1px solid var(--border);text-transform:uppercase">Engines</th>${thSb('market','Mkt')}${thSb('side','Side')}${thSb('line','Line')}${thSb('ev','EV')}${thSb('conf','Conf')}${thSb('result','Res')}${thSb('units','Units')}<th></th></tr></thead><tbody>${rows||`<tr><td colspan="11" style="color:var(--text);padding:18px;text-align:center">No plays match these filters.</td></tr>`}</tbody></table></div>`;
+  const rows=sorted.map(x=>`<tr><td class="mono" style="font-size:11px">${x.date}</td><td style="font-size:12px">${x.matchup}</td><td style="font-size:11px">${srcBadge(x.source)}</td><td style="padding:9px 10px">${engineBadge(x.mStatus,x.sStatus,x.dStatus)}</td><td style="font-size:11px">${x.lbl}</td><td class="mono" style="font-size:11px">${x.side.toLowerCase()}</td><td class="mono" style="font-size:11px">${x.line}</td><td class="mono" style="font-size:11px;color:var(--amber)">${x.ev!=null?`+${x.ev.toFixed(1)}%`:'—'}</td><td style="font-size:11px;color:${x.confidence==='HIGH'?'var(--green)':x.confidence==='MEDIUM'?'var(--amber)':'var(--text)'}">${x.confidence||'—'}</td><td>${resCell(x)}</td><td>${uCell(x)}</td><td class="mono" style="font-size:11px;color:var(--muted)">${x.predScore||'—'}</td><td class="mono" style="font-size:11px">${x.final||'—'}</td><td style="text-align:center">${isUnlocked()?`<button onclick="sbDeletePlay('${encodeURIComponent(sbKey(x.date,x.matchup,x.mk,x.side,x.source))}','${encodeURIComponent(x.date+' · '+x.matchup+' · '+x.source+' '+x.lbl+' '+x.side.toLowerCase())}')" style="background:none;border:1px solid var(--border);color:var(--text);border-radius:5px;cursor:pointer;font-size:11px;line-height:1;padding:3px 7px">✕</button>`:''}</td></tr>`).join('');
+  const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr>${thSb('date','Date')}${thSb('matchup','Matchup')}${thSb('source','Source')}<th style="font-family:DM Mono,monospace;font-size:10px;color:var(--text);padding:7px 10px;border-bottom:1px solid var(--border);text-transform:uppercase">Engines</th>${thSb('market','Mkt')}${thSb('side','Side')}${thSb('line','Line')}${thSb('ev','EV')}${thSb('conf','Conf')}${thSb('result','Res')}${thSb('units','Units')}<th style="font-family:DM Mono,monospace;font-size:10px;color:var(--text);padding:7px 10px;border-bottom:1px solid var(--border);text-transform:uppercase">Pred</th><th style="font-family:DM Mono,monospace;font-size:10px;color:var(--text);padding:7px 10px;border-bottom:1px solid var(--border);text-transform:uppercase">Final</th><th></th></tr></thead><tbody>${rows||`<tr><td colspan="13" style="color:var(--text);padding:18px;text-align:center">No plays match these filters.</td></tr>`}</tbody></table></div>`;
   return filterBar+statsPanel+table;
 }
 
