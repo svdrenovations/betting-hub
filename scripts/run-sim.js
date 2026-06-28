@@ -108,6 +108,14 @@ function simHalf(models, ptr, rng) {
     ptr++;
     if (o === 'k') { outs++; continue; }
     if (o === 'out') {                                     // in-play out — may be productive
+      // GDP: runner on 1st, <2 outs — ~12% of in-play outs with runner on 1st
+      if (outs < 2 && bases[0] && rng() < 0.12) {
+        outs += 2;  // double play — runner on 1st out, batter out
+        bases[0] = false;
+        // runner on 3rd still scores on GDP if <2 outs before play
+        if (bases[2]) { runs++; bases[2] = false; }
+        continue;
+      }
       if (outs < 2) {
         if (bases[2] && rng() < 0.53) { runs++; bases[2] = false; }                       // sac fly scores from 3rd
         if (bases[1] && !bases[2] && rng() < 0.25) { bases[2] = true; bases[1] = false; }  // groundout: 2nd->3rd
