@@ -220,63 +220,18 @@ function deriveRunModel(a, lines) {
 const LEAGUE_AVG_ERA = 4.20;
 const LEAGUE_AVG_OPS = 0.720;
 
-function computeOffenseFactor(teamStats, lineupMatchups, isHome, gameTime) {
+function computeOffenseFactor(teamStats, lineupMatchups, isHome) {
   if (!teamStats) return 1.0;
   let teamOPS;
   if (isHome && teamStats.homeOPS) teamOPS = parseFloat(teamStats.homeOPS);
   else if (!isHome && teamStats.awayOPS) teamOPS = parseFloat(teamStats.awayOPS);
   else teamOPS = parseFloat(teamStats.ops || LEAGUE_AVG_OPS);
-
-  // Use OBP and SLG separately for richer signal
-  const obp = parseFloat(teamStats.obp || 0);
-  const slg = parseFloat(teamStats.slg || 0);
-  const leagueOBP = 0.315, leagueSLG = 0.405;
   let opsFactor = teamOPS / LEAGUE_AVG_OPS;
-  if (obp > 0 && slg > 0) {
-    // Weight OBP slightly more (on-base = runs) and blend with straight OPS factor
-    const obpFactor = obp / leagueOBP;
-    const slgFactor = slg / leagueSLG;
-    const componentFactor = (obpFactor * 0.55) + (slgFactor * 0.45);
-    opsFactor = (opsFactor * 0.40) + (componentFactor * 0.60);
-  }
-
-  // RISP OPS adjustment — teams vary in clutch hitting
-  if (teamStats.ruspOPS) {
-    const ruspOPS = parseFloat(teamStats.ruspOPS);
-    if (!isNaN(ruspOPS) && ruspOPS > 0) {
-      const ruspFactor = ruspOPS / LEAGUE_AVG_OPS;
-      opsFactor = (opsFactor * 0.75) + (ruspFactor * 0.25);
-    }
-  }
-
-  // Day/night split for hitters
-  if (gameTime != null) {
-    const hour = new Date(gameTime).getUTCHours() - 4; // rough ET
-    const isDay = hour < 17; // before 5pm ET = day game
-    if (isDay && teamStats.dayOPS) {
-      const dayOPS = parseFloat(teamStats.dayOPS);
-      if (!isNaN(dayOPS) && dayOPS > 0) opsFactor = (opsFactor * 0.60) + ((dayOPS / LEAGUE_AVG_OPS) * 0.40);
-    } else if (!isDay && teamStats.nightOPS) {
-      const nightOPS = parseFloat(teamStats.nightOPS);
-      if (!isNaN(nightOPS) && nightOPS > 0) opsFactor = (opsFactor * 0.60) + ((nightOPS / LEAGUE_AVG_OPS) * 0.40);
-    }
-  }
-
-  if (lineupMatchups?.avgOPS) { const matchupOPS = parseFloat(lineupMatchups.avgOPS); opsFactor = ((matchupOPS / LEAGUE_AVG_OPS * 0.40) + (opsFactor * 0.60)); }
+  if (lineupMatchups?.avgOPS) { const matchupOPS = parseFloat(lineupMatchups.avgOPS); opsFactor = ((matchupOPS * 0.50) + (teamOPS * 0.50)) / LEAGUE_AVG_OPS; }
   if (lineupMatchups?.kRate) { const kAdj = 1 - ((parseFloat(lineupMatchups.kRate) - 22.0) * 0.004); opsFactor *= Math.min(Math.max(kAdj, 0.90), 1.10); }
-
-  // Runs scored as cross-check — actual run-scoring ability
-  if (teamStats.runs) {
-    const runsPerGame = parseFloat(teamStats.runs) / 81; // approx games played
-    const leagueRPG = 4.5;
-    if (!isNaN(runsPerGame) && runsPerGame > 0) {
-      const runsFactor = runsPerGame / leagueRPG;
-      opsFactor = (opsFactor * 0.75) + (runsFactor * 0.25);
-    }
-  }
-
   return Math.min(Math.max(opsFactor, 0.55), 1.55);
 }
+
 
 function computeWeatherRunFactor(weather, parkFactors) {
   if (!weather || weather.dome || parkFactors?.dome) return 1.0;
@@ -298,7 +253,7 @@ function computePlatoonRunFactor(pitcherHand, lineupHandedness) {
   return Math.min(Math.max(1.0 - (samePct * 0.03) + (oppPct * 0.03), 0.94), 1.06);
 }
 
-function projectRuns({ offenseStats, offenseMatchups, offenseHandedness, isOffenseHome, defPitcher, defStatcast, defPitcherHand, isPitcherHome, defBullpen, parkFactors, weather, gameTime, umpire }) {
+function projectRuns({ offenseStats, offenseMatchups, offenseHandedness, isOffenseHome, defPitcher, defStatcast, defPitcherHand, isPitcherHome, defBullpen, parkFactors, weather }) {
   const avgIP = parseFloat(defPitcher?.avgIP || 6.0);
   const starterERA = (() => {
     if (!defPitcher) return LEAGUE_AVG_ERA;
@@ -313,39 +268,10 @@ function projectRuns({ offenseStats, offenseMatchups, offenseHandedness, isOffen
   const bullpenERA = parseFloat(defBullpen?.weightedERA || LEAGUE_AVG_ERA);
   const bullpenRuns = (bullpenERA / 9) * bullpenIP;
   const baselineRuns = starterRuns + bullpenRuns;
-  const of_ = computeOffenseFactor(offenseStats, offenseMatchups, isOffenseHome, gameTime);
+  const of_ = computeOffenseFactor(offenseStats, offenseMatchups, isOffenseHome);
   const park = parseFloat(parkFactors?.runFactor || 1.0);
   const wx = computeWeatherRunFactor(weather, parkFactors);
   const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
-
-  // NEW: Home/away OPS split adjustment
-  const splitOPS = isOffenseHome ? parseFloat(offenseStats?.homeOPS || 0) : parseFloat(offenseStats?.awayOPS || 0);
-  const seasonOPS = parseFloat(offenseStats?.ops || 0);
-  const splitAdj = (splitOPS > 0 && seasonOPS > 0)
-    ? Math.min(Math.max(splitOPS / seasonOPS, 0.85), 1.15) : 1.0;
-
-  // NEW: Recent form adjustment
-  const last10 = offenseStats?.last10 || null;
-  let formAdj = 1.0;
-  if (last10) {
-    const [w, g] = last10.split('-').map(Number);
-    if (!isNaN(w) && !isNaN(g) && g > 0) {
-      const pct = w / g;
-      if (pct <= 0.20) formAdj = 0.94;
-      else if (pct <= 0.30) formAdj = 0.97;
-      else if (pct >= 0.80) formAdj = 1.04;
-      else if (pct >= 0.70) formAdj = 1.02;
-    }
-  }
-
-  // NEW: Closer unavailability — inflate bullpen ERA contribution
-  const closerInfo = (defBullpen?.closerInfo || '').toUpperCase();
-  let closerAdj = 1.0;
-  if (closerInfo.includes('LIKELY UNAVAILABLE')) closerAdj = 1.15;
-  else if (closerInfo.includes('QUESTIONABLE')) closerAdj = 1.06;
-  // Re-apply to bullpen runs already computed above
-  const bullpenRunsAdj = bullpenRuns * closerAdj;
-  const baselineRunsAdj = starterRuns + bullpenRunsAdj;
   let statcastAdj = 1.0;
   if (defStatcast) {
     if (defStatcast.whiffRate != null) { const w = parseFloat(defStatcast.whiffRate); if (!isNaN(w)) statcastAdj *= Math.min(Math.max(1 - ((w - 25) * 0.010), 0.85), 1.15); }
@@ -353,46 +279,10 @@ function projectRuns({ offenseStats, offenseMatchups, offenseHandedness, isOffen
     if (defStatcast.veloTrend === 'DOWN') statcastAdj *= 1.06;
     else if (defStatcast.veloTrend === 'UP') statcastAdj *= 0.96;
   }
-
-  // WHIP adjustment — baserunners allowed, independent ERA signal
-  let whipAdj = 1.0;
-  if (defPitcher?.whip) {
-    const whip = parseFloat(defPitcher.whip);
-    const leagueWHIP = 1.30;
-    if (!isNaN(whip) && whip > 0) whipAdj = Math.min(Math.max(whip / leagueWHIP, 0.85), 1.20);
-  }
-
-  // Trending adjustment — HOT pitcher suppresses, COLD inflates
-  let trendingAdj = 1.0;
-  if (defPitcher?.trending === 'HOT') trendingAdj = 0.95;
-  else if (defPitcher?.trending === 'COLD') trendingAdj = 1.07;
-
-  // Last start pitch count — high pitch count 4-5 days ago = shorter expected outing today
-  let pitchCountAdj = 1.0;
-  if (defPitcher?.lastStartPitches) {
-    const pc = parseInt(defPitcher.lastStartPitches);
-    if (!isNaN(pc) && pc >= 100) pitchCountAdj = 1.04; // likely on shorter leash
-    if (!isNaN(pc) && pc >= 115) pitchCountAdj = 1.08; // definitely shorter
-  }
-
-  // Day/night pitcher split
-  let dnPitcherAdj = 1.0;
-  if (defPitcher && gameTime != null) {
-    const hour = new Date(gameTime).getUTCHours() - 4;
-    const isDay = hour < 17;
-    const splitERA = isDay ? parseFloat(defPitcher.dayERA || 0) : parseFloat(defPitcher.nightERA || 0);
-    const seasonERA = parseFloat(defPitcher.era || LEAGUE_AVG_ERA);
-    if (!isNaN(splitERA) && splitERA > 0 && seasonERA > 0) {
-      dnPitcherAdj = Math.min(Math.max(splitERA / seasonERA, 0.80), 1.25);
-    }
-  }
-
-  // Umpire run factor
-  const umpAdj = umpire?.runFactor ?? 1.0;
-
-  const raw = baselineRunsAdj * of_ * park * wx * plat * statcastAdj * whipAdj * trendingAdj * pitchCountAdj * dnPitcherAdj * umpAdj * splitAdj * formAdj;
+  const raw = baselineRuns * of_ * park * wx * plat * statcastAdj;
   return { runs: +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2) };
 }
+
 
 // ── DET+ ENGINE ───────────────────────────────────────────────────────────────
 // Adds: xERA blending, batter Statcast (barrel/hardHit), temperature park factor
@@ -460,7 +350,7 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
   const bullpenRuns = (adjustedBullpenERA / 9) * bullpenIP * kbbAdj;
   const baselineRuns = starterRuns + bullpenRuns;
 
-  const of_ = computeOffenseFactor(offenseStats, offenseMatchups, isOffenseHome, gameTime);
+  const of_ = computeOffenseFactor(offenseStats, offenseMatchups, isOffenseHome);
   const park = parseFloat(parkFactors?.runFactor || 1.0);
   const wx = computeWeatherRunFactor(weather, parkFactors);
   const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
@@ -1437,8 +1327,8 @@ async function main() {
       const f5Lines = f5Map[game.id] || null;
 
       // ── LLM ANALYSIS — clean pre-June 23 prompt ──────────────────────────
-            const awayRunProj = projectRuns({ offenseStats: awayStats, offenseMatchups: awayMatchups, offenseHandedness: awayMatchups?.handedness, isOffenseHome: false, defPitcher: homePitcherInfo, defStatcast: homeStatcast, defPitcherHand: homePitcherInfo?.throwHand, isPitcherHome: true, defBullpen: homeBullpen, parkFactors, weather, gameTime: game.commence_time, umpire });
-      const homeRunProj = projectRuns({ offenseStats: homeStats, offenseMatchups: homeMatchups, offenseHandedness: homeMatchups?.handedness, isOffenseHome: true, defPitcher: awayPitcherInfo, defStatcast: awayStatcast, defPitcherHand: awayPitcherInfo?.throwHand, isPitcherHome: false, defBullpen: awayBullpen, parkFactors, weather, gameTime: game.commence_time, umpire });
+            const awayRunProj = projectRuns({ offenseStats: awayStats, offenseMatchups: awayMatchups, offenseHandedness: awayMatchups?.handedness, isOffenseHome: false, defPitcher: homePitcherInfo, defStatcast: homeStatcast, defPitcherHand: homePitcherInfo?.throwHand, isPitcherHome: true, defBullpen: homeBullpen, parkFactors, weather, umpire });
+      const homeRunProj = projectRuns({ offenseStats: homeStats, offenseMatchups: homeMatchups, offenseHandedness: homeMatchups?.handedness, isOffenseHome: true, defPitcher: awayPitcherInfo, defStatcast: awayStatcast, defPitcherHand: awayPitcherInfo?.throwHand, isPitcherHome: false, defBullpen: awayBullpen, parkFactors, weather, umpire });
       const detProj = { awayRuns: awayRunProj.runs, homeRuns: homeRunProj.runs };
       console.log(`  DET (background): ${game.away_team} ${detProj.awayRuns} - ${game.home_team} ${detProj.homeRuns} (tot ${+(parseFloat(detProj.awayRuns)+parseFloat(detProj.homeRuns)).toFixed(2)})`);
 
