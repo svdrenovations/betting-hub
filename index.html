@@ -1712,7 +1712,7 @@ function sbBuildPlays(games){
     const odds=sbOddsFor(mk,side,g);
     const payout=isNaN(odds)?0:(odds>0?odds/100:100/Math.abs(odds));
     const ev=!isNaN(odds)?(prob*payout-(1-prob))*100:null;
-    if(ev==null||isNaN(ev))return null;
+    if(ev==null||isNaN(ev)||ev<6.6)return null;
     return{side,ev:+ev.toFixed(1),odds,strength:ev>=10?'BET':'LEAN'};
   }
   function detPlusFor(mk,g){
