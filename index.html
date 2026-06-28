@@ -2113,7 +2113,7 @@ function simMaxJuice(market,verdict,evPct,g){
   return market==='TOTAL'?`${side==='OVER'?'Over':'Under'} ${g.total_line} @ ${price}`:price;
 }
 
-function simMarketCell(label,verdict,ev,breakeven,gId,engine){
+function simMarketCell(label,verdict,ev,breakeven,gId,engine,logged){
   const v=verdict||'—';
   const isPlay=!!verdict&&(v.startsWith('BET')||v.includes('LEAN'));
   const valColor=isPlay?'var(--purple)':'var(--text)';
@@ -2122,7 +2122,8 @@ function simMarketCell(label,verdict,ev,breakeven,gId,engine){
   const evHtml=(ev!=null&&ev!==0&&isPlay)?`<div class="ev-val" style="color:var(--purple)">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV</div>`:'';
   const breakHtml=(breakeven&&isPlay)?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>`:'';
   const clickable=hasEdge?`onclick="quickLogEngine('${gId}','${label}','${v}','${engine}')"` :'';
-  return`<div class="market-cell" style="${border}${hasEdge?'cursor:pointer':''}" ${clickable}><div class="market-label">${label}</div><div class="market-val" style="color:${valColor};font-weight:600">${v}</div>${evHtml}${breakHtml}</div>`;
+  const check=logged?` <span style="color:var(--green);font-weight:700" title="Logged: ${String(logged).replace(/"/g,'&quot;')}">✓</span>`:'';
+  return`<div class="market-cell${logged?' logged':''}" style="${border}${hasEdge?'cursor:pointer':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val" style="color:${valColor};font-weight:600">${v}</div>${evHtml}${breakHtml}</div>`;
 }
 
 function deriveDetPlusVerdict(mk,g){
@@ -2257,14 +2258,14 @@ function gameCardHTML(g){
   const logged=loggedMarketsForGame(g);
 
   const marketsHTML=g.analyzed
-    ?`${(()=>{const dml=deriveDetVerdict('ML',g),drl=deriveDetVerdict('RL',g),dtot=deriveDetVerdict('TOTAL',g);const hasDetProj=g.det_proj_away!=null&&g.det_proj_home!=null;if(!hasDetProj)return '';return playRowLabel('DET',false,projInline(g.det_proj_away,g.det_proj_home,false))+'<div class="markets">'+simMarketCell('ML',dml.verdict,dml.ev,null,g.id,'DET')+simMarketCell('RL',drl.verdict,drl.ev,null,g.id,'DET')+simMarketCell('TOTAL',dtot.verdict,dtot.ev,null,g.id,'DET')+'</div>';})()}
+    ?`${(()=>{const dml=deriveDetVerdict('ML',g),drl=deriveDetVerdict('RL',g),dtot=deriveDetVerdict('TOTAL',g);const hasDetProj=g.det_proj_away!=null&&g.det_proj_home!=null;if(!hasDetProj)return '';return playRowLabel('DET',false,projInline(g.det_proj_away,g.det_proj_home,false))+'<div class="markets">'+simMarketCell('ML',dml.verdict,dml.ev,null,g.id,'DET',logged['ML'])+simMarketCell('RL',drl.verdict,drl.ev,null,g.id,'DET',logged['RL'])+simMarketCell('TOTAL',dtot.verdict,dtot.ev,null,g.id,'DET',logged['TOTAL'])+'</div>';})()}
       ${playRowLabel('SIM',true,projInline(g.sim_away_runs,g.sim_home_runs,true))}
       <div class="markets">
-        ${simMarketCell('ML',g.sim_ml_verdict,g.sim_ml_ev,simMaxJuice('ML',g.sim_ml_verdict,g.sim_ml_ev,g),g.id,'SIM')}
-        ${simMarketCell('RL',g.sim_rl_verdict,g.sim_rl_ev,simMaxJuice('RL',g.sim_rl_verdict,g.sim_rl_ev,g),g.id,'SIM')}
-        ${simMarketCell('TOTAL',g.sim_total_verdict,g.sim_total_ev,simMaxJuice('TOTAL',g.sim_total_verdict,g.sim_total_ev,g),g.id,'SIM')}
+        ${simMarketCell('ML',g.sim_ml_verdict,g.sim_ml_ev,simMaxJuice('ML',g.sim_ml_verdict,g.sim_ml_ev,g),g.id,'SIM',logged['ML'])}
+        ${simMarketCell('RL',g.sim_rl_verdict,g.sim_rl_ev,simMaxJuice('RL',g.sim_rl_verdict,g.sim_rl_ev,g),g.id,'SIM',logged['RL'])}
+        ${simMarketCell('TOTAL',g.sim_total_verdict,g.sim_total_ev,simMaxJuice('TOTAL',g.sim_total_verdict,g.sim_total_ev,g),g.id,'SIM',logged['TOTAL'])}
       </div>
-      ${(()=>{const dpml=deriveDetPlusVerdict('ML',g),dprl=deriveDetPlusVerdict('RL',g),dptot=deriveDetPlusVerdict('TOTAL',g);const hasDetPlus=g.det_plus_proj_away!=null&&g.det_plus_proj_home!=null;if(!hasDetPlus)return '';return playRowLabel('DET+',true,projInline(g.det_plus_proj_away,g.det_plus_proj_home,true))+'<div class="markets">'+simMarketCell('ML',dpml.verdict,dpml.ev,null,g.id,'DET+')+simMarketCell('RL',dprl.verdict,dprl.ev,null,g.id,'DET+')+simMarketCell('TOTAL',dptot.verdict,dptot.ev,null,g.id,'DET+')+'</div>';})()}
+      ${(()=>{const dpml=deriveDetPlusVerdict('ML',g),dprl=deriveDetPlusVerdict('RL',g),dptot=deriveDetPlusVerdict('TOTAL',g);const hasDetPlus=g.det_plus_proj_away!=null&&g.det_plus_proj_home!=null;if(!hasDetPlus)return '';return playRowLabel('DET+',true,projInline(g.det_plus_proj_away,g.det_plus_proj_home,true))+'<div class="markets">'+simMarketCell('ML',dpml.verdict,dpml.ev,null,g.id,'DET+',logged['ML'])+simMarketCell('RL',dprl.verdict,dprl.ev,null,g.id,'DET+',logged['RL'])+simMarketCell('TOTAL',dptot.verdict,dptot.ev,null,g.id,'DET+',logged['TOTAL'])+'</div>';})()}
       ${kalshiPanelHTML(g,bets)}`
     :`<div class="markets" style="opacity:.4">${['ML','RL','TOTAL'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
 
@@ -2434,7 +2435,7 @@ function quickLog(gameId,market,verdict,line,breakeven){
   const v=verdict.toUpperCase();
   if(market==='ML'){lt.value=v.includes('AWAY')?'Moneyline (away)':'Moneyline (home)';}
   else if(market==='RL'){const awayRL=v.includes('AWAY');lt.value=awayRL?'Run line (away)':'Run line (home)';document.getElementById('log-line').value=awayRL?(g.away_rl||''):(g.home_rl||'');}
-  else if(market==='TOTAL'){lt.value=v.includes('OVER')?'Game total over':'Game total under';}
+  else if(market==='TOTAL'){lt.value=v.includes('OVER')?'Game total over':'Game total under';if(g.total_line||g.total)document.getElementById('log-line').value=g.total_line||g.total;}
   if(line)document.getElementById('log-line').value=line;
   if(breakeven)document.getElementById('log-max-juice').value=breakeven;
   if(market==='ML'){const odds=v.includes('AWAY')?g.away_ml:g.home_ml;if(odds)document.getElementById('log-odds').value=odds;}
