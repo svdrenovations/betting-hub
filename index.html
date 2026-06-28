@@ -507,6 +507,18 @@ function evFromCents(p, cents) {
   return +(( p * (1 - c) / c - (1 - p)) * 100).toFixed(1);
 }
 const kalshiCache = {};
+const kalshiEngine = {}; // per-game engine selection: 'model'|'sim'|'det'
+function setKalshiEngine(gid, val) {
+  kalshiEngine[gid] = val;
+  // re-trigger Kalshi fetch/render for this game
+  delete kalshiCache[gid];
+  const ts = document.getElementById('kts-' + gid);
+  if (ts) ts.textContent = 'loading…';
+  // re-open panel if closed
+  const body = document.getElementById('kbody-' + gid);
+  if (body && !body.classList.contains('open')) body.classList.add('open');
+  triggerAllKalshiFetches();
+}
 const orderbookCache = {};
 
 // Fetch orderbooks for one or two tickers in a single batch call
@@ -1122,10 +1134,19 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
 function kalshiPanelHTML(g, bets) {
   // Only show panel if at least one market has 6%+ EV
   const plays = [];
+  const _eng = kalshiEngine[gid] || 'model';
+  const _v = (mk) => {
+    if (_eng === 'sim') return { verdict: g['sim_'+mk+'_verdict'], ev: g['sim_'+mk+'_ev'] };
+    if (_eng === 'det') {
+      const dv = deriveDetVerdict(mk.toUpperCase(), g);
+      return { verdict: dv.verdict === 'SKIP' ? 'SKIP' : dv.verdict, ev: dv.ev };
+    }
+    return { verdict: g[mk+'_verdict'], ev: g[mk+'_ev'] };
+  };
   const mkts = [
-    { key:'ml', label:'ML', verdict: g.ml_verdict, ev: g.ml_ev, dkOddsAway: g.away_ml, dkOddsHome: g.home_ml, breakeven: g.ml_breakeven },
-    { key:'rl', label:'RL', verdict: g.rl_verdict, ev: g.rl_ev, dkOddsAway: g.away_rl_odds, dkOddsHome: g.home_rl_odds, breakeven: g.rl_breakeven },
-    { key:'total', label:'TOTAL', verdict: g.total_verdict, ev: g.total_ev, dkOddsOver: g.over_odds, dkOddsUnder: g.under_odds, breakeven: g.total_breakeven, line: g.total_line }
+    { key:'ml', label:'ML', ..._v('ml'), dkOddsAway: g.away_ml, dkOddsHome: g.home_ml, breakeven: g.ml_breakeven },
+    { key:'rl', label:'RL', ..._v('rl'), dkOddsAway: g.away_rl_odds, dkOddsHome: g.home_rl_odds, breakeven: g.rl_breakeven },
+    { key:'total', label:'TOTAL', ..._v('total'), dkOddsOver: g.over_odds, dkOddsUnder: g.under_odds, breakeven: g.total_breakeven, line: g.total_line }
   ];
   for (const m of mkts) {
     if (!m.verdict || m.verdict === 'SKIP') continue;
@@ -1258,10 +1279,11 @@ function kalshiPanelHTML(g, bets) {
   const _arr = gameStarted ? '' : '<span style="font-size:11px;color:var(--text)">▾</span>';
   const _pStyle = gameStarted ? 'opacity:.5;pointer-events:none' : '';
   const _hLabel = gameStarted ? 'Kalshi · in progress' : 'Kalshi comparison';
+  const _engDropdown = gameStarted ? '' : `<select onchange="setKalshiEngine('${gid}',this.value);event.stopPropagation()" onclick="event.stopPropagation()" style="background:var(--s2);border:1px solid var(--border2);color:var(--text);border-radius:5px;padding:2px 6px;font-size:11px;font-family:DM Mono,monospace;cursor:pointer"><option value="model" ${_eng==='model'?'selected':''}>Model</option><option value="sim" ${_eng==='sim'?'selected':''}>Sim</option><option value="det" ${_eng==='det'?'selected':''}>Det</option></select>`;
   return '<div class="kalshi-panel" style="' + _pStyle + '">'
     + '<div class="kalshi-header" onclick="' + _hClick + '">'
     + '<div class="kalshi-title"><span class="k-dot" style="background:' + _dot + '"></span>' + _hLabel + '</div>'
-    + '<span style="display:flex;align-items:center;gap:8px"><span style="font-size:10px;font-family:DM Mono,monospace;color:var(--text)" id="kts-' + gid + '">' + _ts + '</span>'
+    + '<span style="display:flex;align-items:center;gap:8px">' + _engDropdown + '<span style="font-size:10px;font-family:DM Mono,monospace;color:var(--text)" id="kts-' + gid + '">' + _ts + '</span>'
     + (gameStarted ? '' : '<button onclick="refreshKalshi(event,\'' + gid + '\')" style="background:none;border:none;cursor:pointer;color:var(--text);font-size:11px;padding:0 2px" title="Refresh prices">↻</button>')
     + _arr + '</span>'
     + '</div>'
