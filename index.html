@@ -1691,18 +1691,20 @@ function sbBuildPlays(games){
   const neg=e=>(e!=null&&!isNaN(e)&&e<0);
   const ncdf=x=>{const t=1/(1+0.2316419*Math.abs(x)),d2=0.3989423*Math.exp(-x*x/2),p=d2*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;};
   function detFor(mk,g){
-    const da=parseFloat(g.det_proj_away),dh=parseFloat(g.det_proj_home);
-    if(isNaN(da)||isNaN(dh)||da<3||dh<3)return null;
-    const mu=da-dh,MSD=4.0,TSD=5.5;
-    let side=null,prob=null;
-    if(mk==='ml'){const pA=(1-ncdf((0.5-mu)/MSD)),pH=ncdf((-0.5-mu)/MSD),den=(pA+pH)||1;const pa=pA/den,ph=pH/den;side=pa>ph?'AWAY':'HOME';prob=pa>ph?pa:ph;}
-    else if(mk==='rl'){let aRL=parseFloat(g.away_rl),hRL=parseFloat(g.home_rl);if(isNaN(aRL))aRL=mu>0?-1.5:1.5;if(isNaN(hRL))hRL=mu>0?1.5:-1.5;const pA=1-ncdf((-aRL-mu)/MSD),pH=ncdf((hRL-mu)/MSD);side=pA>pH?'AWAY':'HOME';prob=pA>pH?pA:pH;}
-    else if(mk==='total'){const proj=da+dh,line=sbTotalLine(g);if(isNaN(line)||line<=0)return null;const pO=1/(1+Math.exp(1.7*(line-proj)/TSD));side=pO>0.5?'OVER':'UNDER';prob=pO>0.5?pO:1-pO;}
-    if(!side||!prob)return null;
+    // Use stored det verdict columns (computed server-side during analysis)
+    const verdict=g['det_'+mk+'_verdict'], ev=parseFloat(g['det_'+mk+'_ev']);
+    if(!verdict||verdict==='SKIP'||isNaN(ev)||ev<6)return null;
+    const side=verdict.includes('AWAY')?'AWAY':verdict.includes('HOME')?'HOME':verdict.includes('OVER')?'OVER':verdict.includes('UNDER')?'UNDER':null;
+    if(!side)return null;
     const odds=sbOddsFor(mk,side,g);
-    const payout=isNaN(odds)?0:(odds>0?odds/100:100/Math.abs(odds));
-    const ev=!isNaN(odds)?(prob*payout-(1-prob))*100:null;
-    if(ev==null||ev<6)return null;
+    return{side,ev:+ev.toFixed(1),odds,strength:ev>=10?'BET':'LEAN'};
+  }
+  function detPlusFor(mk,g){
+    const verdict=g['det_plus_'+mk+'_verdict'], ev=parseFloat(g['det_plus_'+mk+'_ev']);
+    if(!verdict||verdict==='SKIP'||isNaN(ev)||ev<6)return null;
+    const side=verdict.includes('AWAY')?'AWAY':verdict.includes('HOME')?'HOME':verdict.includes('OVER')?'OVER':verdict.includes('UNDER')?'UNDER':null;
+    if(!side)return null;
+    const odds=sbOddsFor(mk,side,g);
     return{side,ev:+ev.toFixed(1),odds,strength:ev>=10?'BET':'LEAN'};
   }
   for(const g of games){
@@ -1711,7 +1713,8 @@ function sbBuildPlays(games){
       const simValid=g.game_date>=SIM_VALID_FROM;
       const sp=simValid?sbParsePlay(g['sim_'+mk+'_verdict']):null,sev=simValid?parseFloat(g['sim_'+mk+'_ev']):NaN;
       const det=detFor(mk,g);
-      const ms=(mp&&!neg(mev))?mp.side:null,ss=(sp&&!neg(sev))?sp.side:null,ds=det?det.side:null;
+      const dp=detPlusFor(mk,g);
+      const ms=(mp&&!neg(mev))?mp.side:null,ss=(sp&&!neg(sev))?sp.side:null,ds=det?det.side:null,dps=dp?dp.side:null;
       if(!ms&&!ss&&!ds)continue;
       let primarySide,primarySource,primaryEv,primaryOdds,primaryStrength;
       if(ms&&ss&&ds&&ms===ss&&ss===ds){primarySide=ms;primarySource='all3';primaryEv=mev;primaryOdds=sbOddsFor(mk,ms,g);primaryStrength=mp.strength;}
@@ -1720,10 +1723,12 @@ function sbBuildPlays(games){
       else if(ss&&ds&&ss===ds){primarySide=ss;primarySource='sim+det';primaryEv=!isNaN(sev)?sev:det.ev;primaryOdds=sbOddsFor(mk,ss,g);primaryStrength=det.strength;}
       else if(ms){primarySide=ms;primarySource='model';primaryEv=mev;primaryOdds=sbOddsFor(mk,ms,g);primaryStrength=mp.strength;}
       else if(ss){primarySide=ss;primarySource='sim';primaryEv=sev;primaryOdds=sbOddsFor(mk,ss,g);primaryStrength=sp.strength;}
-      else{primarySide=ds;primarySource='det';primaryEv=det.ev;primaryOdds=det.odds;primaryStrength=det.strength;}
+      else if(ds){primarySide=ds;primarySource='det';primaryEv=det.ev;primaryOdds=det.odds;primaryStrength=det.strength;}
+      else{primarySide=dps;primarySource='det+';primaryEv=dp.ev;primaryOdds=dp.odds;primaryStrength=dp.strength;}
       const mStatus=ms==null?'none':ms===primarySide?'agree':'disagree';
       const sStatus=ss==null?'none':ss===primarySide?'agree':'disagree';
       const dStatus=ds==null?'none':ds===primarySide?'agree':'disagree';
+      const dpStatus=dps==null?'none':dps===primarySide?'agree':'disagree';
       const result=sbGrade(mk,primarySide,g),units=result==='win'?sbProfit(primaryOdds):result==='loss'?-1:0;
       out.push({date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,source:primarySource,side:primarySide,strength:primaryStrength,ev:(primaryEv==null||isNaN(primaryEv))?null:primaryEv,odds:primaryOdds,line:sbLineLabel(mk,primarySide,g),result,units,mStatus,sStatus,dStatus,confidence:(g.confidence||'').toUpperCase(),final:(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'',actualTotal:g.actual_total??''});
     }
@@ -1758,7 +1763,7 @@ async function renderScoreboard(){
   if(sbGames===null){
     el.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
     try{
-      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev,det_proj_away,det_proj_home,confidence';
+      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev,det_proj_away,det_proj_home,det_ml_verdict,det_ml_ev,det_rl_verdict,det_rl_ev,det_total_verdict,det_total_ev,det_plus_proj_away,det_plus_proj_home,det_plus_ml_verdict,det_plus_ml_ev,det_plus_rl_verdict,det_plus_rl_ev,det_plus_total_verdict,det_plus_total_ev,confidence';
       const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?analyzed=eq.true&select=${cols}&order=game_date.desc&limit=2000`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
       if(!res.ok)throw new Error('Supabase '+res.status);
       sbGames=await res.json();
