@@ -3028,10 +3028,10 @@ loadBetsFromSupabase().then(()=>{
 function quickLogEngine(gId,market,verdict,engine){
   if(!requireUnlocked())return;
   const g=games.find(x=>x.id===gId);if(!g)return;
-  pendingLog={_gameId:gId,_market:market,_engineOverride:engine};
-  const side=verdict.includes('AWAY')?'Away':verdict.includes('HOME')?'Home':verdict.includes('OVER')?'Over':'Under';
-  if(document.getElementById('log-type'))document.getElementById('log-type').value=market+' ('+side+')';
-  openLogModal(gId);
+  const side=verdict.includes('AWAY')?'away':verdict.includes('HOME')?'home':verdict.includes('OVER')?'over':'under';
+  const line=market==='ML'?(side==='away'?g.away_ml:g.home_ml):market==='RL'?(side==='away'?g.away_rl_odds:g.home_rl_odds):(side==='over'?g.over_odds:g.under_odds);
+  const rlLine=market==='RL'?(side==='away'?(g.away_rl||''):g.home_rl||''):'';
+  quickLog(gId,market,verdict,rlLine,'');
 }
 
 async function settleGameScores(btn){
