@@ -271,6 +271,35 @@ function projectRuns({ offenseStats, offenseMatchups, offenseHandedness, isOffen
   const park = parseFloat(parkFactors?.runFactor || 1.0);
   const wx = computeWeatherRunFactor(weather, parkFactors);
   const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
+
+  // NEW: Home/away OPS split adjustment
+  const splitOPS = isOffenseHome ? parseFloat(offenseStats?.homeOPS || 0) : parseFloat(offenseStats?.awayOPS || 0);
+  const seasonOPS = parseFloat(offenseStats?.ops || 0);
+  const splitAdj = (splitOPS > 0 && seasonOPS > 0)
+    ? Math.min(Math.max(splitOPS / seasonOPS, 0.85), 1.15) : 1.0;
+
+  // NEW: Recent form adjustment
+  const last10 = offenseStats?.last10 || null;
+  let formAdj = 1.0;
+  if (last10) {
+    const [w, g] = last10.split('-').map(Number);
+    if (!isNaN(w) && !isNaN(g) && g > 0) {
+      const pct = w / g;
+      if (pct <= 0.20) formAdj = 0.94;
+      else if (pct <= 0.30) formAdj = 0.97;
+      else if (pct >= 0.80) formAdj = 1.04;
+      else if (pct >= 0.70) formAdj = 1.02;
+    }
+  }
+
+  // NEW: Closer unavailability — inflate bullpen ERA contribution
+  const closerInfo = (defBullpen?.closerInfo || '').toUpperCase();
+  let closerAdj = 1.0;
+  if (closerInfo.includes('LIKELY UNAVAILABLE')) closerAdj = 1.15;
+  else if (closerInfo.includes('QUESTIONABLE')) closerAdj = 1.06;
+  // Re-apply to bullpen runs already computed above
+  const bullpenRunsAdj = bullpenRuns * closerAdj;
+  const baselineRunsAdj = starterRuns + bullpenRunsAdj;
   let statcastAdj = 1.0;
   if (defStatcast) {
     if (defStatcast.whiffRate != null) { const w = parseFloat(defStatcast.whiffRate); if (!isNaN(w)) statcastAdj *= Math.min(Math.max(1 - ((w - 25) * 0.010), 0.85), 1.15); }
@@ -410,7 +439,7 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
     else if (temp >= 82) tempAdj = 1.03;
   }
 
-  const raw = baselineRuns * of_ * park * wx * plat * statcastAdj * batterAdj * matchupAdj * tempAdj;
+  const raw = baselineRunsAdj * of_ * park * wx * plat * statcastAdj * batterAdj * matchupAdj * tempAdj * splitAdj * formAdj;
   return { runs: +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2) };
 }
 // ── END DET+ ENGINE ───────────────────────────────────────────────────────────
@@ -1328,6 +1357,8 @@ async function main() {
             awayArsenal: _statcastCache?.pitchers?.[String(awayPitcherInfo.id)]?.arsenal ? { arsenal: _statcastCache.pitchers[String(awayPitcherInfo.id)].arsenal } : null,
             homeArsenal: _statcastCache?.pitchers?.[String(homePitcherInfo.id)]?.arsenal ? { arsenal: _statcastCache.pitchers[String(homePitcherInfo.id)].arsenal } : null,
             awayBullpenObj: awayBullpen || null, homeBullpenObj: homeBullpen || null,
+            awayTeamStats: awayStats || null, homeTeamStats: homeStats || null,
+            awayMatchups: awayMatchups || null, homeMatchups: homeMatchups || null,
             parkFactors: getParkFactors(game.home_team, venueName),
             weather: weather ? { wxHR: (() => { if (!weather || weather.dome) return 1.0; let mult = 1.0; const temp = weather.temp || 72; const effWind = weather.effWind || 0; const flags = weather.flags || []; if (temp >= 90) mult *= 1.07; else if (temp >= 82) mult *= 1.04; else if (temp <= 45) mult *= 0.88; else if (temp <= 55) mult *= 0.93; if (flags.some(f => (f||'').includes('OUT to CF'))) mult *= 1 + Math.min(effWind * 0.009, 0.16); if (flags.some(f => (f||'').includes('IN from CF'))) mult *= 1 - Math.min(effWind * 0.009, 0.13); return mult; })() } : null,
             totalLine: parseFloat(lines.total) || null, f5Line: f5Lines?.f5Total || null,
