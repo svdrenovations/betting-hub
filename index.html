@@ -1799,11 +1799,19 @@ async function renderScoreboard(){
   }
   el.innerHTML=scoreboardHTML();
 }
-function renderStats() {
+async function renderStats() {
   const el = document.getElementById('stats-content');
   if (!el) return;
   // Reuse sbGames — load if needed
-  if (sbGames === null) { renderScoreboard(); return; }
+  if (sbGames === null) {
+    el.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
+    try {
+      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev,sim_away_runs,sim_home_runs,det_proj_away,det_proj_home,det_ml_verdict,det_ml_ev,det_rl_verdict,det_rl_ev,det_total_verdict,det_total_ev,det_plus_proj_away,det_plus_proj_home,confidence,situations';
+      const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?analyzed=eq.true&select=${cols}&order=game_date.desc&limit=2000`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
+      if(!res.ok)throw new Error('Supabase '+res.status);
+      sbGames=await res.json();
+    } catch(e) { el.innerHTML=`<div class="empty-state"><div class="empty-title">Could not load</div><div class="empty-sub">${e.message}</div></div>`; return; }
+  }
   const plays = sbBuildPlays(sbGames || []).filter(x => x.result === 'win' || x.result === 'loss' || x.result === 'push');
 
   function statRow(label, subset) {
