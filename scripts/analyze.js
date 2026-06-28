@@ -1442,30 +1442,6 @@ async function main() {
       const detProj = { awayRuns: awayRunProj.runs, homeRuns: homeRunProj.runs };
       console.log(`  DET (background): ${game.away_team} ${detProj.awayRuns} - ${game.home_team} ${detProj.homeRuns} (tot ${+(parseFloat(detProj.awayRuns)+parseFloat(detProj.homeRuns)).toFixed(2)})`);
 
-      const detVerdicts = (() => {
-        const da = parseFloat(detProj.awayRuns), dh = parseFloat(detProj.homeRuns);
-        if (isNaN(da) || isNaN(dh)) return {};
-        const mu = da - dh, MSD = 4.0, TSD = 5.5;
-        const ncdf = x => { const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274)))); return x>0?1-p:p; };
-        const pA=(1-ncdf((0.5-mu)/MSD)),pH=ncdf((-0.5-mu)/MSD),den=(pA+pH)||1;
-        const paMl=pA/den, phMl=pH/den;
-        const mlAway=evPct(paMl,lines.awayML), mlHome=evPct(phMl,lines.homeML);
-        const mlSide=pickSide([{ev:mlAway,label:'AWAY'},{ev:mlHome,label:'HOME'}]);
-        let aRL=parseFloat(lines.awayRL),hRL=parseFloat(lines.homeRL);
-        if(isNaN(aRL))aRL=mu>0?-1.5:1.5; if(isNaN(hRL))hRL=mu>0?1.5:-1.5;
-        const pArl=1-ncdf((-aRL-mu)/MSD), pHrl=ncdf((hRL-mu)/MSD);
-        const rlAway=evPct(pArl,lines.awayRLOdds), rlHome=evPct(pHrl,lines.homeRLOdds);
-        const rlSide=pickSide([{ev:rlAway,label:'AWAY'},{ev:rlHome,label:'HOME'}]);
-        const proj=da+dh, totalLine=parseFloat(lines.total)||NaN;
-        let totSide=null;
-        if(!isNaN(totalLine)){const pO=1/(1+Math.exp(1.7*(totalLine-proj)/TSD));const ovEV=evPct(pO,lines.overOdds),unEV=evPct(1-pO,lines.underOdds);totSide=pickSide([{ev:ovEV,label:'OVER'},{ev:unEV,label:'UNDER'}]);}
-        return {
-          ml: mlSide?verdictFor(mlSide.ev,mlSide.label):'SKIP', mlEV: mlSide?mlSide.ev:null,
-          rl: rlSide?verdictFor(rlSide.ev,rlSide.label):'SKIP', rlEV: rlSide?rlSide.ev:null,
-          total: totSide?verdictFor(totSide.ev,totSide.label):'SKIP', totalEV: totSide?totSide.ev:null,
-        };
-      })();
-
       const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName);
       if (analysis && detProj) {
         analysis.projAwayRuns = detProj.awayRuns;
@@ -1495,6 +1471,30 @@ async function main() {
         const paMl=pA/den, phMl=pH/den;
         const mlAway = evPct(paMl, lines.awayML), mlHome = evPct(phMl, lines.homeML);
         const mlSide = pickSide([{ev:mlAway,label:'AWAY'},{ev:mlHome,label:'HOME'}]);
+        let aRL=parseFloat(lines.awayRL),hRL=parseFloat(lines.homeRL);
+        if(isNaN(aRL))aRL=mu>0?-1.5:1.5; if(isNaN(hRL))hRL=mu>0?1.5:-1.5;
+        const pArl=1-ncdf((-aRL-mu)/MSD), pHrl=ncdf((hRL-mu)/MSD);
+        const rlAway=evPct(pArl,lines.awayRLOdds), rlHome=evPct(pHrl,lines.homeRLOdds);
+        const rlSide=pickSide([{ev:rlAway,label:'AWAY'},{ev:rlHome,label:'HOME'}]);
+        const proj=da+dh, totalLine=parseFloat(lines.total)||NaN;
+        let totSide=null;
+        if(!isNaN(totalLine)){const pO=1/(1+Math.exp(1.7*(totalLine-proj)/TSD));const ovEV=evPct(pO,lines.overOdds),unEV=evPct(1-pO,lines.underOdds);totSide=pickSide([{ev:ovEV,label:'OVER'},{ev:unEV,label:'UNDER'}]);}
+        return {
+          ml: mlSide?verdictFor(mlSide.ev,mlSide.label):'SKIP', mlEV: mlSide?mlSide.ev:null,
+          rl: rlSide?verdictFor(rlSide.ev,rlSide.label):'SKIP', rlEV: rlSide?rlSide.ev:null,
+          total: totSide?verdictFor(totSide.ev,totSide.label):'SKIP', totalEV: totSide?totSide.ev:null,
+        };
+      })();
+
+      const detVerdicts = (() => {
+        const da = parseFloat(detProj.awayRuns), dh = parseFloat(detProj.homeRuns);
+        if (isNaN(da) || isNaN(dh)) return {};
+        const mu = da - dh, MSD = 4.0, TSD = 5.5;
+        const ncdf = x => { const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274)))); return x>0?1-p:p; };
+        const pA=(1-ncdf((0.5-mu)/MSD)),pH=ncdf((-0.5-mu)/MSD),den=(pA+pH)||1;
+        const paMl=pA/den, phMl=pH/den;
+        const mlAway=evPct(paMl,lines.awayML), mlHome=evPct(phMl,lines.homeML);
+        const mlSide=pickSide([{ev:mlAway,label:'AWAY'},{ev:mlHome,label:'HOME'}]);
         let aRL=parseFloat(lines.awayRL),hRL=parseFloat(lines.homeRL);
         if(isNaN(aRL))aRL=mu>0?-1.5:1.5; if(isNaN(hRL))hRL=mu>0?1.5:-1.5;
         const pArl=1-ncdf((-aRL-mu)/MSD), pHrl=ncdf((hRL-mu)/MSD);
