@@ -1134,22 +1134,6 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
 function kalshiPanelHTML(g, bets) {
   // Only show panel if at least one market has 6%+ EV
   const plays = [];
-  for (const m of mkts) {
-    if (!m.verdict || m.verdict === 'SKIP') continue;
-    if (m.ev == null || parseFloat(m.ev) < 6) continue;
-    if (m.key === 'rl') {
-      const v = (m.verdict||'').toUpperCase();
-      const rlLine = parseFloat((g.away_rl||'0').toString().replace('+',''));
-      const isMinusSide = v.includes('AWAY') ? rlLine < 0 : rlLine > 0;
-      if (isMinusSide) {
-        const mlEV = parseFloat(g.ml_ev||0);
-        const mlV = (g.ml_verdict||'').toUpperCase();
-        const hasMLPlay = mlV && mlV !== 'SKIP' && mlEV >= 6;
-        if (!hasMLPlay) m.noMLConfirmation = true;
-      }
-    }
-    plays.push(m);
-  }
   if (!plays.length) return '';
   const activePlays = plays;
   const gid = g.id;
@@ -1167,6 +1151,22 @@ function kalshiPanelHTML(g, bets) {
     { key:'rl', label:'RL', ..._v('rl'), dkOddsAway: g.away_rl_odds, dkOddsHome: g.home_rl_odds, breakeven: g.rl_breakeven },
     { key:'total', label:'TOTAL', ..._v('total'), dkOddsOver: g.over_odds, dkOddsUnder: g.under_odds, breakeven: g.total_breakeven, line: g.total_line }
   ];
+  for (const m of mkts) {
+    if (!m.verdict || m.verdict === 'SKIP') continue;
+    if (m.ev == null || parseFloat(m.ev) < 6) continue;
+    if (m.key === 'rl') {
+      const v = (m.verdict||'').toUpperCase();
+      const rlLine = parseFloat((g.away_rl||'0').toString().replace('+',''));
+      const isMinusSide = v.includes('AWAY') ? rlLine < 0 : rlLine > 0;
+      if (isMinusSide) {
+        const mlEV = parseFloat(g.ml_ev||0);
+        const mlV = (g.ml_verdict||'').toUpperCase();
+        const hasMLPlay = mlV && mlV !== 'SKIP' && mlEV >= 6;
+        if (!hasMLPlay) m.noMLConfirmation = true;
+      }
+    }
+    plays.push(m);
+  }
   const prob = (m) => {
     const v = (m.verdict||'').toUpperCase();
     if (m.key==='ml') return v.includes('AWAY') ? (g.ml_away_prob||50)/100 : (g.ml_home_prob||50)/100;
