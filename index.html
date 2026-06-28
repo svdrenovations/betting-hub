@@ -349,7 +349,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
   <div class="topbar">
     <div class="topbar-left"><h2>Engine Stats</h2><p>Performance breakdown by filter</p></div>
   </div>
-  <div id="stats-content"></div>
+  <div id="engine-stats-content"></div>
 </div>
 </div>
 
@@ -1811,7 +1811,7 @@ async function renderScoreboard(){
   el.innerHTML=scoreboardHTML();
 }
 async function renderStats() {
-  const el = document.getElementById('stats-content');
+  const el = document.getElementById('engine-stats-content') || document.getElementById('stats-content');
   if (!el) return;
   // Reuse sbGames — load if needed
   if (sbGames === null) {
