@@ -371,8 +371,9 @@ async function buildMatchup({
   awayArsenal, homeArsenal,
   awayPitcherDetail, homePitcherDetail,
   awayBullpenObj, homeBullpenObj,
-  awayTeamStats, homeTeamStats,     // team OPS splits + recent form
-  awayMatchups, homeMatchups,       // lineup matchup vs this pitcher
+  awayTeamStats, homeTeamStats,
+  awayMatchups, homeMatchups,
+  gameTime, umpire,                 // day/night split + umpire run factor
   parkFactors,
   weather,
   ctx = {},
@@ -383,7 +384,7 @@ async function buildMatchup({
   const parkRunFactor = parkFactors?.runFactor ?? 1.0;
   const parkHR = parkFactors?.hrFactor ?? parkRunFactor;
   const wxHR = weather?.wxHR ?? 1.0;
-  const baseCtx = { ...ctx, parkHR, wxHR };
+  const baseCtx = { ...ctx, parkHR, wxHR, umpRunFactor };
 
   // IMPROVEMENT 1: Home/away OPS split adjustments
   // Teams play differently at home vs away — use split OPS to scale batter rates
@@ -412,6 +413,33 @@ async function buildMatchup({
   const awayFormMult = formMult(awayTeamStats?.last10);
   const homeFormMult = formMult(homeTeamStats?.last10);
 
+  // Day/night hitter split
+  function dnHitterMult(teamStats, gameTime) {
+    if (!teamStats || !gameTime) return 1.0;
+    const hour = new Date(gameTime).getUTCHours() - 4;
+    const isDay = hour < 17;
+    const splitOPS = isDay ? parseFloat(teamStats.dayOPS || 0) : parseFloat(teamStats.nightOPS || 0);
+    const seasonOPS = parseFloat(teamStats.ops || 0);
+    if (!splitOPS || !seasonOPS) return 1.0;
+    return Math.min(Math.max(splitOPS / seasonOPS, 0.88), 1.12);
+  }
+  const awayDNMult = dnHitterMult(awayTeamStats, gameTime);
+  const homeDNMult = dnHitterMult(homeTeamStats, gameTime);
+
+  // RISP adjustment — clutch hitting ability
+  function ruspMult(teamStats) {
+    if (!teamStats?.ruspOPS) return 1.0;
+    const ruspOPS = parseFloat(teamStats.ruspOPS);
+    const seasonOPS = parseFloat(teamStats.ops || 0.720);
+    if (isNaN(ruspOPS) || ruspOPS <= 0) return 1.0;
+    return Math.min(Math.max(ruspOPS / seasonOPS, 0.90), 1.10);
+  }
+  const awayRuspMult = ruspMult(awayTeamStats);
+  const homeRuspMult = ruspMult(homeTeamStats);
+
+  // Umpire run factor
+  const umpRunFactor = umpire?.runFactor ?? 1.0;
+
   // IMPROVEMENT 3: Closer unavailability — if closer is LIKELY UNAVAILABLE, inflate bullpen ERA
   function bullpenCloserAdj(bullpenObj) {
     if (!bullpenObj) return 1.0;
@@ -432,8 +460,38 @@ async function buildMatchup({
     fetchBullpenRates(homeTeamId, season, homeBullpenObj),   // IMPROVEMENT 2
   ]);
 
-  const awaySPAdj = applyStatcastToPitcher(awaySP, awayStarterStatcast);
-  const homeSPAdj = applyStatcastToPitcher(homeSP, homeStarterStatcast);
+  let awaySPAdj = applyStatcastToPitcher(awaySP, awayStarterStatcast);
+  let homeSPAdj = applyStatcastToPitcher(homeSP, homeStarterStatcast);
+
+  // Day/night pitcher ERA scaling
+  function applyDNPitcher(rates, pitcherDetail, gameTime) {
+    if (!pitcherDetail || !gameTime) return rates;
+    const hour = new Date(gameTime).getUTCHours() - 4;
+    const isDay = hour < 17;
+    const splitERA = parseFloat(isDay ? (pitcherDetail.dayERA||0) : (pitcherDetail.nightERA||0));
+    const seasonERA = parseFloat(pitcherDetail.era || LEAGUE_AVG_ERA);
+    if (!splitERA || !seasonERA) return rates;
+    const dnAdj = Math.min(Math.max(splitERA / seasonERA, 0.80), 1.25);
+    if (Math.abs(dnAdj - 1.0) < 0.02) return rates;
+    const adj = { ...rates };
+    for (const e of ['bb','s','d','hr']) adj[e] = (adj[e]||0) * dnAdj;
+    adj.k = (adj.k||0) / Math.max(dnAdj, 0.75);
+    const sum = EVENTS.reduce((a,e) => a + (adj[e]||0), 0);
+    for (const e of EVENTS) adj[e] = (adj[e]||0) / sum;
+    return adj;
+  }
+  awaySPAdj = applyDNPitcher(awaySPAdj, awayStarterInfo, gameTime);
+  homeSPAdj = applyDNPitcher(homeSPAdj, homeStarterInfo, gameTime);
+
+  // Last start pitch count — shorten starter innings
+  function applyPitchCountToIP(ip, pitcherDetail) {
+    if (!pitcherDetail?.lastStartPitches) return ip;
+    const pc = parseInt(pitcherDetail.lastStartPitches);
+    if (isNaN(pc)) return ip;
+    if (pc >= 115) return Math.max(ip - 0.5, 2.0);
+    if (pc >= 100) return Math.max(ip - 0.25, 2.0);
+    return ip;
+  }
 
   // Apply platoon + arsenal to batters
   const awayBatsAdj = applyPlatoonToLineup(awayBats, awayLineupHandedness, homeStarterHand)
@@ -479,13 +537,24 @@ async function buildMatchup({
   const awayBatsMatchup = applyMatchupAdj(awayBatsPark, awayMatchups);
   const homeBatsMatchup = applyMatchupAdj(homeBatsPark, homeMatchups);
 
-  // Apply home/away OPS split + recent form
-  const awayBatsFinal = applyTeamAdj(awayBatsMatchup, awaySplitMult, awayFormMult);
-  const homeBatsFinal = applyTeamAdj(homeBatsMatchup, homeSplitMult, homeFormMult);
+  // Apply home/away OPS split + recent form + day/night + RISP
+  function applyAllTeamAdj(rates, splitMult, formMult, dnMult, ruspMult) {
+    const combined = splitMult * formMult * dnMult * ruspMult;
+    if (Math.abs(combined - 1.0) < 0.01) return rates;
+    return rates.map(b => {
+      const adj = { ...b };
+      for (const e of ['bb','s','d','t','hr']) adj[e] = (adj[e]||0) * combined;
+      const sum = EVENTS.reduce((a,e) => a + (adj[e]||0), 0);
+      for (const e of EVENTS) adj[e] = (adj[e]||0) / sum;
+      return adj;
+    });
+  }
+  const awayBatsFinal = applyAllTeamAdj(awayBatsMatchup, awaySplitMult, awayFormMult, awayDNMult, awayRuspMult);
+  const homeBatsFinal = applyAllTeamAdj(homeBatsMatchup, homeSplitMult, homeFormMult, homeDNMult, homeRuspMult);
 
   // IMPROVEMENT 3: Estimate starter innings from real data
-  const awayIP = estimateStarterInnings(awayStarterInfo, awayStarterStatcast);
-  const homeIP = estimateStarterInnings(homeStarterInfo, homeStarterStatcast);
+  const awayIP = applyPitchCountToIP(estimateStarterInnings(awayStarterInfo, awayStarterStatcast), awayStarterInfo);
+  const homeIP = applyPitchCountToIP(estimateStarterInnings(homeStarterInfo, homeStarterStatcast), homeStarterInfo);
 
   // IMPROVEMENT 3: Apply closer unavailability to bullpen rates
   function applyCloserAdj(penRates, closerAdj) {
