@@ -1327,6 +1327,7 @@ async function main() {
       const f5Lines = f5Map[game.id] || null;
 
       // ── LLM ANALYSIS — clean pre-June 23 prompt ──────────────────────────
+      const parkFactors = getParkFactors(game.home_team, venueName);
             const awayRunProj = projectRuns({ offenseStats: awayStats, offenseMatchups: awayMatchups, offenseHandedness: awayMatchups?.handedness, isOffenseHome: false, defPitcher: homePitcherInfo, defStatcast: homeStatcast, defPitcherHand: homePitcherInfo?.throwHand, isPitcherHome: true, defBullpen: homeBullpen, parkFactors, weather, umpire });
       const homeRunProj = projectRuns({ offenseStats: homeStats, offenseMatchups: homeMatchups, offenseHandedness: homeMatchups?.handedness, isOffenseHome: true, defPitcher: awayPitcherInfo, defStatcast: awayStatcast, defPitcherHand: awayPitcherInfo?.throwHand, isPitcherHome: false, defBullpen: awayBullpen, parkFactors, weather, umpire });
       const detProj = { awayRuns: awayRunProj.runs, homeRuns: homeRunProj.runs };
@@ -1340,9 +1341,6 @@ async function main() {
       }
 
       if (!analysis) { console.error(`  ✗ ${game.away_team} @ ${game.home_team}: analysis parse failed — keeping previous row`); continue; }
-
-      // ── DETERMINISTIC PROJECTION (background reference — never shown to LLM) ──
-      const parkFactors = getParkFactors(game.home_team, venueName);
 
       // ── DET+ (enhanced det with xERA + batter Statcast + temp adjustment) ─
       const awayBatStatcast = awayMatchups?.lineup?.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null) || [];
