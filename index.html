@@ -1717,7 +1717,7 @@ async function renderScoreboard(){
   if(sbGames===null){
     el.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
     try{
-      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev,det_proj_away,det_proj_home,sim_plus_away_runs,sim_plus_home_runs,sim_plus_ml_verdict,sim_plus_ml_ev,sim_plus_rl_verdict,sim_plus_rl_ev,sim_plus_total_verdict,sim_plus_total_ev,det_plus_proj_away,det_plus_proj_home,det_plus_ml_verdict,det_plus_ml_ev,det_plus_rl_verdict,det_plus_rl_ev,det_plus_total_verdict,det_plus_total_ev,confidence';
+      const cols='game_date,away_team,home_team,away_final,home_final,actual_total,total_line,total_breakeven,away_ml,home_ml,over_odds,under_odds,away_rl,home_rl,away_rl_odds,home_rl_odds,ml_verdict,ml_ev,rl_verdict,rl_ev,total_verdict,total_ev,sim_ml_verdict,sim_ml_ev,sim_rl_verdict,sim_rl_ev,sim_total_verdict,sim_total_ev,det_proj_away,det_proj_home,confidence';
       const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?analyzed=eq.true&select=${cols}&order=game_date.desc&limit=2000`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
       if(!res.ok)throw new Error('Supabase '+res.status);
       sbGames=await res.json();
