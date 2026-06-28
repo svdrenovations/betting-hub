@@ -1730,6 +1730,27 @@ function sbBuildPlays(games){
     const odds=sbOddsFor(mk,side,g);
     return{side,ev:+ev.toFixed(1),odds,strength:ev>=10?'BET':'LEAN'};
   }
+  function pushPlay(g,mk,lbl,primarySide,primarySource,primaryEv,primaryOdds,primaryStrength,ms,ss,ds){
+    const mStatus=ms==null?'none':ms===primarySide?'agree':'disagree';
+    const sStatus=ss==null?'none':ss===primarySide?'agree':'disagree';
+    const dStatus=ds==null?'none':ds===primarySide?'agree':'disagree';
+    const result=sbGrade(mk,primarySide,g),units=result==='win'?sbProfit(primaryOdds):result==='loss'?-1:0;
+    const awayML=parseFloat(g.away_ml),homeML=parseFloat(g.home_ml);
+    let mktType='';
+    if(mk==='ml'){const isFav=primarySide==='HOME'?homeML<0:awayML<0;mktType=primarySide==='HOME'?(isFav?'ml-home-fav':'ml-home-dog'):(isFav?'ml-away-fav':'ml-away-dog');}
+    else if(mk==='rl'){mktType=primarySide==='HOME'?(parseFloat(g.home_rl||0)<0?'rl-15-home':'rl-p15-home'):(parseFloat(g.away_rl||0)<0?'rl-15-away':'rl-p15-away');}
+    else{mktType='total';}
+    const priceBucket=primaryOdds<=-150?'heavy-fav':primaryOdds<0?'fav':primaryOdds<=150?'dog':'big-dog';
+    const sitArr=Array.isArray(g.situations)?g.situations:(typeof g.situations==='string'&&g.situations?JSON.parse(g.situations):[]);
+    const predAwayDet=parseFloat(g.det_proj_away),predHomeDet=parseFloat(g.det_proj_home);
+    const predAwaySim=parseFloat(g.sim_away_runs),predHomeSim=parseFloat(g.sim_home_runs);
+    const predAway=primarySource.includes('sim')&&!isNaN(predAwaySim)?predAwaySim:(!isNaN(predAwayDet)?predAwayDet:null);
+    const predHome=primarySource.includes('sim')&&!isNaN(predHomeSim)?predHomeSim:(!isNaN(predHomeDet)?predHomeDet:null);
+    const predScore=(predAway!=null&&predHome!=null)?`${predAway.toFixed(1)}-${predHome.toFixed(1)}`:'—';
+    const finalScore=(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'—';
+    out.push({date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,source:primarySource,side:primarySide,strength:primaryStrength,ev:(primaryEv==null||isNaN(primaryEv))?null:primaryEv,odds:primaryOdds,line:sbLineLabel(mk,primarySide,g),result,units,mStatus,sStatus,dStatus,confidence:(g.confidence||'').toUpperCase(),final:finalScore,actualTotal:g.actual_total??'',predScore,mktType,priceBucket,situations:sitArr});
+  }
+
   for(const g of games){
     for(const[mk,lbl]of SB_MKTS){
       const modelValid=g.game_date<MODEL_VALID_TO;
@@ -1737,40 +1758,36 @@ function sbBuildPlays(games){
       const simValid=g.game_date>=SIM_VALID_FROM;
       const sp=simValid?sbParsePlay(g['sim_'+mk+'_verdict']):null,sev=simValid?parseFloat(g['sim_'+mk+'_ev']):NaN;
       const det=detFor(mk,g);
-      const dp=detPlusFor(mk,g);
-      const ms=(mp&&!neg(mev))?mp.side:null,ss=(sp&&!neg(sev))?sp.side:null,ds=det?det.side:null,dps=dp?dp.side:null;
-      if(!ms&&!ss&&!ds)continue;
-      let primarySide,primarySource,primaryEv,primaryOdds,primaryStrength;
-      if(ms&&ss&&ds&&ms===ss&&ss===ds){primarySide=ms;primarySource='all3';primaryEv=mev;primaryOdds=sbOddsFor(mk,ms,g);primaryStrength=mp.strength;}
-      else if(ms&&ss&&ms===ss){primarySide=ms;primarySource='model+sim';primaryEv=mev;primaryOdds=sbOddsFor(mk,ms,g);primaryStrength=mp.strength;}
-      else if(ms&&ds&&ms===ds){primarySide=ms;primarySource='model+det';primaryEv=mev;primaryOdds=sbOddsFor(mk,ms,g);primaryStrength=mp.strength;}
-      else if(ss&&ds&&ss===ds){primarySide=ss;primarySource='sim+det';primaryEv=!isNaN(sev)?sev:det.ev;primaryOdds=sbOddsFor(mk,ss,g);primaryStrength=det.strength;}
-      else if(ms){primarySide=ms;primarySource='model';primaryEv=mev;primaryOdds=sbOddsFor(mk,ms,g);primaryStrength=mp.strength;}
-      else if(ss){primarySide=ss;primarySource='sim';primaryEv=sev;primaryOdds=sbOddsFor(mk,ss,g);primaryStrength=sp.strength;}
-      else if(ds){primarySide=ds;primarySource='det';primaryEv=det.ev;primaryOdds=det.odds;primaryStrength=det.strength;}
-      else if(dps){primarySide=dps;primarySource='det+';primaryEv=dp.ev;primaryOdds=dp.odds;primaryStrength=dp.strength;}
-      else continue;
-      const mStatus=ms==null?'none':ms===primarySide?'agree':'disagree';
-      const sStatus=ss==null?'none':ss===primarySide?'agree':'disagree';
-      const dStatus=ds==null?'none':ds===primarySide?'agree':'disagree';
-      const dpStatus=dps==null?'none':dps===primarySide?'agree':'disagree';
-      const result=sbGrade(mk,primarySide,g),units=result==='win'?sbProfit(primaryOdds):result==='loss'?-1:0;
-      // Market type and price bucket
-      const awayML=parseFloat(g.away_ml),homeML=parseFloat(g.home_ml);
-      let mktType='';
-      if(mk==='ml'){const isFav=primarySide==='HOME'?homeML<0:awayML<0;mktType=primarySide==='HOME'?(isFav?'ml-home-fav':'ml-home-dog'):(isFav?'ml-away-fav':'ml-away-dog');}
-      else if(mk==='rl'){mktType=primarySide==='HOME'?(parseFloat(g.home_rl||0)<0?'rl-15-home':'rl-p15-home'):(parseFloat(g.away_rl||0)<0?'rl-15-away':'rl-p15-away');}
-      else{mktType='total';}
-      const priceBucket=primaryOdds<=-150?'heavy-fav':primaryOdds<0?'fav':primaryOdds<=150?'dog':'big-dog';
-      // Situations
-      const sitArr=Array.isArray(g.situations)?g.situations:(typeof g.situations==='string'&&g.situations?JSON.parse(g.situations):[]);
-      const predAwayDet=parseFloat(g.det_proj_away),predHomeDet=parseFloat(g.det_proj_home);
-      const predAwaySim=parseFloat(g.sim_away_runs),predHomeSim=parseFloat(g.sim_home_runs);
-      const predAway=primarySource.includes('sim')&&!isNaN(predAwaySim)?predAwaySim:(!isNaN(predAwayDet)?predAwayDet:null);
-      const predHome=primarySource.includes('sim')&&!isNaN(predHomeSim)?predHomeSim:(!isNaN(predHomeDet)?predHomeDet:null);
-      const predScore=(predAway!=null&&predHome!=null)?`${predAway.toFixed(1)}-${predHome.toFixed(1)}`:'—';
-      const finalScore=(g.away_final!=null&&g.home_final!=null)?`${g.away_final}-${g.home_final}`:'—';
-      out.push({date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,mk,lbl,source:primarySource,side:primarySide,strength:primaryStrength,ev:(primaryEv==null||isNaN(primaryEv))?null:primaryEv,odds:primaryOdds,line:sbLineLabel(mk,primarySide,g),result,units,mStatus,sStatus,dStatus,confidence:(g.confidence||'').toUpperCase(),final:finalScore,actualTotal:g.actual_total??'',predScore,mktType,priceBucket,situations:sitArr});
+      const ms=(mp&&!neg(mev))?mp.side:null;
+      const ss=(sp&&!neg(sev))?sp.side:null;
+      const ds=det?det.side:null;
+
+      // Model plays (historical only)
+      if(ms){
+        const src=ms===ss&&ms===ds?'all3':ms===ss?'model+sim':ms===ds?'model+det':'model';
+        pushPlay(g,mk,lbl,ms,src,mev,sbOddsFor(mk,ms,g),mp.strength,ms,ss,ds);
+      }
+
+      // Sim plays — independent row (skip if already emitted as model+sim or all3)
+      if(ss&&!ms){
+        const src=ss===ds?'sim+det':'sim';
+        pushPlay(g,mk,lbl,ss,src,sev,sbOddsFor(mk,ss,g),sp.strength,ms,ss,ds);
+      } else if(ss&&ms&&ss!==ms){
+        // sim disagrees with model — still emit sim's own row
+        pushPlay(g,mk,lbl,ss,'sim',sev,sbOddsFor(mk,ss,g),sp.strength,ms,ss,ds);
+      }
+
+      // Det plays — independent row (skip if already captured in model+det or all3)
+      if(ds&&!ms){
+        if(!ss||ss!==ds){
+          // det disagrees with sim or sim has no play — emit det's own row
+          pushPlay(g,mk,lbl,ds,'det',det.ev,det.odds,det.strength,ms,ss,ds);
+        }
+        // if ss===ds, already emitted as sim+det above — skip to avoid duplicate
+      } else if(ds&&ms&&ds!==ms){
+        // det disagrees with model — emit det's own row
+        pushPlay(g,mk,lbl,ds,'det',det.ev,det.odds,det.strength,ms,ss,ds);
+      }
     }
   }
   return out.filter(x=>!(sbExcluded&&sbExcluded.has(sbKey(x.date,x.matchup,x.mk,x.side,x.source))));
@@ -2149,7 +2166,7 @@ function deriveDetVerdict(mk,g){
   const da=parseFloat(g.det_proj_away),dh=parseFloat(g.det_proj_home);
   if(isNaN(da)||isNaN(dh)||da<3||dh<3)return{verdict:null,ev:null};
   const mu=da-dh,MSD=4.0,TSD=5.5;
-  const ncdf=x=>{const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;};
+  const ncdf=x=>{const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.330274))));return x>0?1-p:p;};
   let side=null,prob=null;
   if(mk==='ML'){const pA=(1-ncdf((0.5-mu)/MSD)),pH=ncdf((-0.5-mu)/MSD),den=(pA+pH)||1;const pa=pA/den,ph=pH/den;side=pa>ph?'AWAY':'HOME';prob=pa>ph?pa:ph;}
   else if(mk==='RL'){let aRL=parseFloat(g.away_rl),hRL=parseFloat(g.home_rl);if(isNaN(aRL))aRL=mu>0?-1.5:1.5;if(isNaN(hRL))hRL=mu>0?1.5:-1.5;const pA=1-ncdf((-aRL-mu)/MSD),pH=ncdf((hRL-mu)/MSD);side=pA>pH?'AWAY':'HOME';prob=pA>pH?pA:pH;}
@@ -2160,6 +2177,12 @@ function deriveDetVerdict(mk,g){
   const payout=odds>0?odds/100:100/Math.abs(odds);
   const ev=(prob*payout-(1-prob))*100;
   if(ev<6.6)return{verdict:'SKIP',ev:+ev.toFixed(1)};
+  // Sweep fade — skip ML/RL plays on the sweeping team
+  if((mk==='ML'||mk==='RL')&&g.sweep_fade){
+    const sf=(g.sweep_fade||'').toUpperCase();
+    const sweepSide=sf.includes('(AWAY')?'AWAY':sf.includes('(HOME')?'HOME':null;
+    if(sweepSide&&side===sweepSide)return{verdict:'SKIP',ev:+ev.toFixed(1),fadedBySweep:true};
+  }
   const strength=ev>=10?'BET':'LEAN';
   return{verdict:`${strength} ${side}`,ev:+ev.toFixed(1)};
 }
