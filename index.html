@@ -1968,6 +1968,25 @@ function simMarketCell(label,verdict,ev,breakeven,gId,engine){
   return`<div class="market-cell" style="${border}${hasEdge?'cursor:pointer':''}" ${clickable}><div class="market-label">${label}</div><div class="market-val" style="color:${valColor};font-weight:600">${v}</div>${evHtml}${breakHtml}</div>`;
 }
 
+function deriveDetPlusVerdict(mk,g){
+  const da=parseFloat(g.det_plus_proj_away),dh=parseFloat(g.det_plus_proj_home);
+  if(isNaN(da)||isNaN(dh)||da<3||dh<3)return{verdict:null,ev:null};
+  const mu=da-dh,MSD=4.0,TSD=5.5;
+  const ncdf=x=>{const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;};
+  let side=null,prob=null;
+  if(mk==='ML'){const pA=(1-ncdf((0.5-mu)/MSD)),pH=ncdf((-0.5-mu)/MSD),den=(pA+pH)||1;const pa=pA/den,ph=pH/den;side=pa>ph?'AWAY':'HOME';prob=pa>ph?pa:ph;}
+  else if(mk==='RL'){let aRL=parseFloat(g.away_rl),hRL=parseFloat(g.home_rl);if(isNaN(aRL))aRL=mu>0?-1.5:1.5;if(isNaN(hRL))hRL=mu>0?1.5:-1.5;const pA=1-ncdf((-aRL-mu)/MSD),pH=ncdf((hRL-mu)/MSD);side=pA>pH?'AWAY':'HOME';prob=pA>pH?pA:pH;}
+  else if(mk==='TOTAL'){const proj=da+dh,line=parseFloat(g.total_line||g.total);if(isNaN(line)||line<=0)return{verdict:null,ev:null};const pO=1/(1+Math.exp(1.7*(line-proj)/TSD));side=pO>0.5?'OVER':'UNDER';prob=pO>0.5?pO:1-pO;}
+  if(!side||!prob)return{verdict:null,ev:null};
+  const odds=mk==='ML'?(side==='AWAY'?parseFloat(g.away_ml):parseFloat(g.home_ml)):mk==='RL'?(side==='AWAY'?parseFloat(g.away_rl_odds):parseFloat(g.home_rl_odds)):(side==='OVER'?parseFloat(g.over_odds):parseFloat(g.under_odds));
+  if(isNaN(odds))return{verdict:null,ev:null};
+  const payout=odds>0?odds/100:100/Math.abs(odds);
+  const ev=(prob*payout-(1-prob))*100;
+  if(ev<6)return{verdict:'SKIP',ev:+ev.toFixed(1)};
+  const strength=ev>=10?'BET':'LEAN';
+  return{verdict:`${strength} ${side}`,ev:+ev.toFixed(1)};
+}
+
 function deriveDetVerdict(mk,g){
   const da=parseFloat(g.det_proj_away),dh=parseFloat(g.det_proj_home);
   if(isNaN(da)||isNaN(dh)||da<3||dh<3)return{verdict:null,ev:null};
@@ -2081,19 +2100,14 @@ function gameCardHTML(g){
   const logged=loggedMarketsForGame(g);
 
   const marketsHTML=g.analyzed
-    ?`${playRowLabel('MODEL',false,projInline(g.proj_away_runs,g.proj_home_runs,false))}
-      <div class="markets">
-        ${marketCell('ML',g.ml_verdict,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged.ML,false)}
-        ${marketCell('RL',g.rl_verdict,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged.RL,(() => { const v=(g.rl_verdict||'').toUpperCase(); if(!v||v==='SKIP') return false; const rlLine=parseFloat((g.away_rl||'0').toString().replace('+','')); const isMinusSide=v.includes('AWAY')?rlLine<0:rlLine>0; if(!isMinusSide) return false; const mlEV=parseFloat(g.ml_ev||0); const mlV=(g.ml_verdict||'').toUpperCase(); return !mlV||mlV==='SKIP'||mlEV<6; })())}
-        ${marketCell('TOTAL',g.total_verdict,g.total_ev,g.best_market==='total',g.total_line,g.proj_total,g.total_breakeven,g.id,logged.TOTAL,false)}
-      </div>
+    ?`${(()=>{const dml=deriveDetVerdict('ML',g),drl=deriveDetVerdict('RL',g),dtot=deriveDetVerdict('TOTAL',g);const hasDetProj=g.det_proj_away!=null&&g.det_proj_home!=null;if(!hasDetProj)return '';return playRowLabel('DET',false,projInline(g.det_proj_away,g.det_proj_home,false))+'<div class="markets">'+simMarketCell('ML',dml.verdict,dml.ev,null,g.id,'DET')+simMarketCell('RL',drl.verdict,drl.ev,null,g.id,'DET')+simMarketCell('TOTAL',dtot.verdict,dtot.ev,null,g.id,'DET')+'</div>';})()}
       ${playRowLabel('SIM',true,projInline(g.sim_away_runs,g.sim_home_runs,true))}
       <div class="markets">
         ${simMarketCell('ML',g.sim_ml_verdict,g.sim_ml_ev,simMaxJuice('ML',g.sim_ml_verdict,g.sim_ml_ev,g),g.id,'SIM')}
         ${simMarketCell('RL',g.sim_rl_verdict,g.sim_rl_ev,simMaxJuice('RL',g.sim_rl_verdict,g.sim_rl_ev,g),g.id,'SIM')}
         ${simMarketCell('TOTAL',g.sim_total_verdict,g.sim_total_ev,simMaxJuice('TOTAL',g.sim_total_verdict,g.sim_total_ev,g),g.id,'SIM')}
       </div>
-      ${(()=>{const dml=deriveDetVerdict('ML',g),drl=deriveDetVerdict('RL',g),dtot=deriveDetVerdict('TOTAL',g);const hasDetProj=g.det_proj_away!=null&&g.det_proj_home!=null;if(!hasDetProj)return '';return playRowLabel('DET',true,projInline(g.det_proj_away,g.det_proj_home,true))+'<div class="markets">'+simMarketCell('ML',dml.verdict,dml.ev,null,g.id,'DET')+simMarketCell('RL',drl.verdict,drl.ev,null,g.id,'DET')+simMarketCell('TOTAL',dtot.verdict,dtot.ev,null,g.id,'DET')+'</div>';})()}
+      ${(()=>{const dpml=deriveDetPlusVerdict('ML',g),dprl=deriveDetPlusVerdict('RL',g),dptot=deriveDetPlusVerdict('TOTAL',g);const hasDetPlus=g.det_plus_proj_away!=null&&g.det_plus_proj_home!=null;if(!hasDetPlus)return '';return playRowLabel('DET+',true,projInline(g.det_plus_proj_away,g.det_plus_proj_home,true))+'<div class="markets">'+simMarketCell('ML',dpml.verdict,dpml.ev,null,g.id,'DET+')+simMarketCell('RL',dprl.verdict,dprl.ev,null,g.id,'DET+')+simMarketCell('TOTAL',dptot.verdict,dptot.ev,null,g.id,'DET+')+'</div>';})()}
       ${kalshiPanelHTML(g,bets)}`
     :`<div class="markets" style="opacity:.4">${['ML','RL','TOTAL'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
 
