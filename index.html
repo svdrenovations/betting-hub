@@ -1672,7 +1672,7 @@ function isoDate(d){const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,
 
 // ── MODEL vs SIM SCOREBOARD ───────────────────────────────────────────────────
 let sbGames=null,sbExcluded=null;
-let sbFilter={source:[],result:[],market:[],ev:[],conf:[],from:isoDate(new Date(Date.now()-30*86400000)),to:''};
+let sbFilter={source:[],result:[],market:[],ev:[],conf:[],from:'',to:''};
 let sbSort={col:'date',dir:'desc'};
 function sbSetSort(col){if(sbSort.col===col)sbSort.dir=sbSort.dir==='asc'?'desc':'asc';else{sbSort.col=col;sbSort.dir='desc';}renderScoreboard();}
 function sbSortPlays(plays){const{col,dir}=sbSort,s=dir==='asc'?1:-1;return plays.slice().sort((a,b)=>{let va,vb;if(col==='date'){va=a.date;vb=b.date;}else if(col==='ev'){va=a.ev??-999;vb=b.ev??-999;}else if(col==='units'){va=a.result==='pending'?null:a.units;vb=b.result==='pending'?null:b.units;}else if(col==='result'){va={win:1,loss:2,push:3,pending:4}[a.result]??5;vb={win:1,loss:2,push:3,pending:4}[b.result]??5;}else{va=a[col];vb=b[col];}if(va==null&&vb==null)return 0;if(va==null)return 1;if(vb==null)return-1;if(va<vb)return-1*s;if(va>vb)return 1*s;return 0;});}
