@@ -14,7 +14,7 @@ const TOTAL_SD = 5.5;
 const MARGIN_SD = 4.0;
 const SHADOW_STRENGTH = 0.35;
 const VERDICT_BET = 10;
-const VERDICT_LEAN = 6;
+const VERDICT_LEAN = 6.6;
 const MAXJUICE_EV = VERDICT_LEAN;
 const SWEEP_FADE_UNTIL = '2026-08-01';
 
@@ -1334,7 +1334,7 @@ async function main() {
   } catch(e) { /* not fatal */ }
 
   const { ready, refresh } = await countReadyGames(today, doneSet);
-  if (ready === 0 && refresh === 0) {
+  if (ready === 0 && refresh === 0 && doneSet.size > 0) {
     console.log('Nothing to analyze and no closes to snapshot — skipping the Odds API pull this tick.');
     await settlePendingBets(); await settleGameScores(); await computeClvFromBooks();
     console.log('✅ Tick done — nothing to do.'); return;
