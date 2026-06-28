@@ -2616,8 +2616,8 @@ function triggerAllKalshiFetches() {
         const _MSD=4.0, _TSD=5.5;
         let kalshiModelP = m.p;
         if (_kEng === 'det' || _kEng === 'sim') {
-          const _da = _kEng==='det' ? parseFloat(kdataEl.dataset.detAway||0) : parseFloat(kdataEl.dataset.simAway||0);
-          const _dh = _kEng==='det' ? parseFloat(kdataEl.dataset.detHome||0) : parseFloat(kdataEl.dataset.simHome||0);
+          const _da = _kEng==='det' ? parseFloat(el.dataset.detAway||0) : parseFloat(el.dataset.simAway||0);
+          const _dh = _kEng==='det' ? parseFloat(el.dataset.detHome||0) : parseFloat(el.dataset.simHome||0);
           if (!isNaN(_da) && !isNaN(_dh) && _da > 0 && _dh > 0) {
             const _mu = _da - _dh;
             const _v = (m.verdict||'').toUpperCase();
