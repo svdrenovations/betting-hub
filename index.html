@@ -234,6 +234,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     <a class="nav-tab" href="?page=kalshi" onclick="goPage('kalshi',this);return false;">Kalshi</a>
     <a class="nav-tab" href="?page=stats" onclick="goPage('stats',this);return false;">Stats</a>
     <a class="nav-tab" href="?page=msd" onclick="goPage('msd',this);return false;">Models</a>
+    <a class="nav-tab" href="?page=engine-stats" onclick="goPage('engine-stats',this);return false;">Engine Stats</a>
     <a class="nav-tab" href="?page=scoreboard" onclick="goPage('scoreboard',this);return false;">Scoreboard</a>
     <a class="nav-tab" href="?page=plus" onclick="goPage('plus',this);return false;">Plus</a>
   </div>
@@ -337,6 +338,16 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 <div class="container">
   <div class="topbar">
     <div class="topbar-left"><h2>Stats</h2><p>Performance breakdown by filter</p></div>
+  </div>
+  <div id="stats-content"></div>
+</div>
+</div>
+
+<!-- ENGINE STATS PAGE -->
+<div class="page" id="page-engine-stats">
+<div class="container">
+  <div class="topbar">
+    <div class="topbar-left"><h2>Engine Stats</h2><p>Performance breakdown by filter</p></div>
   </div>
   <div id="stats-content"></div>
 </div>
@@ -2995,6 +3006,7 @@ loadBetsFromSupabase().then(()=>{
     if(p==='tracker')renderTracker();
     else if(p==='kalshi')loadKalshiBets().then(()=>renderKalshi());
     else if(p==='stats')renderStats();
+    else if(p==='engine-stats')renderStats();
     else if(p==='msd'){sbGames=null;renderScoreboard();}
     else if(p==='scoreboard')loadLiveScoreboard();
     else if(p==='plus'){plusGames=null;renderPlus();}
