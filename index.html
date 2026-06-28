@@ -510,14 +510,20 @@ const kalshiCache = {};
 const kalshiEngine = {}; // per-game engine selection: 'model'|'sim'|'det'
 function setKalshiEngine(gid, val) {
   kalshiEngine[gid] = val;
-  // re-trigger Kalshi fetch/render for this game
   delete kalshiCache[gid];
-  const ts = document.getElementById('kts-' + gid);
-  if (ts) ts.textContent = 'loading…';
-  // re-open panel if closed
-  const body = document.getElementById('kbody-' + gid);
-  if (body && !body.classList.contains('open')) body.classList.add('open');
-  triggerAllKalshiFetches();
+  // Re-render the card so data-plays gets rebuilt with new engine verdicts
+  const g = games.find(x => x.id === gid);
+  if (!g) return;
+  const card = document.getElementById('card-' + gid);
+  if (!card) return;
+  const logged = loggedMarketsForGame(gid);
+  card.outerHTML = gameCardHTML(g, bets, logged);
+  // Re-open the kalshi panel
+  setTimeout(() => {
+    const body = document.getElementById('kbody-' + gid);
+    if (body) body.classList.add('open');
+    triggerAllKalshiFetches();
+  }, 50);
 }
 const orderbookCache = {};
 
