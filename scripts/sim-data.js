@@ -370,7 +370,9 @@ async function buildMatchup({
   awayBatterStatcast, homeBatterStatcast,
   awayArsenal, homeArsenal,
   awayPitcherDetail, homePitcherDetail,
-  awayBullpenObj, homeBullpenObj,   // NEW: pass analyze.js bullpen objects
+  awayBullpenObj, homeBullpenObj,
+  awayTeamStats, homeTeamStats,     // team OPS splits + recent form
+  awayMatchups, homeMatchups,       // lineup matchup vs this pitcher
   parkFactors,
   weather,
   ctx = {},
@@ -379,9 +381,47 @@ async function buildMatchup({
 }) {
   // IMPROVEMENT 4: use runFactor for all outcomes, not just HR
   const parkRunFactor = parkFactors?.runFactor ?? 1.0;
-  const parkHR = parkFactors?.hrFactor ?? parkRunFactor; // hrFactor if available, else runFactor
+  const parkHR = parkFactors?.hrFactor ?? parkRunFactor;
   const wxHR = weather?.wxHR ?? 1.0;
   const baseCtx = { ...ctx, parkHR, wxHR };
+
+  // IMPROVEMENT 1: Home/away OPS split adjustments
+  // Teams play differently at home vs away — use split OPS to scale batter rates
+  const awayOPSSplit = awayTeamStats?.awayOPS ? parseFloat(awayTeamStats.awayOPS) : null;
+  const homeOPSSplit = homeTeamStats?.homeOPS ? parseFloat(homeTeamStats.homeOPS) : null;
+  const awaySeasonOPS = awayTeamStats?.ops ? parseFloat(awayTeamStats.ops) : null;
+  const homeSeasonOPS = homeTeamStats?.ops ? parseFloat(homeTeamStats.ops) : null;
+  // Scale factor vs season avg OPS (capped at ±15%)
+  const awaySplitMult = (awayOPSSplit && awaySeasonOPS && awaySeasonOPS > 0)
+    ? Math.min(Math.max(awayOPSSplit / awaySeasonOPS, 0.85), 1.15) : 1.0;
+  const homeSplitMult = (homeOPSSplit && homeSeasonOPS && homeSeasonOPS > 0)
+    ? Math.min(Math.max(homeOPSSplit / homeSeasonOPS, 0.85), 1.15) : 1.0;
+
+  // IMPROVEMENT 4: Recent form (last10 W-L) — struggling teams get slight offensive penalty
+  function formMult(last10) {
+    if (!last10) return 1.0;
+    const [w, g] = last10.split('-').map(Number);
+    if (isNaN(w) || isNaN(g) || g === 0) return 1.0;
+    const winPct = w / g;
+    if (winPct <= 0.20) return 0.94;  // 2-8 or worse
+    if (winPct <= 0.30) return 0.97;  // 3-7
+    if (winPct >= 0.80) return 1.04;  // 8-2 or better
+    if (winPct >= 0.70) return 1.02;  // 7-3
+    return 1.0;
+  }
+  const awayFormMult = formMult(awayTeamStats?.last10);
+  const homeFormMult = formMult(homeTeamStats?.last10);
+
+  // IMPROVEMENT 3: Closer unavailability — if closer is LIKELY UNAVAILABLE, inflate bullpen ERA
+  function bullpenCloserAdj(bullpenObj) {
+    if (!bullpenObj) return 1.0;
+    const closerInfo = (bullpenObj.closerInfo || '').toUpperCase();
+    if (closerInfo.includes('LIKELY UNAVAILABLE')) return 1.15;
+    if (closerInfo.includes('QUESTIONABLE')) return 1.06;
+    return 1.0;
+  }
+  const awayCloserAdj = bullpenCloserAdj(awayBullpenObj);
+  const homeCloserAdj = bullpenCloserAdj(homeBullpenObj);
 
   const [awayBats, homeBats, awaySP, homeSP, awayPen, homePen] = await Promise.all([
     Promise.all(awayLineupIds.slice(0, 9).map(id => fetchBatterRates(id, season))),
@@ -401,17 +441,68 @@ async function buildMatchup({
   const homeBatsAdj = applyPlatoonToLineup(homeBats, homeLineupHandedness, awayStarterHand)
     .map((b, i) => applyArsenalToBatter(b, awayArsenal, homeBatterStatcast?.[i]));
 
-  // IMPROVEMENT 4: Apply park run factor to batters (scales all offensive rates)
+  // IMPROVEMENT 2: Lineup matchup quality vs this specific pitcher
+  function applyMatchupAdj(rates, matchups) {
+    if (!matchups || matchups.meaningful < 3) return rates;
+    const mOPS = parseFloat(matchups.avgOPS || 0);
+    const leagueOPS = 0.720;
+    if (isNaN(mOPS) || mOPS <= 0) return rates;
+    const mult = Math.min(Math.max(1 + ((mOPS - leagueOPS) / leagueOPS) * 0.12, 0.88), 1.14);
+    if (Math.abs(mult - 1.0) < 0.01) return rates;
+    return rates.map(b => {
+      const adj = { ...b };
+      for (const e of ['bb','s','d','t','hr']) adj[e] = (adj[e]||0) * mult;
+      const sum = EVENTS.reduce((a,e) => a + (adj[e]||0), 0);
+      for (const e of EVENTS) adj[e] = (adj[e]||0) / sum;
+      return adj;
+    });
+  }
+
+  // Apply matchup, split, and form adjustments
+  function applyTeamAdj(rates, splitMult, formMult) {
+    if (Math.abs(splitMult - 1.0) < 0.01 && Math.abs(formMult - 1.0) < 0.01) return rates;
+    const combined = splitMult * formMult;
+    return rates.map(b => {
+      const adj = { ...b };
+      for (const e of ['bb','s','d','t','hr']) adj[e] = (adj[e]||0) * combined;
+      const sum = EVENTS.reduce((a,e) => a + (adj[e]||0), 0);
+      for (const e of EVENTS) adj[e] = (adj[e]||0) / sum;
+      return adj;
+    });
+  }
+
+  // IMPROVEMENT 4: Apply park run factor to batters
   const awayBatsPark = parkRunFactor !== 1.0 ? awayBatsAdj.map(b => applyParkFactor(b, parkRunFactor)) : awayBatsAdj;
   const homeBatsPark = parkRunFactor !== 1.0 ? homeBatsAdj.map(b => applyParkFactor(b, parkRunFactor)) : homeBatsAdj;
+
+  // Apply matchup quality vs starter
+  const awayBatsMatchup = applyMatchupAdj(awayBatsPark, awayMatchups);
+  const homeBatsMatchup = applyMatchupAdj(homeBatsPark, homeMatchups);
+
+  // Apply home/away OPS split + recent form
+  const awayBatsFinal = applyTeamAdj(awayBatsMatchup, awaySplitMult, awayFormMult);
+  const homeBatsFinal = applyTeamAdj(homeBatsMatchup, homeSplitMult, homeFormMult);
 
   // IMPROVEMENT 3: Estimate starter innings from real data
   const awayIP = estimateStarterInnings(awayStarterInfo, awayStarterStatcast);
   const homeIP = estimateStarterInnings(homeStarterInfo, homeStarterStatcast);
 
+  // IMPROVEMENT 3: Apply closer unavailability to bullpen rates
+  function applyCloserAdj(penRates, closerAdj) {
+    if (Math.abs(closerAdj - 1.0) < 0.01) return penRates;
+    const adj = { ...penRates };
+    for (const e of ['bb','s','d','hr']) adj[e] = (adj[e]||0) * closerAdj;
+    adj.k = (adj.k||0) / Math.max(closerAdj, 0.7);
+    const sum = EVENTS.reduce((a,e) => a + (adj[e]||0), 0);
+    for (const e of EVENTS) adj[e] = (adj[e]||0) / sum;
+    return adj;
+  }
+  const awayPenFinal = applyCloserAdj(awayPen, awayCloserAdj);
+  const homePenFinal = applyCloserAdj(homePen, homeCloserAdj);
+
   return {
-    away: { lineup: awayBatsPark, starter: awaySPAdj, pen: awayPen, starterInnings: homeIP },
-    home: { lineup: homeBatsPark, starter: homeSPAdj, pen: homePen, starterInnings: awayIP },
+    away: { lineup: awayBatsFinal, starter: awaySPAdj, pen: awayPenFinal, starterInnings: homeIP },
+    home: { lineup: homeBatsFinal, starter: homeSPAdj, pen: homePenFinal, starterInnings: awayIP },
     ctx: baseCtx, totalLine, f5Line,
   };
 }
