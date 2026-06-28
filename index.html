@@ -1677,6 +1677,7 @@ let sbSort={col:'date',dir:'desc'};
 function sbSetSort(col){if(sbSort.col===col)sbSort.dir=sbSort.dir==='asc'?'desc':'asc';else{sbSort.col=col;sbSort.dir='desc';}renderScoreboard();}
 function sbSortPlays(plays){const{col,dir}=sbSort,s=dir==='asc'?1:-1;return plays.slice().sort((a,b)=>{let va,vb;if(col==='date'){va=a.date;vb=b.date;}else if(col==='ev'){va=a.ev??-999;vb=b.ev??-999;}else if(col==='units'){va=a.result==='pending'?null:a.units;vb=b.result==='pending'?null:b.units;}else if(col==='result'){va={win:1,loss:2,push:3,pending:4}[a.result]??5;vb={win:1,loss:2,push:3,pending:4}[b.result]??5;}else{va=a[col];vb=b[col];}if(va==null&&vb==null)return 0;if(va==null)return 1;if(vb==null)return-1;if(va<vb)return-1*s;if(va>vb)return 1*s;return 0;});}
 const SIM_VALID_FROM='2026-06-18';
+const MODEL_VALID_TO='2026-06-27'; // LLM removed after this date
 function sbKey(date,matchup,mk,side,source){return`${date}|${matchup}|${mk}|${side}|${source}`;}
 function sbParsePlay(verdict){if(!verdict)return null;const m=String(verdict).toUpperCase().trim().match(/^(BET|LEAN)\s+(AWAY|HOME|OVER|UNDER)$/);return m?{strength:m[1],side:m[2]}:null;}
 function sbOddsFor(mk,side,g){if(mk==='ml')return parseFloat(side==='AWAY'?g.away_ml:g.home_ml);if(mk==='rl')return parseFloat(side==='AWAY'?g.away_rl_odds:g.home_rl_odds);if(mk==='total')return parseFloat(side==='OVER'?g.over_odds:g.under_odds);return NaN;}
@@ -1715,7 +1716,8 @@ function sbBuildPlays(games){
   }
   for(const g of games){
     for(const[mk,lbl]of SB_MKTS){
-      const mp=sbParsePlay(g[mk+'_verdict']),mev=parseFloat(g[mk+'_ev']);
+      const modelValid=g.game_date<MODEL_VALID_TO;
+      const mp=modelValid?sbParsePlay(g[mk+'_verdict']):null,mev=modelValid?parseFloat(g[mk+'_ev']):NaN;
       const simValid=g.game_date>=SIM_VALID_FROM;
       const sp=simValid?sbParsePlay(g['sim_'+mk+'_verdict']):null,sev=simValid?parseFloat(g['sim_'+mk+'_ev']):NaN;
       const det=detFor(mk,g);
@@ -1730,7 +1732,8 @@ function sbBuildPlays(games){
       else if(ms){primarySide=ms;primarySource='model';primaryEv=mev;primaryOdds=sbOddsFor(mk,ms,g);primaryStrength=mp.strength;}
       else if(ss){primarySide=ss;primarySource='sim';primaryEv=sev;primaryOdds=sbOddsFor(mk,ss,g);primaryStrength=sp.strength;}
       else if(ds){primarySide=ds;primarySource='det';primaryEv=det.ev;primaryOdds=det.odds;primaryStrength=det.strength;}
-      else{primarySide=dps;primarySource='det+';primaryEv=dp.ev;primaryOdds=dp.odds;primaryStrength=dp.strength;}
+      else if(dps){primarySide=dps;primarySource='det+';primaryEv=dp.ev;primaryOdds=dp.odds;primaryStrength=dp.strength;}
+      else continue;
       const mStatus=ms==null?'none':ms===primarySide?'agree':'disagree';
       const sStatus=ss==null?'none':ss===primarySide?'agree':'disagree';
       const dStatus=ds==null?'none':ds===primarySide?'agree':'disagree';
