@@ -437,7 +437,7 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
   // Umpire
   const umpAdj = umpire?.runFactor ?? 1.0;
 
-  const raw = baselineRunsAdj * of_ * park * wx * plat * statcastAdj * batterAdj * matchupAdj * tempAdj * splitAdj * formAdj * whipAdj * trendingAdj * pitchCountAdj * dnPitcherAdj * umpAdj;
+  const raw = baselineRuns * of_ * park * wx * plat * statcastAdj * batterAdj * matchupAdj * tempAdj * whipAdj * trendingAdj * pitchCountAdj * dnPitcherAdj * umpAdj;
   return { runs: +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2) };
 }
 // ── END DET+ ENGINE ───────────────────────────────────────────────────────────
