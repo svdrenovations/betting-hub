@@ -437,7 +437,7 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
   // Umpire
   const umpAdj = umpire?.runFactor ?? 1.0;
 
-  const raw = baselineRuns * of_ * park * wx * plat * statcastAdj * batterAdj * matchupAdj * tempAdj * whipAdj * trendingAdj * pitchCountAdj * dnPitcherAdj * umpAdj;
+  const raw = baselineRunsAdj * of_ * park * wx * plat * statcastAdj * batterAdj * matchupAdj * tempAdj * splitAdj * formAdj * whipAdj * trendingAdj * pitchCountAdj * dnPitcherAdj * umpAdj;
   return { runs: +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2) };
 }
 // ── END DET+ ENGINE ───────────────────────────────────────────────────────────
@@ -977,6 +977,59 @@ async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, hom
 }
 
 
+// ── DETERMINISTIC CONFIDENCE FORMULA ─────────────────────────────────────────
+function computeConfidence(analysis, lines) {
+  if (!analysis) return 'LOW';
+  let score = 0;
+  const markets = [
+    { verdict: analysis.ml,    ev: parseFloat(analysis.mlEV    || 0) },
+    { verdict: analysis.rl,    ev: parseFloat(analysis.rlEV    || 0) },
+    { verdict: analysis.total, ev: parseFloat(analysis.totalEV || 0) },
+  ].filter(m => m.verdict && m.verdict !== 'SKIP' && m.ev >= 6);
+  if (!markets.length) return 'LOW';
+  const bestEV = Math.max(...markets.map(m => m.ev));
+  if      (bestEV >= 20) score += 4;
+  else if (bestEV >= 10) score += 3;
+  else if (bestEV >= 6)  score += 2;
+  const simML = analysis.simML, simRL = analysis.simRL, simTotal = analysis.simTotal;
+  const hasAgreement = markets.some(m => {
+    if (m.verdict === analysis.ml    && simML    && simML    === analysis.ml)    return true;
+    if (m.verdict === analysis.rl    && simRL    && simRL    === analysis.rl)    return true;
+    if (m.verdict === analysis.total && simTotal && simTotal === analysis.total) return true;
+    return false;
+  });
+  const hasDisagreement = markets.some(m => {
+    if (m.verdict === analysis.ml    && simML    && simML    !== analysis.ml)    return true;
+    if (m.verdict === analysis.rl    && simRL    && simRL    !== analysis.rl)    return true;
+    if (m.verdict === analysis.total && simTotal && simTotal !== analysis.total) return true;
+    return false;
+  });
+  if (hasAgreement)         score += 3;
+  else if (!hasDisagreement) score += 1;
+  else                       score -= 1;
+  const agreedBet = markets.some(m => m.verdict && m.verdict.includes('BET') && (
+    (m.verdict === analysis.ml    && simML    === analysis.ml)    ||
+    (m.verdict === analysis.rl    && simRL    === analysis.rl)    ||
+    (m.verdict === analysis.total && simTotal === analysis.total)
+  ));
+  if (agreedBet) score += 1;
+  const situations = (analysis.situations || []).length;
+  if (situations >= 2) score += 2;
+  else if (situations === 1) score += 1;
+  const awayML = lines?.awayML, homeML = lines?.homeML;
+  const bestOdds = markets.map(m => {
+    if (m.verdict === analysis.ml) return m.verdict.includes('away') ? awayML : homeML;
+    return null;
+  }).filter(Boolean);
+  if (bestOdds.some(o => o >= 200)) score -= 2;
+  else if (bestOdds.some(o => o >= 150)) score -= 1;
+  const hasUnder = markets.some(m => m.verdict && m.verdict.includes('UNDER'));
+  if (hasUnder) score += 1;
+  if (score >= 7) return 'HIGH';
+  if (score >= 4) return 'MEDIUM';
+  return 'LOW';
+}
+
 async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData, pitcherStatus, gamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts) {
   const row = {
     id: game.id, game_pk: gamePk || null,
@@ -1327,7 +1380,6 @@ async function main() {
       const f5Lines = f5Map[game.id] || null;
 
       // ── LLM ANALYSIS — clean pre-June 23 prompt ──────────────────────────
-      const parkFactors = getParkFactors(game.home_team, venueName);
             const awayRunProj = projectRuns({ offenseStats: awayStats, offenseMatchups: awayMatchups, offenseHandedness: awayMatchups?.handedness, isOffenseHome: false, defPitcher: homePitcherInfo, defStatcast: homeStatcast, defPitcherHand: homePitcherInfo?.throwHand, isPitcherHome: true, defBullpen: homeBullpen, parkFactors, weather, umpire });
       const homeRunProj = projectRuns({ offenseStats: homeStats, offenseMatchups: homeMatchups, offenseHandedness: homeMatchups?.handedness, isOffenseHome: true, defPitcher: awayPitcherInfo, defStatcast: awayStatcast, defPitcherHand: awayPitcherInfo?.throwHand, isPitcherHome: false, defBullpen: awayBullpen, parkFactors, weather, umpire });
       const detProj = { awayRuns: awayRunProj.runs, homeRuns: homeRunProj.runs };
@@ -1341,6 +1393,9 @@ async function main() {
       }
 
       if (!analysis) { console.error(`  ✗ ${game.away_team} @ ${game.home_team}: analysis parse failed — keeping previous row`); continue; }
+
+      // ── DETERMINISTIC PROJECTION (background reference — never shown to LLM) ──
+      const parkFactors = getParkFactors(game.home_team, venueName);
 
       // ── DET+ (enhanced det with xERA + batter Statcast + temp adjustment) ─
       const awayBatStatcast = awayMatchups?.lineup?.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null) || [];
