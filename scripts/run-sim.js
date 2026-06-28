@@ -42,11 +42,12 @@ function log5(b, p, l) {
 //   (i.e., the hitter's vs-RHP rates when facing a RHP). That's how arm-side and,
 //   eventually, pitch-characteristic effects enter — see the matchup discussion.
 function buildPAModel(batter, pitcher, ctx = {}) {
-  const parkHR = ctx.parkHR ?? 1;   // >1 = hitter-friendly park
-  const wxHR   = ctx.wxHR   ?? 1;   // weather HR multiplier (hot/wind out = >1)
-  const umpK   = ctx.umpK   ?? 1;   // umpire zone -> K multiplier
+  const parkHR = ctx.parkHR ?? 1;
+  const wxHR   = ctx.wxHR   ?? 1;
+  const umpK   = ctx.umpK   ?? 1;
   const umpBB  = ctx.umpBB  ?? 1;
-  const offMult = ctx.offMult ?? 1; // home-field offensive swing (home >1, away <1)
+  const offMult = ctx.offMult ?? 1;
+  const umpRunFactor = ctx.umpRunFactor ?? 1; // umpire run factor — scales all offensive outcomes
 
   const raw = {};
   for (const e of EVENTS) {
@@ -54,7 +55,7 @@ function buildPAModel(batter, pitcher, ctx = {}) {
     if (e === 'hr') v *= parkHR * wxHR;
     if (e === 'k')  v *= umpK;
     if (e === 'bb') v *= umpBB;
-    if (e !== 'k' && e !== 'out') v *= offMult; // scale scoring/on-base outcomes for HFA
+    if (e !== 'k' && e !== 'out') v *= offMult * umpRunFactor; // HFA + umpire run factor
     raw[e] = v;
   }
   const sum = EVENTS.reduce((a, e) => a + raw[e], 0);
