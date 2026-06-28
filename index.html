@@ -1175,13 +1175,22 @@ function kalshiPanelHTML(g, bets) {
   const activePlays = plays;
   const prob = (m) => {
     const v = (m.verdict||'').toUpperCase();
-    if (m.key==='ml') return v.includes('AWAY') ? (g.ml_away_prob||50)/100 : (g.ml_home_prob||50)/100;
+    const ncdf = x => { const t=1/(1+0.2316419*Math.abs(x)),d2=0.3989423*Math.exp(-x*x/2),p=d2*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274)))); return x>0?1-p:p; };
+    const MSD=4.0, TSD=5.5;
+    if (_eng === 'det' || _eng === 'sim') {
+      const da = _eng==='det' ? parseFloat(g.det_proj_away) : parseFloat(g.sim_away_runs);
+      const dh = _eng==='det' ? parseFloat(g.det_proj_home) : parseFloat(g.sim_home_runs);
+      if (!isNaN(da) && !isNaN(dh)) {
+        const mu = da - dh;
+        if (m.key==='ml') { const pA=(1-ncdf((0.5-mu)/MSD)),pH=ncdf((-0.5-mu)/MSD),den=(pA+pH)||1; return v.includes('AWAY')?pA/den:pH/den; }
+        if (m.key==='rl') { let aRL=parseFloat(g.away_rl)||( mu>0?-1.5:1.5); const pA=1-ncdf((-aRL-mu)/MSD),pH=ncdf((aRL+mu)/MSD); return v.includes('AWAY')?pA/(pA+pH):pH/(pA+pH); }
+        if (m.key==='total') { const line=parseFloat(m.line||g.total_line); if(!isNaN(line)){const pO=1/(1+Math.exp(1.7*(line-(da+dh))/TSD));return v.includes('OVER')?pO:1-pO;} }
+      }
+    }
     if (m.key==='ml') return v.includes('AWAY') ? (g.ml_away_prob||50)/100 : (g.ml_home_prob||50)/100;
     if (m.key==='rl') return v.includes('AWAY') ? (g.rl_away_prob||g.ml_away_prob||50)/100 : (g.rl_home_prob||g.ml_home_prob||50)/100;
-      const proj = parseFloat(g.proj_total), line = parseFloat(m.line||g.total_line);
-      if (proj>0 && !isNaN(line)) { const pO = 1/(1+Math.exp(1.7*(line-proj)/TOTAL_SD)); return v.includes('OVER')?pO:1-pO; }
-      return 0.52;
-      return 0.5;
+    const proj = parseFloat(g.proj_total), line = parseFloat(m.line||g.total_line);
+    if (proj>0 && !isNaN(line)) { const pO = 1/(1+Math.exp(1.7*(line-proj)/TOTAL_SD)); return v.includes('OVER')?pO:1-pO; }
     return 0.5;
   };
   const dkOdds = (m) => {
