@@ -1,6 +1,5 @@
 // sim-data.js — feeds run-sim.js with real, context-aware data
-// REBUILT: now feeds park factors, weather, platoon splits, Statcast adjustments,
-// actual starter innings, and real bullpen (relievers only) into the engine.
+// REBUILT: ERA blend, bullpen fatigue, starter innings, full park run factor, arsenal, better regression
 
 const { simulate, LEAGUE } = require('./run-sim.js');
 
@@ -8,20 +7,21 @@ const MLB = 'https://statsapi.mlb.com/api/v1';
 const SEASON_DEFAULT = new Date().getFullYear();
 const EVENTS = ['bb', 'k', 's', 'd', 't', 'hr', 'out'];
 
-// Regression weights — larger = regress faster toward league average
-const REG_PA = { bb: 120, k: 60, s: 290, d: 290, t: 290, hr: 170, out: 120 };
+// Regression weights — tuned to be less aggressive (preserve more signal)
+const REG_PA = { bb: 200, k: 100, s: 450, d: 450, t: 600, hr: 280, out: 200 };
 
-// Non-HR hit distribution for pitchers missing doubles/triples in API
+// Non-HR hit distribution for pitchers missing doubles/triples
 const NONHR_HIT_SHARE = { s: 0.735, d: 0.243, t: 0.022 };
 
-// Platoon adjustments — how much to scale outcome rates when batter/pitcher handedness matches vs opposes
-// Source: MLB career splits research. Same-hand matchup favors pitcher (reduce batter output)
+// Platoon adjustments
 const PLATOON = {
-  // [batterHand][pitcherHand] = multiplier on batter offensive outcomes (bb, hits, hr)
-  R: { R: 0.93, L: 1.07 },  // RHB vs RHP: slight pitcher advantage; RHB vs LHP: batter advantage
-  L: { R: 1.07, L: 0.93 },  // LHB vs RHP: batter advantage; LHB vs LHP: pitcher advantage
-  S: { R: 1.02, L: 1.02 },  // Switch hitter: slight advantage either way
+  R: { R: 0.93, L: 1.07 },
+  L: { R: 1.07, L: 0.93 },
+  S: { R: 1.02, L: 1.02 },
 };
+
+// League-average ERA for scaling
+const LEAGUE_AVG_ERA = 4.20;
 
 async function getJSON(url) {
   try {
@@ -86,77 +86,69 @@ async function fetchBatterRates(playerId, season = SEASON_DEFAULT) {
   return conv ? { ...regressVector(conv.rates, conv.pa), pa: conv.pa } : { ...LEAGUE, pa: 0 };
 }
 
-async function fetchBatterHandedness(playerId) {
-  const data = await getJSON(`${MLB}/people/${playerId}`);
-  return data?.people?.[0]?.batSide?.code || 'R'; // default R
-}
-
+// IMPROVEMENT 1: ERA blend for pitcher rates
+// Uses season 60% / home-away split 20% / recent 20% — same as det engine
 async function fetchPitcherRates(playerId, season = SEASON_DEFAULT, isPitcherHome = null, pitcherDetail = null) {
-  // Try Supabase Statcast cache first — has real pitch-level data
-  // Cache is loaded into global _statcastCache by analyze.js before sim runs
   const cached = global._statcastCache?.pitchers?.[String(playerId)];
-  if (cached) {
-    // Convert Statcast whiff/hard hit rates to pitcher event rates
-    // Use season stats from MLB API for base rates, then adjust with Statcast
-    const data = await getJSON(`${MLB}/people/${playerId}/stats?stats=season&group=pitching&season=${season}&sportId=1&gameType=R`);
-    const seasonStat = data?.stats?.[0]?.splits?.[0]?.stat || {};
-    const conv = pitchingToRates(seasonStat);
-    const baseRates = conv ? { ...regressVector(conv.rates, conv.pa), pa: conv.pa } : { ...LEAGUE, pa: 0 };
+  const data = await getJSON(`${MLB}/people/${playerId}/stats?stats=season&group=pitching&season=${season}&sportId=1&gameType=R`);
+  const seasonStat = data?.stats?.[0]?.splits?.[0]?.stat || {};
+  const conv = pitchingToRates(seasonStat);
+  const baseRates = conv ? { ...regressVector(conv.rates, conv.pa), pa: conv.pa } : { ...LEAGUE, pa: 0 };
 
-    // Apply home/away split if available
-    if (pitcherDetail && (pitcherDetail.homeERA || pitcherDetail.awayERA)) {
-      const seasonERA = parseFloat(seasonStat.era || 4.20);
-      const splitERA = isPitcherHome && pitcherDetail.homeERA
-        ? parseFloat(pitcherDetail.homeERA)
-        : !isPitcherHome && pitcherDetail.awayERA
-        ? parseFloat(pitcherDetail.awayERA)
-        : seasonERA;
-      // Blend: 70% season rates, 30% adjusted for split ERA difference
-      const splitAdj = Math.min(Math.max(splitERA / Math.max(seasonERA, 0.1), 0.70), 1.40);
+  const seasonERA = parseFloat(seasonStat.era) || LEAGUE_AVG_ERA;
+
+  // ERA blend: season 60%, split 20%, recent 20%
+  if (pitcherDetail) {
+    const splitERA = isPitcherHome && pitcherDetail.homeERA
+      ? parseFloat(pitcherDetail.homeERA)
+      : !isPitcherHome && pitcherDetail.awayERA
+      ? parseFloat(pitcherDetail.awayERA)
+      : seasonERA;
+    const rawRecent = parseFloat(pitcherDetail.recentERA || seasonERA);
+    const recentERA = Math.min(rawRecent, Math.max(seasonERA * 3.0, 9.0));
+    const blendedERA = (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20);
+    const eraAdj = Math.min(Math.max(blendedERA / Math.max(seasonERA, 0.1), 0.65), 1.55);
+
+    if (Math.abs(eraAdj - 1.0) > 0.02) {
       const adjusted = { ...baseRates };
-      // Higher ERA in this split = more hits/walks allowed
-      for (const e of ['bb', 's', 'd', 'hr']) adjusted[e] = (adjusted[e] || 0) * (0.70 + 0.30 * splitAdj);
-      adjusted.k = (adjusted.k || 0) * (0.70 + 0.30 * (2 - splitAdj)); // more walks/hits = fewer Ks
+      // Higher blended ERA = more hits/walks allowed
+      for (const e of ['bb', 's', 'd', 'hr']) adjusted[e] = (adjusted[e] || 0) * (0.60 + 0.40 * eraAdj);
+      adjusted.k = (adjusted.k || 0) * (0.60 + 0.40 * (2 - eraAdj));
       const sum = EVENTS.reduce((a, e) => a + (adjusted[e] || 0), 0);
       for (const e of EVENTS) adjusted[e] = (adjusted[e] || 0) / sum;
       return adjusted;
     }
-
-    return baseRates;
   }
 
-  // Fallback: MLB Stats API only
-  const data = await getJSON(`${MLB}/people/${playerId}/stats?stats=season&group=pitching&season=${season}&sportId=1&gameType=R`);
-  const conv = pitchingToRates(data?.stats?.[0]?.splits?.[0]?.stat || {});
-  return conv ? { ...regressVector(conv.rates, conv.pa), pa: conv.pa } : { ...LEAGUE, pa: 0 };
+  // Apply Statcast whiff/barrel adjustments
+  if (cached) {
+    return applyStatcastToPitcher(baseRates, cached);
+  }
+
+  return baseRates;
 }
 
-// Fetch true bullpen rates — relievers only, not whole staff
-async function fetchBullpenRates(teamId, season = SEASON_DEFAULT) {
-  // Get all pitchers with < 3 GS (relievers) for the team
+// IMPROVEMENT 2: Bullpen rates with fatigue adjustment
+// Taxed bullpens allow more runs — scale their rates accordingly
+async function fetchBullpenRates(teamId, season = SEASON_DEFAULT, bullpenObj = null) {
+  // If bullpenObj passed from analyze.js, use its weightedERA to scale rates
   const data = await getJSON(`${MLB}/teams/${teamId}/roster?rosterType=active&season=${season}`);
   if (!data?.roster) {
-    // Fallback: whole team pitching
-    const teamData = await getJSON(`${MLB}/teams/${teamId}/stats?stats=season&group=pitching&season=${season}&sportId=1&gameType=R`);
-    const conv = pitchingToRates(teamData?.stats?.[0]?.splits?.[0]?.stat || {});
-    return conv ? { ...regressVector(conv.rates, conv.pa), pa: conv.pa } : { ...LEAGUE, pa: 0 };
+    return { ...LEAGUE, pa: 0 };
   }
 
-  // Filter to pitchers
   const pitchers = data.roster.filter(p => p.position?.code === '1').slice(0, 12);
   if (!pitchers.length) return { ...LEAGUE, pa: 0 };
 
-  // Fetch stats for each pitcher and aggregate relievers
   const stats = await Promise.all(
     pitchers.map(p => getJSON(`${MLB}/people/${p.person.id}/stats?stats=season&group=pitching&season=${season}&sportId=1&gameType=R`))
   );
 
-  // Aggregate only relievers (GS < 3)
   let totalBF = 0, agg = { bb: 0, k: 0, s: 0, d: 0, t: 0, hr: 0 };
   for (const s of stats) {
     const stat = s?.stats?.[0]?.splits?.[0]?.stat;
     if (!stat) continue;
-    if ((stat.gamesStarted || 0) >= 3) continue; // skip starters
+    if ((stat.gamesStarted || 0) >= 3) continue;
     const bf = stat.battersFaced || 0;
     if (!bf) continue;
     totalBF += bf;
@@ -173,10 +165,33 @@ async function fetchBullpenRates(teamId, season = SEASON_DEFAULT) {
   const rates = {};
   for (const e of ['bb','k','s','d','t','hr']) rates[e] = agg[e] / totalBF;
   rates.out = Math.max(0, 1 - Object.values(rates).reduce((a,b) => a+b, 0));
-  return { ...regressVector(rates, totalBF), pa: totalBF };
+  let penRates = { ...regressVector(rates, totalBF), pa: totalBF };
+
+  // Apply fatigue adjustment if bullpen is taxed
+  if (bullpenObj) {
+    const bullpenERA = parseFloat(bullpenObj.weightedERA) || LEAGUE_AVG_ERA;
+    const fatigueNote = (bullpenObj.fatigueNote || '').toLowerCase();
+    let fatigueAdj = 1.0;
+    if (fatigueNote.includes('taxed')) fatigueAdj = 1.12;      // Taxed bullpen: 12% worse
+    else if (fatigueNote.includes('heavy')) fatigueAdj = 1.20; // Heavy usage: 20% worse
+
+    // Also adjust by ERA vs league
+    const eraAdj = Math.min(Math.max(bullpenERA / LEAGUE_AVG_ERA, 0.7), 1.6);
+    const totalAdj = Math.min((eraAdj + fatigueAdj - 1.0), 1.5); // combine
+
+    if (Math.abs(totalAdj - 1.0) > 0.02) {
+      const adjusted = { ...penRates };
+      for (const e of ['bb', 's', 'd', 'hr']) adjusted[e] = (adjusted[e] || 0) * totalAdj;
+      adjusted.k = (adjusted.k || 0) / Math.max(totalAdj, 0.7);
+      const sum = EVENTS.reduce((a, e) => a + (adjusted[e] || 0), 0);
+      for (const e of EVENTS) adjusted[e] = (adjusted[e] || 0) / sum;
+      penRates = adjusted;
+    }
+  }
+
+  return penRates;
 }
 
-// Apply platoon adjustment to a single batter
 function applyPlatoon(batterRates, batterHand, pitcherHand) {
   if (!batterHand || !pitcherHand) return batterRates;
   const mult = PLATOON[batterHand]?.[pitcherHand] ?? 1.0;
@@ -188,8 +203,6 @@ function applyPlatoon(batterRates, batterHand, pitcherHand) {
   return adjusted;
 }
 
-// Derive effective platoon multiplier from handedness summary {L,R,S} vs pitcher hand
-// Returns avg multiplier across the lineup composition
 function platoonMultFromSummary(handedness, pitcherHand) {
   if (!handedness || !pitcherHand) return 1.0;
   const total = (handedness.L || 0) + (handedness.R || 0) + (handedness.S || 0);
@@ -200,14 +213,11 @@ function platoonMultFromSummary(handedness, pitcherHand) {
   return ((handedness.L || 0) * lMult + (handedness.R || 0) * rMult + (handedness.S || 0) * sMult) / total;
 }
 
-// Apply platoon multiplier to all batters in a lineup
 function applyPlatoonToLineup(batters, handedness, pitcherHand) {
   if (!handedness || !pitcherHand) return batters;
-  // If per-batter array of hands
   if (Array.isArray(handedness)) {
     return batters.map((b, i) => applyPlatoon(b, handedness[i], pitcherHand));
   }
-  // If summary object {L,R,S} — apply avg multiplier to all batters
   const mult = platoonMultFromSummary(handedness, pitcherHand);
   if (Math.abs(mult - 1.0) < 0.01) return batters;
   return batters.map(b => {
@@ -219,75 +229,136 @@ function applyPlatoonToLineup(batters, handedness, pitcherHand) {
   });
 }
 
-// Apply Statcast adjustments to pitcher rates
-// whiffRate high = more Ks; barrelRate high = more HRs allowed; hardHitRate high = more damage
 function applyStatcastToPitcher(rates, statcast) {
   if (!statcast) return rates;
   const adjusted = { ...rates };
-
-  // Whiff rate adjustment: league avg ~25%, adjust K rate proportionally
   if (statcast.whiffRate != null) {
     const whiff = parseFloat(statcast.whiffRate);
     const leagueWhiff = 25.0;
     if (!isNaN(whiff) && whiff > 0) {
-      const whiffMult = whiff / leagueWhiff;
-      adjusted.k = (adjusted.k || 0) * Math.min(Math.max(whiffMult, 0.7), 1.4);
+      adjusted.k = (adjusted.k || 0) * Math.min(Math.max(whiff / leagueWhiff, 0.7), 1.4);
     }
   }
-
-  // Barrel rate adjustment: league avg ~8%, adjust HR rate
   if (statcast.barrelRate != null) {
     const barrel = parseFloat(statcast.barrelRate);
-    const leagueBarrel = 8.0;
     if (!isNaN(barrel) && barrel > 0) {
-      const barrelMult = barrel / leagueBarrel;
-      adjusted.hr = (adjusted.hr || 0) * Math.min(Math.max(barrelMult, 0.6), 1.6);
+      adjusted.hr = (adjusted.hr || 0) * Math.min(Math.max(barrel / 8.0, 0.6), 1.6);
     }
   }
-
-  // Hard hit rate adjustment: league avg ~38%, affects hits generally
   if (statcast.hardHitRate != null) {
     const hh = parseFloat(statcast.hardHitRate);
-    const leagueHH = 38.0;
     if (!isNaN(hh) && hh > 0) {
-      const hhMult = hh / leagueHH;
-      for (const e of ['s', 'd', 't']) {
-        adjusted[e] = (adjusted[e] || 0) * Math.min(Math.max(hhMult, 0.8), 1.2);
-      }
+      const hhMult = Math.min(Math.max(hh / 38.0, 0.8), 1.2);
+      for (const e of ['s', 'd', 't']) adjusted[e] = (adjusted[e] || 0) * hhMult;
     }
   }
-
-  // Velocity trend: cold arm = worse performance (reduce K rate, increase contact)
   if (statcast.veloTrend != null) {
     const trend = parseFloat(statcast.veloTrend);
     if (!isNaN(trend) && trend < -1.5) {
-      // Velocity down significantly — pitcher less effective
       const coldMult = 1 + Math.min(Math.abs(trend) * 0.02, 0.12);
       adjusted.k  = (adjusted.k  || 0) / coldMult;
       adjusted.bb = (adjusted.bb || 0) * coldMult;
       for (const e of ['s', 'd', 'hr']) adjusted[e] = (adjusted[e] || 0) * coldMult;
     }
   }
-
-  // Renormalize
   const sum = EVENTS.reduce((a, e) => a + (adjusted[e] || 0), 0);
   for (const e of EVENTS) adjusted[e] = (adjusted[e] || 0) / sum;
   return adjusted;
 }
 
-// Estimate starter innings from available data
+// IMPROVEMENT 3: Starter innings — detects bullpen games
 function estimateStarterInnings(pitcherInfo, statcast) {
-  // Use pitcher's average IP per start if available
-  if (pitcherInfo?.inningsPitched && pitcherInfo?.gamesStarted > 0) {
+  let base = 5.5; // conservative default
+
+  // Use avgIP from pitcher detail if available
+  if (pitcherInfo?.avgIP) {
+    const avgIP = parseFloat(pitcherInfo.avgIP);
+    if (!isNaN(avgIP) && avgIP > 0) base = Math.min(Math.max(avgIP, 3.0), 7.0);
+  } else if (pitcherInfo?.inningsPitched && pitcherInfo?.gamesStarted > 0) {
     const avgIP = parseFloat(pitcherInfo.inningsPitched) / pitcherInfo.gamesStarted;
-    if (!isNaN(avgIP) && avgIP > 0) return Math.min(Math.max(avgIP, 4), 7);
+    if (!isNaN(avgIP) && avgIP > 0) base = Math.min(Math.max(avgIP, 3.0), 7.0);
   }
-  // Cold arm signal = shorter outing expected
-  if (statcast?.veloTrend != null && parseFloat(statcast.veloTrend) < -2) return 5;
-  return 6; // default
+
+  // Bullpen game signals — shorten expected innings
+  let adj = 0;
+
+  // Signal 1: Very low avgIP (<4.5) = opener/bullpen game pattern
+  if (base < 4.5) adj -= 0.5;
+
+  // Signal 2: High recent ERA vs season ERA = getting pulled early
+  if (pitcherInfo?.recentERA && pitcherInfo?.era) {
+    const recentERA = parseFloat(pitcherInfo.recentERA);
+    const seasonERA = parseFloat(pitcherInfo.era);
+    if (!isNaN(recentERA) && !isNaN(seasonERA) && recentERA > seasonERA * 1.5 && recentERA > 6.0) {
+      adj -= 0.75; // struggling recently = shorter leash
+    }
+  }
+
+  // Signal 3: Cold/declining velocity = fatigue, shorter outing
+  if (statcast?.veloTrend != null) {
+    const trend = parseFloat(statcast.veloTrend);
+    if (!isNaN(trend)) {
+      if (trend < -2.0) adj -= 1.0;      // significant velo drop
+      else if (trend < -1.0) adj -= 0.5;  // moderate velo drop
+    }
+  }
+
+  // Signal 4: Note field from Odds API (e.g. "game time decision", debut)
+  if (pitcherInfo?.note) {
+    const note = (pitcherInfo.note || '').toLowerCase();
+    if (note.includes('opener') || note.includes('bullpen')) adj -= 2.0;
+    if (note.includes('debut')) adj -= 0.5; // unknown quantity
+  }
+
+  return Math.min(Math.max(base + adj, 2.0), 7.0);
 }
 
-// Main entry point — accepts the full context from analyze.js
+// IMPROVEMENT 4: Apply park run factor to ALL offensive outcomes, not just HR
+function applyParkFactor(rates, parkRunFactor) {
+  if (!parkRunFactor || Math.abs(parkRunFactor - 1.0) < 0.01) return rates;
+  const adjusted = { ...rates };
+  // Scale all offensive outcomes (hits, walks, HRs) by run factor
+  for (const e of ['bb', 's', 'd', 't', 'hr']) {
+    adjusted[e] = (adjusted[e] || 0) * parkRunFactor;
+  }
+  const sum = EVENTS.reduce((a, e) => a + (adjusted[e] || 0), 0);
+  for (const e of EVENTS) adjusted[e] = (adjusted[e] || 0) / sum;
+  return adjusted;
+}
+
+// IMPROVEMENT 5: Arsenal matchup adjustments (from sim+)
+const applyArsenalToBatter = (baterRates, pitcherArsenal, batterStatcast) => {
+  if (!pitcherArsenal?.arsenal || !batterStatcast?.pitchTypeStats) return baterRates;
+  let kMult = 1.0, contactMult = 1.0;
+  let pitchesConsidered = 0;
+
+  for (const [pt, pitchData] of Object.entries(pitcherArsenal.arsenal)) {
+    const usage = parseFloat(pitchData.pct || 0) / 100;
+    if (usage < 0.10) continue;
+    const batterVsPitch = batterStatcast.pitchTypeStats[pt];
+    if (!batterVsPitch) continue;
+
+    const batterWhiff = parseFloat(batterVsPitch.whiffPct || 0);
+    const pitcherWhiff = parseFloat(pitchData.whiffRate || 0);
+    const whiffEdge = (pitcherWhiff - batterWhiff) / 25;
+    kMult += whiffEdge * usage * 0.15;
+
+    const batterHH = parseFloat(batterVsPitch.hardHitPct || 0);
+    contactMult += ((batterHH - 38) / 38) * usage * 0.10;
+    pitchesConsidered++;
+  }
+
+  if (!pitchesConsidered) return baterRates;
+  const adjusted = { ...baterRates };
+  kMult = Math.min(Math.max(kMult, 0.80), 1.25);
+  contactMult = Math.min(Math.max(contactMult, 0.85), 1.20);
+  adjusted.k = (adjusted.k || 0) * kMult;
+  for (const e of ['s', 'd', 't', 'hr']) adjusted[e] = (adjusted[e] || 0) * contactMult;
+  const sum = EVENTS.reduce((a, e) => a + (adjusted[e] || 0), 0);
+  for (const e of EVENTS) adjusted[e] = (adjusted[e] || 0) / sum;
+  return adjusted;
+};
+
 async function buildMatchup({
   awayLineupIds, homeLineupIds,
   awayStarterId, homeStarterId,
@@ -299,81 +370,48 @@ async function buildMatchup({
   awayBatterStatcast, homeBatterStatcast,
   awayArsenal, homeArsenal,
   awayPitcherDetail, homePitcherDetail,
+  awayBullpenObj, homeBullpenObj,   // NEW: pass analyze.js bullpen objects
   parkFactors,
   weather,
   ctx = {},
   totalLine = null, f5Line = null,
   season = SEASON_DEFAULT,
 }) {
-  const parkHR = parkFactors?.hrFactor ?? parkFactors?.runFactor ?? 1.0;
+  // IMPROVEMENT 4: use runFactor for all outcomes, not just HR
+  const parkRunFactor = parkFactors?.runFactor ?? 1.0;
+  const parkHR = parkFactors?.hrFactor ?? parkRunFactor; // hrFactor if available, else runFactor
   const wxHR = weather?.wxHR ?? 1.0;
   const baseCtx = { ...ctx, parkHR, wxHR };
 
   const [awayBats, homeBats, awaySP, homeSP, awayPen, homePen] = await Promise.all([
     Promise.all(awayLineupIds.slice(0, 9).map(id => fetchBatterRates(id, season))),
     Promise.all(homeLineupIds.slice(0, 9).map(id => fetchBatterRates(id, season))),
-    fetchPitcherRates(awayStarterId, season, false, awayPitcherDetail),  // away pitcher = on road
-    fetchPitcherRates(homeStarterId, season, true,  homePitcherDetail),  // home pitcher = at home
-    fetchBullpenRates(awayTeamId, season),
-    fetchBullpenRates(homeTeamId, season),
+    fetchPitcherRates(awayStarterId, season, false, awayPitcherDetail),
+    fetchPitcherRates(homeStarterId, season, true,  homePitcherDetail),
+    fetchBullpenRates(awayTeamId, season, awayBullpenObj),   // IMPROVEMENT 2
+    fetchBullpenRates(homeTeamId, season, homeBullpenObj),   // IMPROVEMENT 2
   ]);
 
-  // Apply Statcast adjustments to starters
   const awaySPAdj = applyStatcastToPitcher(awaySP, awayStarterStatcast);
   const homeSPAdj = applyStatcastToPitcher(homeSP, homeStarterStatcast);
 
-  // Apply arsenal vs batter swing path adjustments if available
-  const applyArsenalToBatter = (baterRates, batterIdx, pitcherArsenal, batterStatcast) => {
-    if (!pitcherArsenal?.arsenal || !batterStatcast?.pitchTypeStats) return baterRates;
-    let kMult = 1.0, contactMult = 1.0;
-    let pitchesConsidered = 0;
-
-    for (const [pt, pitchData] of Object.entries(pitcherArsenal.arsenal)) {
-      const usage = parseFloat(pitchData.pct || 0) / 100;
-      if (usage < 0.10) continue; // ignore pitch types used less than 10%
-      const batterVsPitch = batterStatcast.pitchTypeStats[pt];
-      if (!batterVsPitch) continue;
-
-      const batterWhiff = parseFloat(batterVsPitch.whiffPct || 0);
-      const pitcherWhiff = parseFloat(pitchData.whiffRate || 0);
-      const leagueWhiff = 25;
-
-      // If pitcher whiff rate on this pitch > batter whiff rate vs this pitch = pitcher edge
-      // If batter hard hit rate vs this pitch is high = batter edge
-      const whiffEdge = (pitcherWhiff - batterWhiff) / leagueWhiff;
-      kMult += whiffEdge * usage * 0.15;
-
-      const batterHH = parseFloat(batterVsPitch.hardHitPct || 0);
-      const leagueHH = 38;
-      contactMult += ((batterHH - leagueHH) / leagueHH) * usage * 0.10;
-
-      pitchesConsidered++;
-    }
-
-    if (!pitchesConsidered) return baterRates;
-
-    const adjusted = { ...baterRates };
-    kMult = Math.min(Math.max(kMult, 0.80), 1.25);
-    contactMult = Math.min(Math.max(contactMult, 0.85), 1.20);
-    adjusted.k = (adjusted.k || 0) * kMult;
-    for (const e of ['s', 'd', 't', 'hr']) adjusted[e] = (adjusted[e] || 0) * contactMult;
-    const sum = EVENTS.reduce((a, e) => a + (adjusted[e] || 0), 0);
-    for (const e of EVENTS) adjusted[e] = (adjusted[e] || 0) / sum;
-    return adjusted;
-  };
-
-  // Apply platoon + arsenal adjustments to batters
+  // Apply platoon + arsenal to batters
   const awayBatsAdj = applyPlatoonToLineup(awayBats, awayLineupHandedness, homeStarterHand)
-    .map((b, i) => applyArsenalToBatter(b, i, homeArsenal, awayBatterStatcast?.[i]));
+    .map((b, i) => applyArsenalToBatter(b, homeArsenal, awayBatterStatcast?.[i]));
   const homeBatsAdj = applyPlatoonToLineup(homeBats, homeLineupHandedness, awayStarterHand)
-    .map((b, i) => applyArsenalToBatter(b, i, awayArsenal, homeBatterStatcast?.[i]));
+    .map((b, i) => applyArsenalToBatter(b, awayArsenal, homeBatterStatcast?.[i]));
 
+  // IMPROVEMENT 4: Apply park run factor to batters (scales all offensive rates)
+  const awayBatsPark = parkRunFactor !== 1.0 ? awayBatsAdj.map(b => applyParkFactor(b, parkRunFactor)) : awayBatsAdj;
+  const homeBatsPark = parkRunFactor !== 1.0 ? homeBatsAdj.map(b => applyParkFactor(b, parkRunFactor)) : homeBatsAdj;
+
+  // IMPROVEMENT 3: Estimate starter innings from real data
   const awayIP = estimateStarterInnings(awayStarterInfo, awayStarterStatcast);
   const homeIP = estimateStarterInnings(homeStarterInfo, homeStarterStatcast);
 
   return {
-    away: { lineup: awayBatsAdj, starter: awaySPAdj, pen: awayPen, starterInnings: homeIP },
-    home: { lineup: homeBatsAdj, starter: homeSPAdj, pen: homePen, starterInnings: awayIP },
+    away: { lineup: awayBatsPark, starter: awaySPAdj, pen: awayPen, starterInnings: homeIP },
+    home: { lineup: homeBatsPark, starter: homeSPAdj, pen: homePen, starterInnings: awayIP },
     ctx: baseCtx, totalLine, f5Line,
   };
 }
