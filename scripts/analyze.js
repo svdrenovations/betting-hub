@@ -1242,7 +1242,7 @@ async function main() {
     const gameEtDate = new Date(g.commence_time).toLocaleDateString('en-CA', {timeZone: 'America/New_York'});
     if (gameEtDate !== today) return false;
     const minutesSinceStart = (now - new Date(g.commence_time)) / 60000;
-    if (minutesSinceStart > 5 && alreadyAnalyzed.has(g.id)) { console.log(`  Skipping ${g.away_team} @ ${g.home_team} — game already started`); return false; }
+    if (minutesSinceStart > 5 && doneSet.has(String(g.id))) { console.log(`  Skipping ${g.away_team} @ ${g.home_team} — game already started`); return false; }
     const lines = parseOddsData(g, { commenceTime: g.commence_time, now });
     const awayML = parseFloat(lines.awayML), homeML = parseFloat(lines.homeML);
     if (!isNaN(awayML) && !isNaN(homeML) && (Math.abs(awayML) > 600 || Math.abs(homeML) > 600)) { console.log(`  Skipping ${g.away_team} @ ${g.home_team} — extreme live odds detected`); return false; }
