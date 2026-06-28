@@ -1701,6 +1701,13 @@ function sbBuildPlays(games){
   const neg=e=>(e!=null&&!isNaN(e)&&e<0);
   const ncdf=x=>{const t=1/(1+0.2316419*Math.abs(x)),d2=0.3989423*Math.exp(-x*x/2),p=d2*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;};
   function detFor(mk,g){
+    // Use stored det verdict columns first (accurate EV from analysis time)
+    const storedV=g['det_'+mk+'_verdict'],storedEV=parseFloat(g['det_'+mk+'_ev']);
+    if(storedV&&storedV!=='SKIP'&&!isNaN(storedEV)){
+      const side=storedV.includes('AWAY')?'AWAY':storedV.includes('HOME')?'HOME':storedV.includes('OVER')?'OVER':'UNDER';
+      return{side,ev:+storedEV.toFixed(1),odds:sbOddsFor(mk,side,g),strength:storedEV>=10?'BET':'LEAN'};
+    }
+    // Fallback: derive from projections (may differ due to line movement)
     const da=parseFloat(g.det_proj_away),dh=parseFloat(g.det_proj_home);
     if(isNaN(da)||isNaN(dh)||da<3||dh<3)return null;
     const mu=da-dh,MSD=4.0,TSD=5.5;
@@ -1713,7 +1720,7 @@ function sbBuildPlays(games){
     const payout=isNaN(odds)?0:(odds>0?odds/100:100/Math.abs(odds));
     const ev=!isNaN(odds)?(prob*payout-(1-prob))*100:null;
     if(ev==null||isNaN(ev))return null;
-    return{side,ev:+ev.toFixed(1),odds,strength:ev>=10?'BET':ev>=6?'LEAN':'LEAN'};
+    return{side,ev:+ev.toFixed(1),odds,strength:ev>=10?'BET':'LEAN'};
   }
   function detPlusFor(mk,g){
     const verdict=g['det_plus_'+mk+'_verdict'], ev=parseFloat(g['det_plus_'+mk+'_ev']);
@@ -1774,7 +1781,7 @@ function sbPasses(x){const f=sbFilter;
     if(count===1){
       if(hasMod&&!['model','model+sim','model+det','all3'].includes(x.source))return false;
       if(hasSim&&!['sim','model+sim','sim+det','all3'].includes(x.source))return false;
-      if(hasDet&&!['det','model+det','sim+det','all3'].includes(x.source)&&x.dStatus!=='agree')return false;
+      if(hasDet&&!['det','model+det','sim+det','all3'].includes(x.source))return false;
     }else if(count===2){
       if(hasSim&&hasDet&&!['sim+det','all3'].includes(x.source))return false;
       if(hasMod&&hasDet&&!['model+det','all3'].includes(x.source))return false;
