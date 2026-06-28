@@ -1701,13 +1701,6 @@ function sbBuildPlays(games){
   const neg=e=>(e!=null&&!isNaN(e)&&e<0);
   const ncdf=x=>{const t=1/(1+0.2316419*Math.abs(x)),d2=0.3989423*Math.exp(-x*x/2),p=d2*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;};
   function detFor(mk,g){
-    // Use stored det verdict columns first (accurate EV from analysis time)
-    const storedV=g['det_'+mk+'_verdict'],storedEV=parseFloat(g['det_'+mk+'_ev']);
-    if(storedV&&storedV!=='SKIP'&&!isNaN(storedEV)){
-      const side=storedV.includes('AWAY')?'AWAY':storedV.includes('HOME')?'HOME':storedV.includes('OVER')?'OVER':'UNDER';
-      return{side,ev:+storedEV.toFixed(1),odds:sbOddsFor(mk,side,g),strength:storedEV>=10?'BET':'LEAN'};
-    }
-    // Fallback: derive from projections (may differ due to line movement)
     const da=parseFloat(g.det_proj_away),dh=parseFloat(g.det_proj_home);
     if(isNaN(da)||isNaN(dh)||da<3||dh<3)return null;
     const mu=da-dh,MSD=4.0,TSD=5.5;
