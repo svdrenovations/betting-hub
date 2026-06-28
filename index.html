@@ -1701,12 +1701,12 @@ function sbBuildPlays(games){
     const odds=sbOddsFor(mk,side,g);
     const payout=isNaN(odds)?0:(odds>0?odds/100:100/Math.abs(odds));
     const ev=!isNaN(odds)?(prob*payout-(1-prob))*100:null;
-    if(ev==null||ev<6)return null;
+    if(ev==null||ev<6.6)return null;
     return{side,ev:+ev.toFixed(1),odds,strength:ev>=10?'BET':'LEAN'};
   }
   function detPlusFor(mk,g){
     const verdict=g['det_plus_'+mk+'_verdict'], ev=parseFloat(g['det_plus_'+mk+'_ev']);
-    if(!verdict||verdict==='SKIP'||isNaN(ev)||ev<6)return null;
+    if(!verdict||verdict==='SKIP'||isNaN(ev)||ev<6.6)return null;
     const side=verdict.includes('AWAY')?'AWAY':verdict.includes('HOME')?'HOME':verdict.includes('OVER')?'OVER':verdict.includes('UNDER')?'UNDER':null;
     if(!side)return null;
     const odds=sbOddsFor(mk,side,g);
@@ -2120,7 +2120,7 @@ function deriveDetPlusVerdict(mk,g){
   if(isNaN(odds))return{verdict:null,ev:null};
   const payout=odds>0?odds/100:100/Math.abs(odds);
   const ev=(prob*payout-(1-prob))*100;
-  if(ev<6)return{verdict:'SKIP',ev:+ev.toFixed(1)};
+  if(ev<6.6)return{verdict:'SKIP',ev:+ev.toFixed(1)};
   const strength=ev>=10?'BET':'LEAN';
   return{verdict:`${strength} ${side}`,ev:+ev.toFixed(1)};
 }
@@ -2139,7 +2139,7 @@ function deriveDetVerdict(mk,g){
   if(isNaN(odds))return{verdict:null,ev:null};
   const payout=odds>0?odds/100:100/Math.abs(odds);
   const ev=(prob*payout-(1-prob))*100;
-  if(ev<6)return{verdict:'SKIP',ev:+ev.toFixed(1)};
+  if(ev<6.6)return{verdict:'SKIP',ev:+ev.toFixed(1)};
   const strength=ev>=10?'BET':'LEAN';
   return{verdict:`${strength} ${side}`,ev:+ev.toFixed(1)};
 }
@@ -2796,7 +2796,7 @@ function triggerAllKalshiFetches() {
         const delta = kev != null ? +(kev - dkEv).toFixed(1) : null;
         const better = delta != null && delta > 0;
         const worse = delta != null && delta < 0;
-        const aboveGate = kev != null && kev >= 6;
+        const aboveGate = kev != null && kev >= 6.6;
         const lineDir = v.includes('OVER') ? 'Over' : 'Under';
         // pill
         const pill = document.getElementById('kpill-' + gid + '-' + m.key);
