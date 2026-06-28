@@ -384,6 +384,7 @@ async function buildMatchup({
   const parkRunFactor = parkFactors?.runFactor ?? 1.0;
   const parkHR = parkFactors?.hrFactor ?? parkRunFactor;
   const wxHR = weather?.wxHR ?? 1.0;
+  const umpRunFactor = umpire?.runFactor ?? 1.0;
   const baseCtx = { ...ctx, parkHR, wxHR, umpRunFactor };
 
   // IMPROVEMENT 1: Home/away OPS split adjustments
@@ -436,9 +437,6 @@ async function buildMatchup({
   }
   const awayRuspMult = ruspMult(awayTeamStats);
   const homeRuspMult = ruspMult(homeTeamStats);
-
-  // Umpire run factor
-  const umpRunFactor = umpire?.runFactor ?? 1.0;
 
   // IMPROVEMENT 3: Closer unavailability — if closer is LIKELY UNAVAILABLE, inflate bullpen ERA
   function bullpenCloserAdj(bullpenObj) {
