@@ -1703,7 +1703,7 @@ function sbBuildPlays(games){
   function detFor(mk,g){
     // Use stored det verdict columns first (analysis-time EV, immune to line movement)
     const storedV=g['det_'+mk+'_verdict'],storedEV=parseFloat(g['det_'+mk+'_ev']);
-    if(storedV&&storedV!=='SKIP'&&!isNaN(storedEV)&&storedEV>=6.6){
+    if(storedV&&storedV!=='SKIP'&&!isNaN(storedEV)){
       const side=storedV.includes('AWAY')?'AWAY':storedV.includes('HOME')?'HOME':storedV.includes('OVER')?'OVER':'UNDER';
       return{side,ev:+storedEV.toFixed(1),odds:sbOddsFor(mk,side,g),strength:storedEV>=10?'BET':'LEAN'};
     }
