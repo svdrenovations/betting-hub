@@ -1028,10 +1028,6 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       sim_ml_verdict: analysis.simMl ?? null, sim_ml_ev: analysis.simMlEV ?? null,
       sim_rl_verdict: analysis.simRl ?? null, sim_rl_ev: analysis.simRlEV ?? null,
       sim_total_verdict: analysis.simTotal ?? null, sim_total_ev: analysis.simTotalEV ?? null,
-      sim_plus_away_runs: analysis.simPlusAwayRuns ?? null, sim_plus_home_runs: analysis.simPlusHomeRuns ?? null,
-      sim_plus_ml_verdict: analysis.simPlusMl ?? null, sim_plus_ml_ev: analysis.simPlusMlEV ?? null,
-      sim_plus_rl_verdict: analysis.simPlusRl ?? null, sim_plus_rl_ev: analysis.simPlusRlEV ?? null,
-      sim_plus_total_verdict: analysis.simPlusTotal ?? null, sim_plus_total_ev: analysis.simPlusTotalEV ?? null,
       det_plus_proj_away: detPlusProj?.awayRuns ?? null, det_plus_proj_home: detPlusProj?.homeRuns ?? null,
       det_plus_ml_verdict: detPlusVerdicts?.ml ?? null, det_plus_ml_ev: detPlusVerdicts?.mlEV ?? null,
       det_plus_rl_verdict: detPlusVerdicts?.rl ?? null, det_plus_rl_ev: detPlusVerdicts?.rlEV ?? null,
@@ -1388,9 +1384,11 @@ async function main() {
             awayPitcherDetail: awayPitcherInfo || null, homePitcherDetail: homePitcherInfo || null,
             awayBatterStatcast: awayMatchups.lineup.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null),
             homeBatterStatcast: homeMatchups.lineup.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null),
-            awayArsenal: null, homeArsenal: null,
+            awayArsenal: _statcastCache?.pitchers?.[String(awayPitcherInfo.id)]?.arsenal ? { arsenal: _statcastCache.pitchers[String(awayPitcherInfo.id)].arsenal } : null,
+            homeArsenal: _statcastCache?.pitchers?.[String(homePitcherInfo.id)]?.arsenal ? { arsenal: _statcastCache.pitchers[String(homePitcherInfo.id)].arsenal } : null,
+            awayBullpenObj: awayBullpen || null, homeBullpenObj: homeBullpen || null,
             parkFactors: getParkFactors(game.home_team, venueName),
-            weather: weather ? { wxHR: (() => { if (!weather || weather.dome) return 1.0; let mult = 1.0; const temp = weather.temp || 72; const effWind = weather.effWind || 0; const flags = weather.flags || []; if (temp >= 85) mult *= 1.05; if (temp <= 50) mult *= 0.95; if (flags.some(f => (f||'').includes('OUT to CF'))) mult *= 1 + Math.min(effWind * 0.008, 0.15); if (flags.some(f => (f||'').includes('IN from CF'))) mult *= 1 - Math.min(effWind * 0.008, 0.12); return mult; })() } : null,
+            weather: weather ? { wxHR: (() => { if (!weather || weather.dome) return 1.0; let mult = 1.0; const temp = weather.temp || 72; const effWind = weather.effWind || 0; const flags = weather.flags || []; if (temp >= 90) mult *= 1.07; else if (temp >= 82) mult *= 1.04; else if (temp <= 45) mult *= 0.88; else if (temp <= 55) mult *= 0.93; if (flags.some(f => (f||'').includes('OUT to CF'))) mult *= 1 + Math.min(effWind * 0.009, 0.16); if (flags.some(f => (f||'').includes('IN from CF'))) mult *= 1 - Math.min(effWind * 0.009, 0.13); return mult; })() } : null,
             totalLine: parseFloat(lines.total) || null, f5Line: f5Lines?.f5Total || null,
           });
           analysis.simAwayRuns = +simProbs.meanAway.toFixed(2);
@@ -1412,58 +1410,6 @@ async function main() {
           console.log(`  SIM ${game.away_team} ${analysis.simAwayRuns} - ${analysis.simHomeRuns} ${game.home_team} | ML:${analysis.simMl} RL:${analysis.simRl} TOT:${analysis.simTotal}`);
         }
       } catch (e) { console.log(`  sim shadow error: ${e.message}`); }
-
-      // ── SIM+ (enhanced sim with per-batter Statcast + arsenal) ───────────
-      try {
-        if (awayMatchups?.lineup?.length >= 9 && homeMatchups?.lineup?.length >= 9 && awayPitcherInfo?.id && homePitcherInfo?.id && awayTeamId && homeTeamId) {
-          // Wire in arsenal from statcast cache
-          const awayArsenalData = _statcastCache?.pitchers?.[String(awayPitcherInfo.id)]?.arsenal ? { arsenal: _statcastCache.pitchers[String(awayPitcherInfo.id)].arsenal } : null;
-          const homeArsenalData = _statcastCache?.pitchers?.[String(homePitcherInfo.id)]?.arsenal ? { arsenal: _statcastCache.pitchers[String(homePitcherInfo.id)].arsenal } : null;
-          const simPlusProbs = await simulateGame({
-            awayLineupIds: awayMatchups.lineup.map(p => p.id), homeLineupIds: homeMatchups.lineup.map(p => p.id),
-            awayStarterId: awayPitcherInfo.id, homeStarterId: homePitcherInfo.id,
-            awayTeamId, homeTeamId,
-            awayStarterHand: awayPitcherInfo?.throwHand || 'R', homeStarterHand: homePitcherInfo?.throwHand || 'R',
-            awayStarterStatcast: awayStatcast || null, homeStarterStatcast: homeStatcast || null,
-            awayStarterInfo: awayPitcherInfo || null, homeStarterInfo: homePitcherInfo || null,
-            awayLineupHandedness: awayMatchups.handedness || null, homeLineupHandedness: homeMatchups.handedness || null,
-            awayPitcherDetail: awayPitcherInfo || null, homePitcherDetail: homePitcherInfo || null,
-            awayBatterStatcast: awayMatchups.lineup.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null),
-            homeBatterStatcast: homeMatchups.lineup.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null),
-            awayArsenal: awayArsenalData, homeArsenal: homeArsenalData,
-            parkFactors: getParkFactors(game.home_team, venueName),
-            weather: weather ? { wxHR: (() => {
-              if (!weather || weather.dome) return 1.0;
-              let mult = 1.0;
-              const temp = weather.temp || 72; const effWind = weather.effWind || 0; const flags = weather.flags || [];
-              // Enhanced: temp effect is more granular
-              if (temp >= 90) mult *= 1.07; else if (temp >= 82) mult *= 1.04;
-              else if (temp <= 45) mult *= 0.88; else if (temp <= 55) mult *= 0.93;
-              if (flags.some(f => (f||'').includes('OUT to CF'))) mult *= 1 + Math.min(effWind * 0.009, 0.16);
-              if (flags.some(f => (f||'').includes('IN from CF'))) mult *= 1 - Math.min(effWind * 0.009, 0.13);
-              return mult;
-            })() } : null,
-            totalLine: parseFloat(lines.total) || null, f5Line: f5Lines?.f5Total || null,
-          });
-          analysis.simPlusAwayRuns = +simPlusProbs.meanAway.toFixed(2);
-          analysis.simPlusHomeRuns = +simPlusProbs.meanHome.toFixed(2);
-          const spMl = pickSide([{ ev: evPct(simPlusProbs.pAwayML, lines.awayML), label: 'AWAY' }, { ev: evPct(simPlusProbs.pHomeML, lines.homeML), label: 'HOME' }]);
-          analysis.simPlusMl = spMl ? verdictFor(spMl.ev, spMl.label) : 'SKIP';
-          analysis.simPlusMlEV = spMl ? spMl.ev : null;
-          const aRLpt2 = parseFloat(lines.awayRL);
-          const awayIsFav2 = !isNaN(aRLpt2) ? aRLpt2 < 0 : (parseFloat(lines.awayML) < parseFloat(lines.homeML));
-          let spPAwayRL, spPHomeRL;
-          if (simPlusProbs.pAwayBy2 != null && simPlusProbs.pHomeBy2 != null) { spPAwayRL = awayIsFav2 ? simPlusProbs.pAwayBy2 : (1 - simPlusProbs.pHomeBy2); spPHomeRL = awayIsFav2 ? (1 - simPlusProbs.pAwayBy2) : simPlusProbs.pHomeBy2; }
-          else { spPAwayRL = simPlusProbs.pAwayRL; spPHomeRL = simPlusProbs.pHomeRL; }
-          const spRl = pickSide([{ ev: evPct(spPAwayRL, lines.awayRLOdds), label: 'AWAY' }, { ev: evPct(spPHomeRL, lines.homeRLOdds), label: 'HOME' }]);
-          analysis.simPlusRl = spRl ? verdictFor(spRl.ev, spRl.label) : 'SKIP';
-          analysis.simPlusRlEV = spRl ? spRl.ev : null;
-          const spTot = pickSide([{ ev: evPct(simPlusProbs.pOver, lines.overOdds), label: 'OVER' }, { ev: evPct(simPlusProbs.pUnder, lines.underOdds), label: 'UNDER' }]);
-          analysis.simPlusTotal = spTot ? verdictFor(spTot.ev, spTot.label) : 'SKIP';
-          analysis.simPlusTotalEV = spTot ? spTot.ev : null;
-          console.log(`  SIM+ ${game.away_team} ${analysis.simPlusAwayRuns} - ${analysis.simPlusHomeRuns} ${game.home_team} | ML:${analysis.simPlusMl} RL:${analysis.simPlusRl} TOT:${analysis.simPlusTotal}`);
-        }
-      } catch (e) { console.log(`  sim+ error: ${e.message}`); }
 
       // ── SWEEP FADE ────────────────────────────────────────────────────────
       const _gd = new Date(game.commence_time).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
