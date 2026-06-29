@@ -3214,6 +3214,16 @@ function plusSetSource(v){const i=plusFilter.source.indexOf(v);if(i>=0)plusFilte
 function plusToggle(key,v){const a=plusFilter[key],i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);renderPlus();}
 function plusClear(key){plusFilter[key]=[];renderPlus();}
 function plusDate(which,v){plusFilter[which]=v;renderPlus();}
+async function plusDeletePlay(date,matchup,market,side,source){
+  if(!requireUnlocked())return;
+  try{
+    const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_excluded_plays`,{method:'POST',headers:{'Content-Type':'application/json',apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`,'Prefer':'resolution=merge-duplicates'},body:JSON.stringify({game_date:date,matchup,market,side,source})});
+    if(!res.ok)throw new Error(await res.text());
+    if(!plusExcluded)plusExcluded=new Set();
+    plusExcluded.add(plusKey(date,matchup,market,side,source));
+    renderPlus();
+  }catch(e){alert('Error removing play: '+e.message);}
+}
 function plusSetSort(col){if(plusSort.col===col)plusSort.dir=plusSort.dir==='asc'?'desc':'asc';else{plusSort.col=col;plusSort.dir='desc';}renderPlus();}
 function plusSortPlays(plays){const{col,dir}=plusSort,s=dir==='asc'?1:-1;return plays.slice().sort((a,b)=>{let va,vb;if(col==='date'){va=a.date;vb=b.date;}else if(col==='ev'){va=a.ev??-999;vb=b.ev??-999;}else if(col==='units'){va=a.result==='pending'?null:a.units;vb=b.result==='pending'?null:b.units;}else if(col==='result'){va={win:1,loss:2,push:3,pending:4}[a.result]??5;vb={win:1,loss:2,push:3,pending:4}[b.result]??5;}else{va=a[col];vb=b[col];}if(va==null&&vb==null)return 0;if(va==null)return 1;if(vb==null)return-1;return(va<vb?-1:va>vb?1:0)*s;});}
 function plusExportCSV(){const plays=plusBuildPlays(plusGames||[]).filter(plusPasses);if(!plays.length){alert('No plays.');return;}const cols=[['date',x=>x.date],['matchup',x=>x.matchup],['source',x=>x.source],['market',x=>x.lbl],['side',x=>x.side.toLowerCase()],['line',x=>x.line],['ev_pct',x=>x.ev??''],['result',x=>x.result],['units',x=>x.result==='pending'?'':x.units.toFixed(2)],['final',x=>x.final],['actual_total',x=>x.actualTotal]];const esc=v=>`"${String(v??'').replace(/"/g,'""')}"`;const csv=[cols.map(c=>c[0]).join(','),...plays.map(x=>cols.map(c=>esc(c[1](x))).join(','))].join('\n');const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download='plus_'+isoDate(new Date())+'.csv';a.click();}
@@ -3247,8 +3257,8 @@ async function renderPlus(){
   const uc=x=>{if(x.result==='pending')return'<span style="color:var(--text)">—</span>';const c=x.units>0?'var(--green)':x.units<0?'var(--red)':'var(--text)';return`<span class="mono" style="color:${c}">${x.units>0?'+':''}${x.units.toFixed(2)}</span>`;};
   const th=(col,lbl)=>{const active=plusSort.col===col;return`<th onclick="plusSetSort('${col}')" style="${active?'color:var(--green)':''}cursor:pointer;user-select:none">${lbl}${active?(plusSort.dir==='asc'?' ▲':' ▼'):''}</th>`;};
   const sorted=plusSortPlays(plays);
-  const rows=sorted.map(x=>`<tr><td class="mono" style="font-size:11px">${x.date}</td><td style="font-size:12px">${x.matchup}</td><td style="font-size:11px;font-family:DM Mono,monospace;color:${sc(x.source)}">${x.source}</td><td style="font-size:11px">${x.lbl}</td><td class="mono" style="font-size:11px">${x.side.toLowerCase()}</td><td class="mono" style="font-size:11px">${x.line}</td><td class="mono" style="font-size:11px;color:var(--amber)">${x.ev!=null?`+${x.ev.toFixed(1)}%`:'—'}</td><td>${rc(x)}</td><td>${uc(x)}</td></tr>`).join('');
-  const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr>${th('date','Date')}${th('matchup','Matchup')}${th('source','Source')}${th('market','Mkt')}${th('side','Side')}${th('line','Line')}${th('ev','EV')}${th('result','Res')}${th('units','Units')}</tr></thead><tbody>${rows||`<tr><td colspan="9" style="color:var(--text);padding:18px;text-align:center">No plays match.</td></tr>`}</tbody></table></div>`;
+  const rows=sorted.map(x=>`<tr><td class="mono" style="font-size:11px">${x.date}</td><td style="font-size:12px">${x.matchup}</td><td style="font-size:11px;font-family:DM Mono,monospace;color:${sc(x.source)}">${x.source}</td><td style="font-size:11px">${x.lbl}</td><td class="mono" style="font-size:11px">${x.side.toLowerCase()}</td><td class="mono" style="font-size:11px">${x.line}</td><td class="mono" style="font-size:11px;color:var(--amber)">${x.ev!=null?`+${x.ev.toFixed(1)}%`:'—'}</td><td>${rc(x)}</td><td>${uc(x)}</td><td><button onclick="plusDeletePlay('${x.date}','${x.matchup.replace(/'/g,"\\'")}','${x.mk}','${x.side}','${x.source}')" style="background:none;border:none;color:var(--text);cursor:pointer;font-size:13px;opacity:0.5;padding:2px 6px" title="Remove play">✕</button></td></tr>`).join('');
+  const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr>${th('date','Date')}${th('matchup','Matchup')}${th('source','Source')}${th('market','Mkt')}${th('side','Side')}${th('line','Line')}${th('ev','EV')}${th('result','Res')}${th('units','Units')}<th></th></tr></thead><tbody>${rows||`<tr><td colspan="10" style="color:var(--text);padding:18px;text-align:center">No plays match.</td></tr>`}</tbody></table></div>`;
   el.innerHTML=fBar+stats+table;
 }
 </script>
