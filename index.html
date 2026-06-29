@@ -2163,10 +2163,20 @@ function deriveDetPlusVerdict(mk,g){
 }
 
 function deriveDetVerdict(mk,g){
+  // Read from stored columns — cards never change after creation
+  const col='det_'+mk.toLowerCase();
+  const storedV=g[col+'_verdict'],storedEV=parseFloat(g[col+'_ev']);
+  if(storedV&&storedV!=='SKIP'&&!isNaN(storedEV)){
+    const side=storedV.includes('AWAY')?'AWAY':storedV.includes('HOME')?'HOME':storedV.includes('OVER')?'OVER':'UNDER';
+    const strength=storedEV>=10?'BET':'LEAN';
+    return{verdict:`${strength} ${side}`,ev:+storedEV.toFixed(1)};
+  }
+  if(storedV==='SKIP')return{verdict:'SKIP',ev:!isNaN(storedEV)?storedEV:null};
+  // Fallback for games not yet re-analyzed (projections exist but no stored verdict)
   const da=parseFloat(g.det_proj_away),dh=parseFloat(g.det_proj_home);
   if(isNaN(da)||isNaN(dh)||da<3||dh<3)return{verdict:null,ev:null};
   const mu=da-dh,MSD=4.0,TSD=5.5;
-  const ncdf=x=>{const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.330274))));return x>0?1-p:p;};
+  const ncdf=x=>{const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;};
   let side=null,prob=null;
   if(mk==='ML'){const pA=(1-ncdf((0.5-mu)/MSD)),pH=ncdf((-0.5-mu)/MSD),den=(pA+pH)||1;const pa=pA/den,ph=pH/den;side=pa>ph?'AWAY':'HOME';prob=pa>ph?pa:ph;}
   else if(mk==='RL'){let aRL=parseFloat(g.away_rl),hRL=parseFloat(g.home_rl);if(isNaN(aRL))aRL=mu>0?-1.5:1.5;if(isNaN(hRL))hRL=mu>0?1.5:-1.5;const pA=1-ncdf((-aRL-mu)/MSD),pH=ncdf((hRL-mu)/MSD);side=pA>pH?'AWAY':'HOME';prob=pA>pH?pA:pH;}
@@ -2177,12 +2187,6 @@ function deriveDetVerdict(mk,g){
   const payout=odds>0?odds/100:100/Math.abs(odds);
   const ev=(prob*payout-(1-prob))*100;
   if(ev<6.6)return{verdict:'SKIP',ev:+ev.toFixed(1)};
-  // Sweep fade — skip ML/RL plays on the sweeping team
-  if((mk==='ML'||mk==='RL')&&g.sweep_fade){
-    const sf=(g.sweep_fade||'').toUpperCase();
-    const sweepSide=sf.includes('(AWAY')?'AWAY':sf.includes('(HOME')?'HOME':null;
-    if(sweepSide&&side===sweepSide)return{verdict:'SKIP',ev:+ev.toFixed(1),fadedBySweep:true};
-  }
   const strength=ev>=10?'BET':'LEAN';
   return{verdict:`${strength} ${side}`,ev:+ev.toFixed(1)};
 }
