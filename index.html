@@ -366,6 +366,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
   <div class="topbar">
     <div class="topbar-left"><h2>Data</h2><p>Det &amp; Sim plays — independent, no model</p></div>
     <div style="display:flex;gap:8px">
+      <button class="btn" onclick="settleGameScores(this)">Settle scores →</button>
       <button class="btn" onclick="dataExportCSV()">Export CSV</button>
     </div>
   </div>
@@ -3426,7 +3427,7 @@ function quickLogEngine(gId,market,verdict,engine){
 async function settleGameScores(btn){
   if(!requireUnlocked())return;
   const origText=btn?btn.textContent:'';if(btn){btn.disabled=true;btn.textContent='Settling…';}
-  const dateStr=sbFilter.from||isoDate(currentDate);let settled=0;
+  const dateStr=sbFilter.from||dataFilter.from||isoDate(currentDate);let settled=0;
   try{
     const res=await fetch(`https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${dateStr}&gameType=R&hydrate=linescore`);
     if(!res.ok)throw new Error('MLB API '+res.status);
@@ -3446,7 +3447,7 @@ async function settleGameScores(btn){
     }
   }catch(e){alert('Error: '+e.message);}
   finally{if(btn){btn.disabled=false;btn.textContent=origText;}}
-  if(settled>0){alert(`✓ Settled ${settled} game${settled>1?'s':''}`);sbGames=null;renderScoreboard();}
+  if(settled>0){alert(`✓ Settled ${settled} game${settled>1?'s':''}`);sbGames=null;dataGames=null;renderScoreboard();renderData();renderDataStats();}
   else alert('No new completed games found.');
 }
 
