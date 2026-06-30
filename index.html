@@ -1961,7 +1961,7 @@ function statsClear(key){statsFilter[key]=[];renderStats();}
 
 // ── DATA PAGE ─────────────────────────────────────────────────────────────────
 let dataGames=null,dataExcluded=null;
-let dataFilter={source:[],result:[],market:[],mktType:[],price:[],ev:[],conf:[],situation:[],from:'',to:''};
+let dataFilter={source:[],result:[],market:[],mktType:[],price:[],ev:[],conf:[],situation:[],disagree:'',from:'',to:''};
 
 function dataKey(date,matchup,mk,side,source){return`${date}|${matchup}|${mk}|${side}|${source}`;}
 
@@ -1976,6 +1976,7 @@ function dataBuildPlays(games){
       const side=storedV.includes('AWAY')?'AWAY':storedV.includes('HOME')?'HOME':storedV.includes('OVER')?'OVER':'UNDER';
       return{side,ev:+storedEV.toFixed(1),odds:sbOddsFor(mk,side,g),strength:storedEV>=10?'BET':'LEAN'};
     }
+    if(storedV==='SKIP')return null;
     const da=parseFloat(g.det_proj_away),dh=parseFloat(g.det_proj_home);
     if(isNaN(da)||isNaN(dh)||da<3||dh<3)return null;
     const mu=da-dh,MSD=4.0,TSD=5.5;
@@ -2039,16 +2040,19 @@ function dataBuildPlays(games){
 
 function dataPasses(x){
   const f=dataFilter;
-  if(f.source.length>0){
+  // Disagree filter takes priority over source filter
+  if(f.disagree==='det'){
+    if(x.source!=='det')return false;
+    if(x._agreed!==false||x._hasBothEngines!==true)return false;
+  } else if(f.disagree==='sim'){
+    if(x.source!=='sim')return false;
+    if(x._agreed!==false||x._hasBothEngines!==true)return false;
+  } else if(f.source.length>0){
     const hasSim=f.source.includes('sim'),hasDet=f.source.includes('det');
     if(f.source.length===1){
       if(hasDet&&x.source!=='det')return false;
       if(hasSim&&x.source!=='sim')return false;
     } else if(hasSim&&hasDet){
-      // Both selected — only agreed plays (same side from both engines)
-      // A play passes only if both det and sim picked the same side for this market/game
-      // We check this by looking for a matching play from the other engine in the full dataset
-      // Since we emit separate rows, we need to mark agreed plays
       if(!x._agreed)return false;
     }
   }
@@ -2065,7 +2069,6 @@ function dataPasses(x){
 }
 
 function dataMarkAgreed(plays){
-  // For each game+market, check if both det and sim picked the same side
   const byKey={};
   for(const x of plays){
     const k=`${x.date}|${x.matchup}|${x.mk}`;
@@ -2075,7 +2078,9 @@ function dataMarkAgreed(plays){
   for(const x of plays){
     const k=`${x.date}|${x.matchup}|${x.mk}`;
     const m=byKey[k];
-    x._agreed=!!(m.det&&m.sim&&m.det===m.sim);
+    const hasBoth=!!(m.det&&m.sim);
+    x._hasBothEngines=hasBoth;
+    x._agreed=hasBoth&&m.det===m.sim;
   }
 }
 
@@ -2106,7 +2111,7 @@ function dataHTML(plays){
   const anyBtn=(key,l)=>`<button class="filter-btn ${f[key].length===0?'on':''}" onclick="dataClear('${key}')">${l}</button>`;
   const inp=(which)=>`<input type="date" value="${f[which]}" onchange="dataDate('${which}',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">`;
 
-  const filterBar=`<div class="tracker-filters">${srcBtn('det','Det')}${srcBtn('sim','Sim')}</div>`
+  const filterBar=`<div class="tracker-filters">${srcBtn('det','Det')}${srcBtn('sim','Sim')}<span style="color:var(--border);margin:0 4px">|</span><button class="filter-btn ${f.disagree==='det'?'on':''}" onclick="dataSetDisagree('det')">Det Disagree</button><button class="filter-btn ${f.disagree==='sim'?'on':''}" onclick="dataSetDisagree('sim')">Sim Disagree</button></div>`
     +`<div class="tracker-filters">${anyBtn('result','Any result')}${tog('result','win','Won')}${tog('result','loss','Lost')}${tog('result','push','Push')}${tog('result','pending','Pending')}</div>`
     +`<div class="tracker-filters">${anyBtn('market','All mkts')}${tog('market','ml','ML')}${tog('market','rl','RL')}${tog('market','total','Total')}</div>`
     +`<div class="tracker-filters">${anyBtn('conf','Any conf')}${tog('conf','HIGH','High')}${tog('conf','MEDIUM','Medium')}${tog('conf','LOW','Low')}</div>`
@@ -2202,7 +2207,8 @@ function dataSortPlays(plays){
     return 0;
   });
 }
-function dataSetSource(v){const i=dataFilter.source.indexOf(v);if(i>=0)dataFilter.source.splice(i,1);else dataFilter.source.push(v);renderData();renderDataStats();}
+function dataSetSource(v){const i=dataFilter.source.indexOf(v);if(i>=0)dataFilter.source.splice(i,1);else dataFilter.source.push(v);dataFilter.disagree='';renderData();renderDataStats();}
+function dataSetDisagree(v){dataFilter.disagree=dataFilter.disagree===v?'':v;dataFilter.source=[];renderData();renderDataStats();}
 function dataToggle(key,v){const a=dataFilter[key];const i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);renderData();renderDataStats();}
 function dataClear(key){dataFilter[key]=[];renderData();renderDataStats();}
 function dataDate(which,v){dataFilter[which]=v;renderData();renderDataStats();}
@@ -2252,7 +2258,7 @@ async function renderDataStats(){
   const anyBtn=(key,l)=>`<button class="filter-btn ${dataFilter[key].length===0?'on':''}" onclick="dataClear('${key}')">${l}</button>`;
   const inp=(which)=>`<input type="date" value="${dataFilter[which]}" onchange="dataDate('${which}',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">`;
 
-  const filterBar=`<div class="tracker-filters">${srcBtn('det','Det')}${srcBtn('sim','Sim')}</div>`
+  const filterBar=`<div class="tracker-filters">${srcBtn('det','Det')}${srcBtn('sim','Sim')}<span style="color:var(--border);margin:0 4px">|</span><button class="filter-btn ${dataFilter.disagree==='det'?'on':''}" onclick="dataSetDisagree('det')">Det Disagree</button><button class="filter-btn ${dataFilter.disagree==='sim'?'on':''}" onclick="dataSetDisagree('sim')">Sim Disagree</button></div>`
     +`<div class="tracker-filters">${anyBtn('market','All mkts')}${tog('market','ml','ML')}${tog('market','rl','RL')}${tog('market','total','Total')}</div>`
     +`<div class="tracker-filters">${anyBtn('mktType','All mkts')}${[['ml-home-fav','ML home fav'],['ml-home-dog','ML home dog'],['ml-away-fav','ML away fav'],['ml-away-dog','ML away dog'],['rl-15-home','RL -1.5 home'],['rl-15-away','RL -1.5 away'],['rl-p15-home','RL +1.5 home'],['rl-p15-away','RL +1.5 away'],['total','Total']].map(([v,l])=>tog('mktType',v,l)).join('')}</div>`
     +`<div class="tracker-filters">${anyBtn('price','Any price')}${tog('price','heavy-fav','Heavy fav ≤-150')}${tog('price','fav','Fav -150 to 0')}${tog('price','dog','Dog 0 to +150')}${tog('price','big-dog','Big dog +150+')}</div>`
