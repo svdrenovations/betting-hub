@@ -3252,7 +3252,7 @@ function triggerAllKalshiFetches() {
             kalshiModelP = v.includes('OVER') ? pOver : 1 - pOver;
           }
         }
-        const kev = cents != null ? evFromCents(kalshiModelP, cents, KALSHI_FEE_RATE) : null;
+        const kev = cents != null ? evFromCents(centsSource==='no' ? 1-kalshiModelP : kalshiModelP, cents, KALSHI_FEE_RATE) : null;
         const equiv = rawCents != null ? centsToAmerican(rawCents) : '—';
         const dkEv = parseFloat(m.ev);
         // Only flag as true mismatch if lines differ by more than 1 run (unexpected)
