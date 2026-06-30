@@ -1251,7 +1251,7 @@ function kalshiPanelHTML(g, bets) {
     const dkMaxStr = m.breakeven || '—';
     const lineStr = dkLine(m);
     const v = (m.verdict||'').toUpperCase();
-    const sideLabel = v.includes('AWAY')?'AWAY':v.includes('HOME')?'HOME':v.includes('OVER')?'OVER':'UNDER';
+    const sideLabel = v.includes('AWAY')?teamAbbr(g.away_team):v.includes('HOME')?teamAbbr(g.home_team):v.includes('OVER')?'OVER':'UNDER';
     const verdictWord = v.startsWith('BET')?'BET':'LEAN';
     const verdictColor = verdictWord==='BET'?'var(--green)':'var(--amber)';
     const dkImplied = americanToImplied(dk);
