@@ -516,26 +516,22 @@ function kalshiPayout(cents) {
   return '$' + ((100-c)/c*100).toFixed(1);
 }
 // Max Kalshi cents where EV still clears 6% gate given model prob p (0..1), accounting for
-// Kalshi's ~4% fee on the winning side. Solves for the raw market price (cents) such that
-// after fee-adjustment, EV is still ≥ 6%.
+// Kalshi's ~4% fee on the winning payout.
+// EV = p*(1-c)/c*(1-FEE) - (1-p) >= t → p*(1-FEE)*(1-c)/c >= t+(1-p)
+// → c <= p*(1-FEE) / (t + 1 - p + p*(1-FEE))... solving: c <= p*(1-FEE)/(1+t-p*FEE)
 function kalshiMaxCents(p) {
   if (!(p > 0) || !(p < 1)) return null;
-  const t = 0.06; // 6% gate
-  const FEE = 0.04;
-  // feeAdjustedCents = c + FEE*(100-c). EV = p - feeAdjustedCents/100 ≥ t
-  // → feeAdjustedCents ≤ (p-t)*100 → c + FEE*(100-c) ≤ (p-t)*100
-  // → c*(1-FEE) ≤ (p-t)*100 - FEE*100 → c ≤ ((p-t)*100 - FEE*100) / (1-FEE)
-  const maxC = Math.round((((p - t) * 100) - FEE * 100) / (1 - FEE));
+  const t = 0.06, FEE = 0.04;
+  const maxC = Math.round(p * (1 - FEE) / (1 + t - p * FEE) * 100);
   if (maxC <= 0 || maxC >= 100) return null;
   return maxC;
 }
-function evFromCents(p, cents) {
+function evFromCents(p, cents, feeRate) {
   const c = parseFloat(cents) / 100;
   if (isNaN(c) || !(p > 0)) return null;
-  // EV per dollar risked: (p * payout - (1-p)) / cost
-  // payout on win = (1-c)/c dollars per dollar risked
-  // NOTE: cents passed in here is already fee-adjusted by the caller
-  return +(( p * (1 - c) / c - (1 - p)) * 100).toFixed(1);
+  const fee = feeRate ?? 0;
+  // Payout on win = (1-c)/c per dollar risked, reduced by fee on the profit
+  return +(( p * (1 - c) / c * (1 - fee) - (1 - p)) * 100).toFixed(1);
 }
 const kalshiCache = {};
 const kalshiEngine = {}; // per-game engine selection: 'model'|'sim'|'det'
@@ -3213,8 +3209,7 @@ function triggerAllKalshiFetches() {
         // inflating the effective price: feeAdjustedCents = cents + KALSHI_FEE_RATE * (100 - cents).
         const KALSHI_FEE_RATE = 0.04;
         const rawCents = cents;
-        if (cents != null) cents = cents + KALSHI_FEE_RATE * (100 - cents);
-        // Size at ask (contracts available at current price)
+        // Do NOT inflate cents — apply fee to payout inside evFromCents instead
         let askSize = 0;
         if (m.key === 'ml') {
           if (centsSource === 'yes') askSize = v.includes('AWAY') ? (kd.awayML_size||0) : (kd.homeML_size||0);
@@ -3257,7 +3252,7 @@ function triggerAllKalshiFetches() {
             kalshiModelP = v.includes('OVER') ? pOver : 1 - pOver;
           }
         }
-        const kev = cents != null ? evFromCents(kalshiModelP, cents) : null;
+        const kev = cents != null ? evFromCents(kalshiModelP, cents, KALSHI_FEE_RATE) : null;
         const equiv = rawCents != null ? centsToAmerican(rawCents) : '—';
         const dkEv = parseFloat(m.ev);
         // Only flag as true mismatch if lines differ by more than 1 run (unexpected)
@@ -3332,11 +3327,11 @@ function triggerAllKalshiFetches() {
           else {
             const sideLabel = centsSource === 'no' ? 'No' : 'Yes';
             const kalshiLineLabel = (m.key === 'total' && kd.total_line) ? ' (Over ' + kd.total_line + ')' : '';
-            kjline.textContent = sideLabel + ' @ ' + Math.round(rawCents) + '¢ (≈ ' + equiv + ')' + kalshiLineLabel + ' · after 4% fee: ' + Math.round(cents) + '¢ equiv';
+            kjline.textContent = sideLabel + ' @ ' + Math.round(rawCents) + '¢ (≈ ' + equiv + ')' + kalshiLineLabel;
             if (kjcard) kjcard.style.borderColor = better ? 'var(--green-dim)' : worse ? 'var(--red-dim)' : 'var(--amber-dim)';
           }
         }
-        if (kjdetail && rawCents != null) kjdetail.textContent = 'Implied ' + centsToImplied(rawCents) + ' · win ' + kalshiPayout(rawCents) + ' per $100 · after 4% fee EV uses ' + Math.round(cents) + '¢ equiv';
+        if (kjdetail && rawCents != null) kjdetail.textContent = 'Implied ' + centsToImplied(rawCents) + ' · win ' + kalshiPayout(rawCents) + ' per $100 · 4% fee applied to EV';
         if (kjnote) {
           if (rawCents == null) { kjnote.textContent = 'No active Kalshi market found for this play.'; }
           else if (totalLineMismatch) { kjnote.textContent = 'Warning: Kalshi line ' + lineDir + ' ' + kalshiTotalLine + ' differs significantly from DK ' + lineDir + ' ' + dkTotalLine + '. Verify before accepting.'; kjnote.style.color = 'var(--red)'; }
