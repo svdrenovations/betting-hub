@@ -2492,17 +2492,21 @@ function simMaxJuice(market,verdict,evPct,g){
   return market==='TOTAL'?`${side==='OVER'?'Over':'Under'} ${g.total_line} @ ${price}`:price;
 }
 
-function simMarketCell(label,verdict,ev,breakeven,gId,engine,logged){
+function simMarketCell(label,verdict,ev,breakeven,gId,engine,logged,g){
   const v=verdict||'—';
+  const displayV=g?displayVerdict(v,g):v;
   const isPlay=!!verdict&&(v.startsWith('BET')||v.includes('LEAN'));
-  const valColor=isPlay?'var(--purple)':'var(--text)';
-  const hasEdge=isPlay&&parseFloat(ev)>=6&&gId&&engine;
-  const border=isPlay?'border-color:var(--purple);':'';
-  const evHtml=(ev!=null&&ev!==0&&isPlay)?`<div class="ev-val" style="color:var(--purple)">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV</div>`:'';
+  const evNum=parseFloat(ev);
+  const suppressed=isPlay&&engine==='DET'&&evNum>=15&&evNum<20;
+  const valColor=suppressed?'var(--amber)':isPlay?'var(--purple)':'var(--text)';
+  const hasEdge=isPlay&&evNum>=6&&gId&&engine;
+  const border=suppressed?'border-color:var(--amber);':isPlay?'border-color:var(--purple);':'';
+  const evHtml=(ev!=null&&ev!==0&&isPlay)?`<div class="ev-val" style="color:${suppressed?'var(--amber)':'var(--purple)'}">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV</div>`:'';
+  const suppressHtml=suppressed?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px;font-weight:700">SUPPRESSED</div>`:'';
   const breakHtml=(breakeven&&isPlay)?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>`:'';
   const clickable=hasEdge?`onclick="quickLogEngine('${gId}','${label}','${v}','${engine}')"` :'';
   const check=logged?` <span style="color:var(--green);font-weight:700" title="Logged: ${String(logged).replace(/"/g,'&quot;')}">✓</span>`:'';
-  return`<div class="market-cell${logged?' logged':''}" style="${border}${hasEdge?'cursor:pointer':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val" style="color:${valColor};font-weight:600">${v}</div>${evHtml}${breakHtml}</div>`;
+  return`<div class="market-cell${logged?' logged':''}" style="${border}${hasEdge?'cursor:pointer':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val" style="color:${valColor};font-weight:600">${displayV}</div>${evHtml}${suppressHtml}${breakHtml}</div>`;
 }
 
 function deriveDetPlusVerdict(mk,g){
@@ -2522,6 +2526,29 @@ function deriveDetPlusVerdict(mk,g){
   if(ev<6.6)return{verdict:'SKIP',ev:+ev.toFixed(1)};
   const strength=ev>=10?'BET':'LEAN';
   return{verdict:`${strength} ${side}`,ev:+ev.toFixed(1)};
+}
+
+const TEAM_ABBR={
+  'Arizona Diamondbacks':'AZ','Atlanta Braves':'ATL','Baltimore Orioles':'BAL','Boston Red Sox':'BOS',
+  'Chicago Cubs':'CHC','Chicago White Sox':'CWS','Cincinnati Reds':'CIN','Cleveland Guardians':'CLE',
+  'Colorado Rockies':'COL','Detroit Tigers':'DET','Houston Astros':'HOU','Kansas City Royals':'KC',
+  'Los Angeles Angels':'LAA','Los Angeles Dodgers':'LAD','Miami Marlins':'MIA','Milwaukee Brewers':'MIL',
+  'Minnesota Twins':'MIN','New York Mets':'NYM','New York Yankees':'NYY','Athletics':'ATH',
+  'Philadelphia Phillies':'PHI','Pittsburgh Pirates':'PIT','San Diego Padres':'SD','San Francisco Giants':'SF',
+  'Seattle Mariners':'SEA','St. Louis Cardinals':'STL','Tampa Bay Rays':'TB','Texas Rangers':'TEX',
+  'Toronto Blue Jays':'TOR','Washington Nationals':'WSH'
+};
+function teamAbbr(name){return TEAM_ABBR[name]||(name||'').split(' ').pop().slice(0,3).toUpperCase();}
+// Display-only: converts internal HOME/AWAY/OVER/UNDER verdict strings to team-initial labels
+// for rendering. Never used for grading, filtering, or storage — those stay HOME/AWAY/OVER/UNDER.
+function displayVerdict(verdict,g){
+  if(!verdict||verdict==='SKIP'||verdict==='—')return verdict;
+  if(verdict.includes('OVER')||verdict.includes('UNDER'))return verdict; // totals have no team side
+  const strength=verdict.startsWith('BET')?'BET':verdict.includes('LEAN')?'LEAN':'';
+  if(!strength)return verdict;
+  const isAway=verdict.includes('AWAY');
+  const abbr=isAway?teamAbbr(g.away_team):teamAbbr(g.home_team);
+  return`${strength} ${abbr}`;
 }
 
 function deriveDetVerdict(mk,g){
@@ -2647,14 +2674,14 @@ function gameCardHTML(g){
   const logged=loggedMarketsForGame(g);
 
   const marketsHTML=g.analyzed
-    ?`${(()=>{const dml=deriveDetVerdict('ML',g),drl=deriveDetVerdict('RL',g),dtot=deriveDetVerdict('TOTAL',g);const hasDetProj=g.det_proj_away!=null&&g.det_proj_home!=null;if(!hasDetProj)return '';return playRowLabel('DET',false,projInline(g.det_proj_away,g.det_proj_home,false))+'<div class="markets">'+simMarketCell('ML',dml.verdict,dml.ev,null,g.id,'DET',logged['ML'])+simMarketCell('RL',drl.verdict,drl.ev,null,g.id,'DET',logged['RL'])+simMarketCell('TOTAL',dtot.verdict,dtot.ev,null,g.id,'DET',logged['TOTAL'])+'</div>';})()}
+    ?`${(()=>{const dml=deriveDetVerdict('ML',g),drl=deriveDetVerdict('RL',g),dtot=deriveDetVerdict('TOTAL',g);const hasDetProj=g.det_proj_away!=null&&g.det_proj_home!=null;if(!hasDetProj)return '';return playRowLabel('DET',false,projInline(g.det_proj_away,g.det_proj_home,false))+'<div class="markets">'+simMarketCell('ML',dml.verdict,dml.ev,null,g.id,'DET',logged['ML'],g)+simMarketCell('RL',drl.verdict,drl.ev,null,g.id,'DET',logged['RL'],g)+simMarketCell('TOTAL',dtot.verdict,dtot.ev,null,g.id,'DET',logged['TOTAL'],g)+'</div>';})()}
       ${playRowLabel('SIM',true,projInline(g.sim_away_runs,g.sim_home_runs,true))}
       <div class="markets">
-        ${simMarketCell('ML',g.sim_ml_verdict,g.sim_ml_ev,simMaxJuice('ML',g.sim_ml_verdict,g.sim_ml_ev,g),g.id,'SIM',logged['ML'])}
-        ${simMarketCell('RL',g.sim_rl_verdict,g.sim_rl_ev,simMaxJuice('RL',g.sim_rl_verdict,g.sim_rl_ev,g),g.id,'SIM',logged['RL'])}
-        ${simMarketCell('TOTAL',g.sim_total_verdict,g.sim_total_ev,simMaxJuice('TOTAL',g.sim_total_verdict,g.sim_total_ev,g),g.id,'SIM',logged['TOTAL'])}
+        ${simMarketCell('ML',g.sim_ml_verdict,g.sim_ml_ev,simMaxJuice('ML',g.sim_ml_verdict,g.sim_ml_ev,g),g.id,'SIM',logged['ML'],g)}
+        ${simMarketCell('RL',g.sim_rl_verdict,g.sim_rl_ev,simMaxJuice('RL',g.sim_rl_verdict,g.sim_rl_ev,g),g.id,'SIM',logged['RL'],g)}
+        ${simMarketCell('TOTAL',g.sim_total_verdict,g.sim_total_ev,simMaxJuice('TOTAL',g.sim_total_verdict,g.sim_total_ev,g),g.id,'SIM',logged['TOTAL'],g)}
       </div>
-      ${(()=>{const dpml=deriveDetPlusVerdict('ML',g),dprl=deriveDetPlusVerdict('RL',g),dptot=deriveDetPlusVerdict('TOTAL',g);const hasDetPlus=g.det_plus_proj_away!=null&&g.det_plus_proj_home!=null;if(!hasDetPlus)return '';return playRowLabel('DET+',true,projInline(g.det_plus_proj_away,g.det_plus_proj_home,true))+'<div class="markets">'+simMarketCell('ML',dpml.verdict,dpml.ev,null,g.id,'DET+',logged['ML'])+simMarketCell('RL',dprl.verdict,dprl.ev,null,g.id,'DET+',logged['RL'])+simMarketCell('TOTAL',dptot.verdict,dptot.ev,null,g.id,'DET+',logged['TOTAL'])+'</div>';})()}
+      ${(()=>{const dpml=deriveDetPlusVerdict('ML',g),dprl=deriveDetPlusVerdict('RL',g),dptot=deriveDetPlusVerdict('TOTAL',g);const hasDetPlus=g.det_plus_proj_away!=null&&g.det_plus_proj_home!=null;if(!hasDetPlus)return '';return playRowLabel('DET+',true,projInline(g.det_plus_proj_away,g.det_plus_proj_home,true))+'<div class="markets">'+simMarketCell('ML',dpml.verdict,dpml.ev,null,g.id,'DET+',logged['ML'],g)+simMarketCell('RL',dprl.verdict,dprl.ev,null,g.id,'DET+',logged['RL'],g)+simMarketCell('TOTAL',dptot.verdict,dptot.ev,null,g.id,'DET+',logged['TOTAL'],g)+'</div>';})()}
       ${kalshiPanelHTML(g,bets)}`
     :`<div class="markets" style="opacity:.4">${['ML','RL','TOTAL'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
 
