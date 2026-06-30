@@ -515,14 +515,17 @@ function kalshiPayout(cents) {
   if (isNaN(c) || c <= 0) return '—';
   return '$' + ((100-c)/c*100).toFixed(1);
 }
-// Max Kalshi cents where EV still clears 6% gate given model prob p (0..1)
-// For a favorite (p>0.5): higher cents = worse price; max cents = highest price still ≥6% EV
-// For a dog (p<0.5): lower cents = worse price; max cents = lowest price still ≥6% EV
+// Max Kalshi cents where EV still clears 6% gate given model prob p (0..1), accounting for
+// Kalshi's ~4% fee on the winning side. Solves for the raw market price (cents) such that
+// after fee-adjustment, EV is still ≥ 6%.
 function kalshiMaxCents(p) {
   if (!(p > 0) || !(p < 1)) return null;
   const t = 0.06; // 6% gate
-  // EV = p*(1-c/100) - (1-p)*(c/100) = p - c/100 ≥ t  → c ≤ (p-t)*100
-  const maxC = Math.round((p - t) * 100);
+  const FEE = 0.04;
+  // feeAdjustedCents = c + FEE*(100-c). EV = p - feeAdjustedCents/100 ≥ t
+  // → feeAdjustedCents ≤ (p-t)*100 → c + FEE*(100-c) ≤ (p-t)*100
+  // → c*(1-FEE) ≤ (p-t)*100 - FEE*100 → c ≤ ((p-t)*100 - FEE*100) / (1-FEE)
+  const maxC = Math.round((((p - t) * 100) - FEE * 100) / (1 - FEE));
   if (maxC <= 0 || maxC >= 100) return null;
   return maxC;
 }
@@ -531,6 +534,7 @@ function evFromCents(p, cents) {
   if (isNaN(c) || !(p > 0)) return null;
   // EV per dollar risked: (p * payout - (1-p)) / cost
   // payout on win = (1-c)/c dollars per dollar risked
+  // NOTE: cents passed in here is already fee-adjusted by the caller
   return +(( p * (1 - c) / c - (1 - p)) * 100).toFixed(1);
 }
 const kalshiCache = {};
@@ -998,17 +1002,22 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
         for (const mkt of mkts) {
           const tk = (mkt.ticker || '').toUpperCase();
           if (tk.endsWith('-' + awayCode)) {
-            results.awayML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-            results.awayML_ticker = mkt.ticker;
+            results.awayML_cents    = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+            results.awayML_cents_no = parseFloat(mkt.no_ask_dollars || 0) * 100;
+            results.awayML_ticker   = mkt.ticker;
+            results.awayML_size     = Math.round(parseFloat(mkt.yes_ask_size_fp || 0));
           }
           if (tk.endsWith('-' + homeCode)) {
-            results.homeML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
-            results.homeML_ticker = mkt.ticker;
+            results.homeML_cents    = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+            results.homeML_cents_no = parseFloat(mkt.no_ask_dollars || 0) * 100;
+            results.homeML_ticker   = mkt.ticker;
+            results.homeML_size     = Math.round(parseFloat(mkt.yes_ask_size_fp || 0));
           }
         }
         if (results.awayML_cents != null || results.homeML_cents != null) break;
       } catch(e) {}
     }
+
 
     // Try each RL candidate until we get results
     for (const ticker of candidateRL) {
@@ -3170,23 +3179,46 @@ function triggerAllKalshiFetches() {
       if (ts) ts.textContent = 'live · just now';
       for (const m of activePlays) {
         let cents = null;
+        let centsSource = 'yes'; // 'yes' or 'no' — for display/labeling
         const v = (m.verdict || '').toUpperCase();
-        if (m.key === 'ml') cents = v.includes('AWAY') ? kd.awayML_cents : kd.homeML_cents;
+        if (m.key === 'ml') {
+          // Compare own-side Yes vs opponent-side No — take whichever is cheaper (lower cents = better price for buyer)
+          const ownYes = v.includes('AWAY') ? kd.awayML_cents : kd.homeML_cents;
+          const oppNo  = v.includes('AWAY') ? kd.homeML_cents_no : kd.awayML_cents_no;
+          if (ownYes != null && oppNo != null) {
+            if (oppNo < ownYes) { cents = oppNo; centsSource = 'no'; } else { cents = ownYes; centsSource = 'yes'; }
+          } else {
+            cents = ownYes != null ? ownYes : oppNo;
+            centsSource = ownYes != null ? 'yes' : 'no';
+          }
+        }
         if (m.key === 'rl') {
           // rawAwayRL: negative = away is -1.5 favorite, positive = away is +1.5 dog
           const awayIsFav = (m.rawAwayRL || 0) < 0;
           if (v.includes('AWAY')) {
             // BET AWAY: if away is -1.5 fav → YES on away ticker; if away is +1.5 dog → NO on home ticker
             cents = awayIsFav ? kd.awayRL_cents : kd.homeRL_cents_no;
+            centsSource = awayIsFav ? 'yes' : 'no';
           } else {
             // BET HOME: if home is -1.5 fav (away is dog) → YES on home ticker; if home is +1.5 dog → NO on away ticker
             cents = !awayIsFav ? kd.homeRL_cents : kd.awayRL_cents_no;
+            centsSource = !awayIsFav ? 'yes' : 'no';
           }
         }
-        if (m.key === 'total') cents = v.includes('OVER') ? kd.total_cents_yes : kd.total_cents_no;
+        if (m.key === 'total') { cents = v.includes('OVER') ? kd.total_cents_yes : kd.total_cents_no; centsSource = v.includes('OVER') ? 'yes' : 'no'; }
+        // Kalshi charges ~4% fee on the WINNING side, reducing net payout. Apply it as an
+        // effective cost increase before computing EV: a c¢ contract effectively costs the
+        // buyer c + (fee on the (100-c)¢ profit margin) when it wins. We approximate by
+        // inflating the effective price: feeAdjustedCents = cents + KALSHI_FEE_RATE * (100 - cents).
+        const KALSHI_FEE_RATE = 0.04;
+        const rawCents = cents;
+        if (cents != null) cents = cents + KALSHI_FEE_RATE * (100 - cents);
         // Size at ask (contracts available at current price)
         let askSize = 0;
-        if (m.key === 'ml') askSize = v.includes('AWAY') ? (kd.awayML_size||0) : (kd.homeML_size||0);
+        if (m.key === 'ml') {
+          if (centsSource === 'yes') askSize = v.includes('AWAY') ? (kd.awayML_size||0) : (kd.homeML_size||0);
+          else askSize = v.includes('AWAY') ? (kd.homeML_size||0) : (kd.awayML_size||0);
+        }
         if (m.key === 'rl') {
           const awayIsFav = (m.rawAwayRL || 0) < 0;
           if (v.includes('AWAY')) {
@@ -3225,7 +3257,7 @@ function triggerAllKalshiFetches() {
           }
         }
         const kev = cents != null ? evFromCents(kalshiModelP, cents) : null;
-        const equiv = cents != null ? centsToAmerican(cents) : '—';
+        const equiv = rawCents != null ? centsToAmerican(rawCents) : '—';
         const dkEv = parseFloat(m.ev);
         // Only flag as true mismatch if lines differ by more than 1 run (unexpected)
         const totalLineMismatch = m.key === 'total' && kalshiTotalLine != null && Math.abs(kalshiTotalLine - dkTotalLine) > 1.0;
@@ -3255,14 +3287,15 @@ function triggerAllKalshiFetches() {
         const kevEl = document.getElementById('kev-' + gid + '-' + m.key);
         const kequiv = document.getElementById('kequiv-' + gid + '-' + m.key);
         const kact = document.getElementById('kact-' + gid + '-' + m.key);
+        const sourceTag = centsSource === 'no' ? ' (No)' : '';
         // Show Kalshi line in price for totals
-        // price display
+        // price display — show raw market price (rawCents), fee already folded into EV
         if (kprice) {
-          kprice.textContent = cents != null ? Math.round(cents) + '¢' : '—';
+          kprice.textContent = rawCents != null ? Math.round(rawCents) + '¢' + sourceTag : '—';
         }
         if (cents != null && kprice) kprice.style.color = totalLineMismatch ? 'var(--amber)' : better ? 'var(--green)' : worse ? 'var(--red)' : 'var(--amber)';
         if (kevEl) {
-          if (kev != null) { kevEl.textContent = (kev >= 0 ? '+' : '') + kev.toFixed(1) + '% EV'; kevEl.style.color = kev >= 6 ? 'var(--green)' : kev >= 0 ? 'var(--amber)' : 'var(--red)'; }
+          if (kev != null) { kevEl.textContent = (kev >= 0 ? '+' : '') + kev.toFixed(1) + '% EV (after 4% fee)'; kevEl.style.color = kev >= 6 ? 'var(--green)' : kev >= 0 ? 'var(--amber)' : 'var(--red)'; }
           else { kevEl.textContent = '—'; }
         }
         if (kequiv) {
@@ -3294,28 +3327,28 @@ function triggerAllKalshiFetches() {
         const kjnote = document.getElementById('kjnote-' + gid + '-' + m.key);
         const kjcard = document.getElementById('kjcard-' + gid + '-' + m.key);
         if (kjline) {
-          if (cents == null) { kjline.textContent = 'No Kalshi market found'; }
+          if (rawCents == null) { kjline.textContent = 'No Kalshi market found'; }
           else {
-            const sideLabel = v.includes('OVER') || v.includes('AWAY') ? 'Yes' : 'No';
+            const sideLabel = centsSource === 'no' ? 'No' : 'Yes';
             const kalshiLineLabel = (m.key === 'total' && kd.total_line) ? ' (Over ' + kd.total_line + ')' : '';
-            kjline.textContent = sideLabel + ' @ ' + Math.round(cents) + '¢ (≈ ' + equiv + ')' + kalshiLineLabel;
+            kjline.textContent = sideLabel + ' @ ' + Math.round(rawCents) + '¢ (≈ ' + equiv + ')' + kalshiLineLabel + ' · after 4% fee: ' + Math.round(cents) + '¢ equiv';
             if (kjcard) kjcard.style.borderColor = better ? 'var(--green-dim)' : worse ? 'var(--red-dim)' : 'var(--amber-dim)';
           }
         }
-        if (kjdetail && cents != null) kjdetail.textContent = 'Implied ' + centsToImplied(cents) + ' · win ' + kalshiPayout(cents) + ' per $100';
+        if (kjdetail && rawCents != null) kjdetail.textContent = 'Implied ' + centsToImplied(rawCents) + ' · win ' + kalshiPayout(rawCents) + ' per $100 · after 4% fee EV uses ' + Math.round(cents) + '¢ equiv';
         if (kjnote) {
-          if (cents == null) { kjnote.textContent = 'No active Kalshi market found for this play.'; }
+          if (rawCents == null) { kjnote.textContent = 'No active Kalshi market found for this play.'; }
           else if (totalLineMismatch) { kjnote.textContent = 'Warning: Kalshi line ' + lineDir + ' ' + kalshiTotalLine + ' differs significantly from DK ' + lineDir + ' ' + dkTotalLine + '. Verify before accepting.'; kjnote.style.color = 'var(--red)'; }
           else if (m.key === 'total' && kalshiTotalLine != null && Math.abs(kalshiTotalLine - dkTotalLine) > 0.1) {
             // Intentional .5 line — show as a positive
             const lineNote = lineDir + ' ' + kalshiTotalLine + ' on Kalshi vs ' + lineDir + ' ' + dkTotalLine + ' on DK — easier line to cover.';
-            if (kev != null && kev < 0) { kjnote.style.color = 'var(--red)'; kjnote.textContent = lineNote + ' However Kalshi is still overpriced at ' + Math.round(cents) + '¢ — use the book.'; }
-            else if (better) { kjnote.style.color = 'var(--green)'; kjnote.textContent = lineNote + ' Kalshi returns ' + kalshiPayout(cents) + ' per $100 — better than DK\'s ' + americanPayout(m.dkOdds) + '.'; }
+            if (kev != null && kev < 0) { kjnote.style.color = 'var(--red)'; kjnote.textContent = lineNote + ' However after the 4% fee, Kalshi is still overpriced at ' + Math.round(rawCents) + '¢ — use the book.'; }
+            else if (better) { kjnote.style.color = 'var(--green)'; kjnote.textContent = lineNote + ' Kalshi returns ' + kalshiPayout(rawCents) + ' per $100 (4% fee already factored into EV) — better than DK\'s ' + americanPayout(m.dkOdds) + '.'; }
             else { kjnote.style.color = ''; kjnote.textContent = lineNote + ' DK is still the better price but Kalshi gives you the easier line.'; }
           }
-          else if (kev != null && kev < 0) { kjnote.style.color = 'var(--red)'; kjnote.textContent = 'Kalshi has priced out your edge (' + equiv + ' vs DK ' + m.dkOdds + '). Kalshi EV is negative — use the book.'; }
-          else if (better) { kjnote.style.color = 'var(--green)'; kjnote.textContent = 'Kalshi is cheaper than DK. At $100 risked: Kalshi returns ' + kalshiPayout(cents) + ' vs DK\'s ' + americanPayout(m.dkOdds) + '. Kalshi is the better price.'; }
-          else { kjnote.style.color = ''; kjnote.textContent = 'Kalshi is more expensive than DK (' + equiv + ' vs ' + m.dkOdds + '). DK is the better price, but Kalshi still has positive EV on your model.'; }
+          else if (kev != null && kev < 0) { kjnote.style.color = 'var(--red)'; kjnote.textContent = 'Kalshi has priced out your edge after the 4% fee (' + equiv + ' vs DK ' + m.dkOdds + '). Kalshi EV is negative — use the book.'; }
+          else if (better) { kjnote.style.color = 'var(--green)'; kjnote.textContent = 'Kalshi is cheaper than DK even after the 4% fee. At $100 risked: Kalshi returns ' + kalshiPayout(rawCents) + ' vs DK\'s ' + americanPayout(m.dkOdds) + '. Kalshi is the better price.'; }
+          else { kjnote.style.color = ''; kjnote.textContent = 'Kalshi is more expensive than DK after fees (' + equiv + ' vs ' + m.dkOdds + '). DK is the better price, but Kalshi still has positive EV on your model.'; }
         }
       }
     }).catch((e) => {
