@@ -2501,16 +2501,17 @@ function simMaxJuice(market,verdict,evPct,g){
   return market==='TOTAL'?`${side==='OVER'?'Over':'Under'} ${g.total_line} @ ${price}`:price;
 }
 
-function simMarketCell(label,verdict,ev,breakeven,gId,engine,logged,g){
+function simMarketCell(label,verdict,ev,breakeven,gId,engine,logged,g,peerSuppressed){
   const v=verdict||'—';
   const displayV=g?displayVerdict(v,g):v;
   const isPlay=!!verdict&&(v.startsWith('BET')||v.includes('LEAN'));
   const evNum=parseFloat(ev);
-  const suppressed=isPlay&&engine==='DET'&&evNum>=15&&evNum<20;
-  const valColor=suppressed?'var(--amber)':isPlay?'var(--purple)':'var(--text)';
+  const suppressed=(isPlay&&engine==='DET'&&evNum>=15&&evNum<20)||(isPlay&&engine==='DET'&&label==='RL'&&peerSuppressed);
+  const playColor=engine==='DET'?'var(--green)':'var(--purple)';
+  const valColor=suppressed?'var(--amber)':isPlay?playColor:'var(--text)';
   const hasEdge=isPlay&&evNum>=6&&gId&&engine;
-  const border=suppressed?'border-color:var(--amber);':isPlay?'border-color:var(--purple);':'';
-  const evHtml=(ev!=null&&ev!==0&&isPlay)?`<div class="ev-val" style="color:${suppressed?'var(--amber)':'var(--purple)'}">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV</div>`:'';
+  const border=suppressed?'border-color:var(--amber);':isPlay?`border-color:${playColor};`:'';
+  const evHtml=(ev!=null&&ev!==0&&isPlay)?`<div class="ev-val" style="color:${suppressed?'var(--amber)':playColor}">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV</div>`:'';
   const suppressHtml=suppressed?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px;font-weight:700">SUPPRESSED</div>`:'';
   const breakHtml=(breakeven&&isPlay)?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>`:'';
   const clickable=hasEdge?`onclick="quickLogEngine('${gId}','${label}','${v}','${engine}')"` :'';
@@ -2683,7 +2684,7 @@ function gameCardHTML(g){
   const logged=loggedMarketsForGame(g);
 
   const marketsHTML=g.analyzed
-    ?`${(()=>{const dml=deriveDetVerdict('ML',g),drl=deriveDetVerdict('RL',g),dtot=deriveDetVerdict('TOTAL',g);const hasDetProj=g.det_proj_away!=null&&g.det_proj_home!=null;if(!hasDetProj)return '';return playRowLabel('DET',false,projInline(g.det_proj_away,g.det_proj_home,false))+'<div class="markets">'+simMarketCell('ML',dml.verdict,dml.ev,null,g.id,'DET',logged['ML'],g)+simMarketCell('RL',drl.verdict,drl.ev,null,g.id,'DET',logged['RL'],g)+simMarketCell('TOTAL',dtot.verdict,dtot.ev,null,g.id,'DET',logged['TOTAL'],g)+'</div>';})()}
+    ?`${(()=>{const dml=deriveDetVerdict('ML',g),drl=deriveDetVerdict('RL',g),dtot=deriveDetVerdict('TOTAL',g);const hasDetProj=g.det_proj_away!=null&&g.det_proj_home!=null;if(!hasDetProj)return '';const mlSuppressed=dml.verdict&&dml.verdict!=='SKIP'&&parseFloat(dml.ev)>=15&&parseFloat(dml.ev)<20;return playRowLabel('DET',false,projInline(g.det_proj_away,g.det_proj_home,false))+'<div class="markets">'+simMarketCell('ML',dml.verdict,dml.ev,null,g.id,'DET',logged['ML'],g)+simMarketCell('RL',drl.verdict,drl.ev,null,g.id,'DET',logged['RL'],g,mlSuppressed)+simMarketCell('TOTAL',dtot.verdict,dtot.ev,null,g.id,'DET',logged['TOTAL'],g)+'</div>';})()}
       ${playRowLabel('SIM',true,projInline(g.sim_away_runs,g.sim_home_runs,true))}
       <div class="markets">
         ${simMarketCell('ML',g.sim_ml_verdict,g.sim_ml_ev,simMaxJuice('ML',g.sim_ml_verdict,g.sim_ml_ev,g),g.id,'SIM',logged['ML'],g)}
