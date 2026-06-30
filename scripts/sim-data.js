@@ -172,12 +172,15 @@ async function fetchBullpenRates(teamId, season = SEASON_DEFAULT, bullpenObj = n
     const bullpenERA = parseFloat(bullpenObj.weightedERA) || LEAGUE_AVG_ERA;
     const fatigueNote = (bullpenObj.fatigueNote || '').toLowerCase();
     let fatigueAdj = 1.0;
-    if (fatigueNote.includes('taxed')) fatigueAdj = 1.12;      // Taxed bullpen: 12% worse
-    else if (fatigueNote.includes('heavy')) fatigueAdj = 1.20; // Heavy usage: 20% worse
+    if (fatigueNote.includes('taxed')) fatigueAdj = 1.06;      // Taxed bullpen: 6% worse
+    else if (fatigueNote.includes('heavy')) fatigueAdj = 1.10; // Heavy usage: 10% worse
 
-    // Also adjust by ERA vs league
-    const eraAdj = Math.min(Math.max(bullpenERA / LEAGUE_AVG_ERA, 0.7), 1.6);
-    const totalAdj = Math.min((eraAdj + fatigueAdj - 1.0), 1.5); // combine
+    // ERA-vs-league factor, already correlated with fatigue (a tired pen often has a worse
+    // recent ERA too) — blend the two via geometric mean instead of adding, so the same
+    // underlying signal isn't counted twice. Cap kept modest since this stacks on top of
+    // the starter ERA blend already applied upstream.
+    const eraAdj = Math.min(Math.max(bullpenERA / LEAGUE_AVG_ERA, 0.85), 1.25);
+    const totalAdj = Math.min(Math.sqrt(eraAdj * fatigueAdj), 1.20);
 
     if (Math.abs(totalAdj - 1.0) > 0.02) {
       const adjusted = { ...penRates };
