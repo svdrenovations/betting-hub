@@ -437,8 +437,29 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
   // Umpire
   const umpAdj = umpire?.runFactor ?? 1.0;
 
-  const raw = baselineRuns * of_ * park * wx * plat * statcastAdj * batterAdj * matchupAdj * tempAdj * whipAdj * trendingAdj * pitchCountAdj * dnPitcherAdj * umpAdj;
-  return { runs: +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2) };
+  // ── COMPOUND CAP ───────────────────────────────────────────────────────────
+  // 14 factors multiplied together unconstrained let correlated signals (e.g. a
+  // tired starter + hot weather + a hot recent stretch) stack into a 40-50%+ swing
+  // from baseline. Cap the COMBINED adjustment (everything except baselineRuns
+  // itself) to a max deviation of ±28% from neutral (1.0), so the model can still
+  // express a strong lean but can't compound itself into an outlier.
+  const combinedAdj = of_ * park * wx * plat * statcastAdj * batterAdj * matchupAdj * tempAdj * whipAdj * trendingAdj * pitchCountAdj * dnPitcherAdj * umpAdj;
+  const cappedAdj = Math.min(Math.max(combinedAdj, 0.72), 1.28);
+
+  const raw = baselineRuns * cappedAdj;
+  const finalRuns = +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2);
+  return {
+    runs: finalRuns,
+    _debug: {
+      starterERA: +starterERA.toFixed(2), avgIP: +avgIP.toFixed(1), bullpenGameAdj,
+      bullpenERA: +bullpenERA.toFixed(2), fatigueMultiplier, kbbAdj: +kbbAdj.toFixed(3),
+      baselineRuns: +baselineRuns.toFixed(2),
+      of_: +of_.toFixed(3), park, wx: +wx.toFixed(3), plat: +plat.toFixed(3),
+      statcastAdj: +statcastAdj.toFixed(3), batterAdj: +batterAdj.toFixed(3), matchupAdj: +matchupAdj.toFixed(3),
+      tempAdj, whipAdj: +whipAdj.toFixed(3), trendingAdj, pitchCountAdj, dnPitcherAdj: +dnPitcherAdj.toFixed(3), umpAdj,
+      combinedAdj: +combinedAdj.toFixed(3), cappedAdj: +cappedAdj.toFixed(3), rawBeforeCap: +raw.toFixed(2)
+    }
+  };
 }
 // ── END DET+ ENGINE ───────────────────────────────────────────────────────────
 
@@ -1030,7 +1051,7 @@ function computeConfidence(analysis, lines) {
   return 'LOW';
 }
 
-async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData, pitcherStatus, gamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts) {
+async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData, pitcherStatus, gamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts, detPlusInputs) {
   const row = {
     id: game.id, game_pk: gamePk || null,
     game_date: new Date(game.commence_time).toLocaleDateString('en-CA', {timeZone: 'America/New_York'}),
@@ -1081,6 +1102,7 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       sim_rl_verdict: analysis.simRl ?? null, sim_rl_ev: analysis.simRlEV ?? null,
       sim_total_verdict: analysis.simTotal ?? null, sim_total_ev: analysis.simTotalEV ?? null,
       det_plus_proj_away: detPlusProj?.awayRuns ?? null, det_plus_proj_home: detPlusProj?.homeRuns ?? null,
+      det_plus_inputs: detPlusInputs ? JSON.stringify(detPlusInputs) : null,
       det_plus_ml_verdict: detPlusVerdicts?.ml ?? null, det_plus_ml_ev: detPlusVerdicts?.mlEV ?? null,
       det_plus_rl_verdict: detPlusVerdicts?.rl ?? null, det_plus_rl_ev: detPlusVerdicts?.rlEV ?? null,
       det_plus_total_verdict: detPlusVerdicts?.total ?? null, det_plus_total_ev: detPlusVerdicts?.totalEV ?? null,
@@ -1401,6 +1423,7 @@ async function main() {
       const awayRunProjPlus = projectRunsPlus({ offenseStats: awayStats, offenseMatchups: awayMatchups, offenseHandedness: awayMatchups?.handedness, isOffenseHome: false, defPitcher: homePitcherInfo, defStatcast: homeStatcast, defPitcherHand: homePitcherInfo?.throwHand, isPitcherHome: true, defBullpen: homeBullpen, parkFactors, weather, gameTime: game.commence_time, umpire, batterStatcastList: awayBatStatcast });
       const homeRunProjPlus = projectRunsPlus({ offenseStats: homeStats, offenseMatchups: homeMatchups, offenseHandedness: homeMatchups?.handedness, isOffenseHome: true, defPitcher: awayPitcherInfo, defStatcast: awayStatcast, defPitcherHand: awayPitcherInfo?.throwHand, isPitcherHome: false, defBullpen: awayBullpen, parkFactors, weather, gameTime: game.commence_time, umpire, batterStatcastList: homeBatStatcast });
       const detPlusProj = { awayRuns: awayRunProjPlus.runs, homeRuns: homeRunProjPlus.runs };
+      const detPlusInputs = { away: awayRunProjPlus._debug || null, home: homeRunProjPlus._debug || null };
       console.log(`  DET+ ${game.away_team} ${detPlusProj.awayRuns} - ${game.home_team} ${detPlusProj.homeRuns} (tot ${+(parseFloat(detPlusProj.awayRuns)+parseFloat(detPlusProj.homeRuns)).toFixed(2)})`);
       // Derive det+ verdicts using same ncdf math as client scoreboard
       const detPlusVerdicts = (() => {
@@ -1504,7 +1527,7 @@ async function main() {
       deriveRunModel(analysis, lines);
       deriveNumbers(analysis, lines, f5Lines, sweepSide, _gd);
 
-      await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, pitcherStatus, resolvedGamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts);
+      await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, pitcherStatus, resolvedGamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts, detPlusInputs);
 
       const ap = awayPitcherInfo?.name || 'TBD', hp = homePitcherInfo?.name || 'TBD';
       console.log(`  ✓ ${game.away_team} @ ${game.home_team} | ${ap} vs ${hp} | ${lines.total} | ${weather?.summary||'dome/no weather'}`);
