@@ -3340,7 +3340,7 @@ function exportKalshiCSV(){
 }
 
 // ── LOG BET MODAL ─────────────────────────────────────────────────────────────
-function quickLog(gameId,market,verdict,line,breakeven){
+function quickLog(gameId,market,verdict,line,breakeven,storedEV){
   if(!requireUnlocked()) return;
   const g=games.find(x=>x.id===gameId);if(!g)return;
   pendingLog=g;
@@ -3358,7 +3358,13 @@ function quickLog(gameId,market,verdict,line,breakeven){
   else if(market==='TOTAL'){const odds=v.includes('OVER')?g.over_odds:g.under_odds;if(odds)document.getElementById('log-odds').value=odds;}
   document.getElementById('log-sit').value=(g.situations||[]).join(', ')||'none';
   document.getElementById('log-modal').classList.add('show');
-  calcLiveEV();
+  if(storedEV!=null&&!isNaN(storedEV)){
+    pendingLogEV=storedEV;
+    const el=document.getElementById('log-ev-display');
+    if(el){el.textContent='EV: +'+storedEV.toFixed(1)+'% (stored at analysis time)';el.style.color=storedEV>=2?'var(--green)':'var(--amber)';}
+  } else {
+    calcLiveEV();
+  }
 }
 
 function winProb(g,type,betLineRaw){
@@ -3977,9 +3983,12 @@ function quickLogEngine(gId,market,verdict,engine){
   if(!requireUnlocked())return;
   const g=games.find(x=>x.id===gId);if(!g)return;
   const side=verdict.includes('AWAY')?'away':verdict.includes('HOME')?'home':verdict.includes('OVER')?'over':'under';
-  const line=market==='ML'?(side==='away'?g.away_ml:g.home_ml):market==='RL'?(side==='away'?g.away_rl_odds:g.home_rl_odds):(side==='over'?g.over_odds:g.under_odds);
   const rlLine=market==='RL'?(side==='away'?(g.away_rl||''):g.home_rl||''):'';
-  quickLog(gId,market,verdict,rlLine,'');
+  // Pass stored det EV to avoid recalculation from current lines
+  const storedEV = engine==='DET'
+    ? (market==='ML'?parseFloat(g.det_ml_ev):market==='RL'?parseFloat(g.det_rl_ev):parseFloat(g.det_total_ev))
+    : null;
+  quickLog(gId,market,verdict,rlLine,'',(!isNaN(storedEV)&&storedEV!=null)?storedEV:null);
 }
 
 async function settleGameScores(btn){
