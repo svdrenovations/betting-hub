@@ -238,6 +238,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     <a class="nav-tab" href="?page=datastats" onclick="goPage('datastats',this);return false;">Data Stats</a>
     <a class="nav-tab" href="?page=scoreboard" onclick="goPage('scoreboard',this);return false;">Scoreboard</a>
     <a class="nav-tab" href="?page=plus" onclick="goPage('plus',this);return false;">Plus</a>
+    <a class="nav-tab" href="?page=test" onclick="goPage('test',this);return false;">Test</a>
   </div>
   <div class="nav-record mono" id="nav-record">—</div>
   <div style="display:flex;align-items:center;gap:6px">
@@ -2306,8 +2307,321 @@ function dataExportCSV(){
   const csv=[hdr,...rows.map(x=>[x.date,`"${x.matchup}"`,x.source,x.lbl,x.side.toLowerCase(),`"${x.line}"`,x.ev!=null?x.ev.toFixed(1):'',x.confidence,x.result,x.units.toFixed(2),x.predScore,x.final].join(','))].join('\n');
   const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download=`data_plays_${new Date().toISOString().slice(0,10)}.csv`;a.click();
 }
-// ── END DATA PAGE ─────────────────────────────────────────────────────────────
-function sbSetSource(v){const i=sbFilter.source.indexOf(v);if(i>=0)sbFilter.source.splice(i,1);else sbFilter.source.push(v);renderScoreboard();}
+// ── TEST PAGE ─────────────────────────────────────────────────────────────────
+const TEST_PARK_FACTORS = {
+  'Arizona Diamondbacks':{runFactor:1.03,windFactor:0,retractable:true},
+  'Atlanta Braves':{runFactor:1.02,windFactor:1.0,retractable:false},
+  'Baltimore Orioles':{runFactor:0.99,windFactor:1.05,retractable:false},
+  'Boston Red Sox':{runFactor:1.04,windFactor:1.0,retractable:false},
+  'Chicago Cubs':{runFactor:1.00,windFactor:1.5,retractable:false},
+  'Chicago White Sox':{runFactor:1.01,windFactor:1.1,retractable:false},
+  'Cincinnati Reds':{runFactor:1.06,windFactor:1.0,retractable:false},
+  'Cleveland Guardians':{runFactor:0.98,windFactor:1.0,retractable:false},
+  'Colorado Rockies':{runFactor:1.15,windFactor:1.1,retractable:false},
+  'Detroit Tigers':{runFactor:0.97,windFactor:0.9,retractable:false},
+  'Houston Astros':{runFactor:1.00,windFactor:0,retractable:true},
+  'Kansas City Royals':{runFactor:0.99,windFactor:1.0,retractable:false},
+  'Los Angeles Angels':{runFactor:0.98,windFactor:0.95,retractable:false},
+  'Los Angeles Dodgers':{runFactor:0.99,windFactor:0.95,retractable:false},
+  'Miami Marlins':{runFactor:0.97,windFactor:0,retractable:true},
+  'Milwaukee Brewers':{runFactor:1.00,windFactor:0,retractable:true},
+  'Minnesota Twins':{runFactor:0.99,windFactor:1.0,retractable:false},
+  'New York Mets':{runFactor:0.96,windFactor:1.0,retractable:false},
+  'New York Yankees':{runFactor:1.03,windFactor:1.1,retractable:false},
+  'Athletics':{runFactor:1.09,windFactor:1.0,retractable:false},
+  'Philadelphia Phillies':{runFactor:1.03,windFactor:1.0,retractable:false},
+  'Pittsburgh Pirates':{runFactor:0.97,windFactor:0.95,retractable:false},
+  'San Diego Padres':{runFactor:0.94,windFactor:0.95,retractable:false},
+  'San Francisco Giants':{runFactor:0.92,windFactor:1.15,retractable:false},
+  'Seattle Mariners':{runFactor:0.94,windFactor:0,retractable:true},
+  'St. Louis Cardinals':{runFactor:0.99,windFactor:1.0,retractable:false},
+  'Tampa Bay Rays':{runFactor:0.97,windFactor:0,retractable:false},
+  'Texas Rangers':{runFactor:1.00,windFactor:0,retractable:true},
+  'Toronto Blue Jays':{runFactor:1.00,windFactor:0,retractable:true},
+  'Washington Nationals':{runFactor:1.00,windFactor:1.0,retractable:false}
+};
+const TEST_LEAGUE_AVG_OPS=0.720,TEST_LEAGUE_AVG_ERA=4.20,TEST_MSD=4.0,TEST_TSD=5.5;
+
+function testGetPark(team){
+  let f=TEST_PARK_FACTORS[team];
+  if(!f){const k=Object.keys(TEST_PARK_FACTORS).find(k=>k.includes(team.split(' ').pop())||team.includes(k.split(' ').pop()));if(k)f=TEST_PARK_FACTORS[k];}
+  return f||{runFactor:1.0,windFactor:1.0,retractable:false};
+}
+
+function testWeatherFactor(g){
+  if(g.weather_dome)return 1.0;
+  const park=testGetPark(g.home_team);
+  let mult=1.0;
+  const temp=parseFloat(g.weather_temp)||72;
+  const effWind=parseFloat(g.weather_eff_wind)||0;
+  const flags=g.weather_flags||[];
+  const wf=park.windFactor||1.0;
+  if(temp>=90)mult*=1.05;else if(temp>=80)mult*=1.02;else if(temp<=50)mult*=0.95;else if(temp<=40)mult*=0.90;
+  if(flags.some(f=>(f||'').includes('OUT')))mult*=1+Math.min(effWind*0.006,0.12);
+  else if(flags.some(f=>(f||'').includes('IN')))mult*=1-Math.min(effWind*0.005,0.10);
+  else if(effWind>=10&&wf>=1.3){const cb=Math.min((wf-1.0)*effWind*0.003,0.05);mult*=1+cb;}
+  return Math.min(Math.max(mult,0.88),1.18);
+}
+
+function testNcdf(x){const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;}
+
+function testProjectRuns(era, bullpenERA, offenseOPS, lineup_ops, lineup_k_rate, last30OPS, seasonOPS, isHome, homeOPS, awayOPS, parkFactor, wxFactor){
+  const avgIP=6.0;
+  const starterERA=parseFloat(era)||TEST_LEAGUE_AVG_ERA;
+  const starterAdj=starterERA/TEST_LEAGUE_AVG_ERA;
+  const bulERA=parseFloat(bullpenERA)||TEST_LEAGUE_AVG_ERA;
+  const bulAdj=Math.min(Math.max(bulERA/TEST_LEAGUE_AVG_ERA,0.85),1.25);
+  const bullpenGameAdj=Math.min(Math.sqrt(bulAdj*1.0),1.20);
+  const blendERA=(starterERA*(avgIP/9)+bulERA*((9-avgIP)/9));
+  const baselineRuns=(blendERA/9)*9;
+  let teamOPS;
+  if(isHome&&homeOPS)teamOPS=parseFloat(homeOPS);
+  else if(!isHome&&awayOPS)teamOPS=parseFloat(awayOPS);
+  else teamOPS=parseFloat(seasonOPS||TEST_LEAGUE_AVG_OPS);
+  let opsFactor;
+  if(lineup_ops){
+    const mOPS=parseFloat(lineup_ops);
+    opsFactor=((mOPS*0.50)+(teamOPS*0.50))/TEST_LEAGUE_AVG_OPS;
+  } else if(last30OPS){
+    const r=parseFloat(last30OPS),s=parseFloat(seasonOPS||TEST_LEAGUE_AVG_OPS);
+    opsFactor=((r*0.60)+(s*0.40))/TEST_LEAGUE_AVG_OPS;
+  } else {
+    opsFactor=teamOPS/TEST_LEAGUE_AVG_OPS;
+  }
+  if(lineup_k_rate){const kAdj=1-((parseFloat(lineup_k_rate)-22.0)*0.004);opsFactor*=Math.min(Math.max(kAdj,0.90),1.10);}
+  opsFactor=Math.min(Math.max(opsFactor,0.55),1.55);
+  const raw=baselineRuns*opsFactor*(parkFactor||1.0)*(wxFactor||1.0);
+  return +Math.max(3.0,Math.min(raw,9.5)).toFixed(2);
+}
+
+function testEV(p, odds){
+  const o=parseFloat(odds);
+  const payout=o>0?o/100:100/Math.abs(o);
+  return (p*payout-(1-p))*100;
+}
+
+function testVerdict(evVal, side){
+  if(evVal<6.6)return null;
+  return (evVal>=10?'BET':'LEAN')+' '+side;
+}
+
+// Fetch last30OPS and subtract today's game stats to get pre-game value
+async function fetchLast30Adjusted(teamId, teamName, gameDate){
+  try{
+    const today=gameDate;
+    const thirtyAgo=new Date(new Date(gameDate).getTime()-30*86400000).toISOString().split('T')[0];
+    // Fetch current last30OPS
+    const r1=await fetch(`https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=byDateRange&group=hitting&season=2026&startDate=${thirtyAgo}&endDate=${today}`);
+    if(!r1.ok)return null;
+    const d1=await r1.json();
+    const cur=d1.stats?.[0]?.splits?.[0]?.stat;
+    if(!cur)return null;
+    // Fetch today's game log for this team to subtract
+    const r2=await fetch(`https://statsapi.mlb.com/api/v1/schedule?teamId=${teamId}&sportId=1&startDate=${today}&endDate=${today}&gameType=R&hydrate=boxscore`);
+    if(!r2.ok)return parseFloat(cur.ops||0);
+    const d2=await r2.json();
+    const todayGames=d2.dates?.[0]?.games||[];
+    if(!todayGames.length)return parseFloat(cur.ops||0);
+    // Get today's hitting stats for this team
+    let todayH=0,todayAB=0,todayBB=0,todayHBP=0,todaySF=0,todayTB=0;
+    for(const game of todayGames){
+      if(game.status?.abstractGameState!=='Final')continue;
+      const isAway=game.teams?.away?.team?.id===teamId;
+      const side=isAway?'away':'home';
+      const bs=game.teams?.[side]?.teamStats?.batting;
+      if(bs){todayH+=parseInt(bs.hits||0);todayAB+=parseInt(bs.atBats||0);todayBB+=parseInt(bs.baseOnBalls||0);todayHBP+=parseInt(bs.hitByPitch||0);todaySF+=parseInt(bs.sacFlies||0);todayTB+=parseInt(bs.totalBases||0);}
+    }
+    // Back-calculate pre-game last30 OPS
+    const curAB=parseInt(cur.atBats||0),curH=parseInt(cur.hits||0),curBB=parseInt(cur.baseOnBalls||0);
+    const curHBP=parseInt(cur.hitByPitch||0),curSF=parseInt(cur.sacFlies||0),curTB=parseInt(cur.totalBases||0);
+    const preAB=curAB-todayAB,preH=curH-todayH,preBB=curBB-todayBB;
+    const preHBP=curHBP-todayHBP,preSF=curSF-todaySF,preTB=curTB-todayTB;
+    const prePA=preAB+preBB+preHBP+preSF;
+    if(preAB<=0||prePA<=0)return parseFloat(cur.ops||0);
+    const preOBP=(preH+preBB+preHBP)/prePA;
+    const preSLG=preTB/preAB;
+    return +(preOBP+preSLG).toFixed(3);
+  }catch(e){return null;}
+}
+
+async function fetchTeamIdByName(name){
+  try{
+    const r=await fetch('https://statsapi.mlb.com/api/v1/teams?sportId=1&season=2026');
+    if(!r.ok)return null;
+    const d=await r.json();
+    const norm=s=>(s||'').toLowerCase().replace(/[^a-z ]/g,'').trim();
+    const t=norm(name);
+    let team=d.teams?.find(x=>norm(x.name)===t);
+    if(!team)team=d.teams?.find(x=>{const n=norm(x.name);return t.includes(n)||n.includes(t);});
+    if(!team&&t.includes('athletics'))team=d.teams?.find(x=>norm(x.name).includes('athletics'));
+    return team?.id||null;
+  }catch(e){return null;}
+}
+
+async function runTest(){
+  const dateInput=document.getElementById('test-date-input').value;
+  if(!dateInput){alert('Select a date first');return;}
+  const status=document.getElementById('test-status');
+  const summary=document.getElementById('test-summary');
+  const container=document.getElementById('test-container');
+  status.textContent='Fetching games from Supabase...';
+  summary.innerHTML='';
+  container.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
+  try{
+    const cols='id,game_date,away_team,home_team,away_final,home_final,actual_total,away_ml,home_ml,away_rl,home_rl,away_rl_odds,home_rl_odds,total_line,over_odds,under_odds,away_pitcher_era,away_pitcher_recent_era,home_pitcher_era,home_pitcher_recent_era,away_velo,away_whiff_rate,home_velo,home_whiff_rate,away_lineup_ops,away_lineup_k_rate,home_lineup_ops,home_lineup_k_rate,away_team_ops,away_team_home_ops,away_team_away_ops,home_team_ops,home_team_home_ops,home_team_away_ops,weather_temp,weather_eff_wind,weather_flags,weather_dome,weather_field_wind_dir,bullpen_data,det_proj_away,det_proj_home,det_ml_verdict,det_rl_verdict,det_total_verdict';
+    const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${dateInput}&analyzed=eq.true&select=${cols}&order=away_team`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
+    if(!res.ok)throw new Error('Supabase '+res.status);
+    const games=await res.json();
+    if(!games.length){container.innerHTML='<div class="empty-state"><div class="empty-title">No analyzed games found for this date</div></div>';status.textContent='';return;}
+    status.textContent=`Found ${games.length} games. Fetching team IDs and last30OPS (this takes ~30s)...`;
+    // Get unique team names
+    const teamNames=[...new Set(games.flatMap(g=>[g.away_team,g.home_team]))];
+    const teamIds={};
+    for(const name of teamNames){
+      teamIds[name]=await fetchTeamIdByName(name);
+    }
+    status.textContent=`Team IDs resolved. Fetching pre-game last30OPS for ${teamNames.length} teams...`;
+    const last30={};
+    for(const name of teamNames){
+      const id=teamIds[name];
+      if(id){
+        last30[name]=await fetchLast30Adjusted(id,name,dateInput);
+        status.textContent=`Fetched last30OPS for ${name}...`;
+      }
+    }
+    status.textContent='Running det projections with new formula...';
+    // Run det for each game
+    const results=[];
+    for(const g of games){
+      const park=testGetPark(g.home_team);
+      const wxF=testWeatherFactor(g);
+      const pf=park.runFactor||1.0;
+      const bd=typeof g.bullpen_data==='string'?JSON.parse(g.bullpen_data):g.bullpen_data;
+      const awayBulERA=bd?.away?.weightedERA||TEST_LEAGUE_AVG_ERA;
+      const homeBulERA=bd?.home?.weightedERA||TEST_LEAGUE_AVG_ERA;
+      // Away runs: away offense vs home pitcher
+      const awayRuns=testProjectRuns(
+        g.home_pitcher_era, awayBulERA,
+        null, g.away_lineup_ops, g.away_lineup_k_rate,
+        last30[g.away_team], g.away_team_ops,
+        false, g.away_team_home_ops, g.away_team_away_ops,
+        pf, wxF
+      );
+      // Home runs: home offense vs away pitcher
+      const homeRuns=testProjectRuns(
+        g.away_pitcher_era, homeBulERA,
+        null, g.home_lineup_ops, g.home_lineup_k_rate,
+        last30[g.home_team], g.home_team_ops,
+        true, g.home_team_home_ops, g.home_team_away_ops,
+        pf, wxF
+      );
+      const mu=awayRuns-homeRuns;
+      // ML
+      const pA_raw=1-testNcdf((0.5-mu)/TEST_MSD),pH_raw=testNcdf((-0.5-mu)/TEST_MSD),den=pA_raw+pH_raw;
+      const pA=pA_raw/den,pH=pH_raw/den;
+      const mlSide=pA>pH?'AWAY':'HOME';
+      const mlOdds=mlSide==='AWAY'?g.away_ml:g.home_ml;
+      const mlEV=testEV(Math.max(pA,pH),mlOdds);
+      const mlV=testVerdict(mlEV,mlSide);
+      // RL
+      const aRL=parseFloat(g.away_rl)||( mu>0?-1.5:1.5);
+      const hRL=parseFloat(g.home_rl)||( mu>0?1.5:-1.5);
+      const pA_rl=1-testNcdf((-aRL-mu)/TEST_MSD),pH_rl=testNcdf((hRL-mu)/TEST_MSD);
+      const rlSide=pA_rl>pH_rl?'AWAY':'HOME';
+      const rlOdds=rlSide==='AWAY'?g.away_rl_odds:g.home_rl_odds;
+      const rlEV=testEV(Math.max(pA_rl,pH_rl),rlOdds);
+      const rlV=testVerdict(rlEV,rlSide);
+      // Total
+      const totLine=parseFloat(g.total_line)||8.5;
+      const proj=awayRuns+homeRuns;
+      const pO=1/(1+Math.exp(1.7*(totLine-proj)/TEST_TSD));
+      const totSide=pO>0.5?'OVER':'UNDER';
+      const totOdds=totSide==='OVER'?g.over_odds:g.under_odds;
+      const totEV=testEV(pO>0.5?pO:1-pO,totOdds);
+      const totV=testVerdict(totEV,totSide);
+      // Grade
+      const fa=g.away_final,fh=g.home_final;
+      function grade(v,mkt){
+        if(!v||fa==null||fh==null)return 'pending';
+        const s=v.includes('AWAY')?'AWAY':v.includes('HOME')?'HOME':v.includes('OVER')?'OVER':'UNDER';
+        if(mkt==='ml'){return (s==='AWAY'?fa>fh:fh>fa)?'win':'loss';}
+        if(mkt==='rl'){const margin=fa-fh;return (s==='AWAY'?margin+aRL>0:margin+hRL<0)?'win':'loss';}
+        if(mkt==='total'){const tot=fa+fh;return (s==='OVER'?tot>totLine:tot<totLine)?'win':'loss';}
+        return 'pending';
+      }
+      results.push({g,awayRuns,homeRuns,proj,mlV,mlEV,rlV,rlEV,totV,totEV,gradeML:grade(mlV,'ml'),gradeRL:grade(rlV,'rl'),gradeTot:grade(totV,'total'),mlOdds,rlOdds,totOdds,last30Away:last30[g.away_team],last30Home:last30[g.home_team]});
+    }
+    // Summary stats
+    const plays=[];
+    for(const r of results){
+      if(r.mlV){const o=parseFloat(r.mlOdds);plays.push({result:r.gradeML,units:r.gradeML==='win'?(o>0?o/100:100/Math.abs(o)):-1});}
+      if(r.rlV){const o=parseFloat(r.rlOdds);plays.push({result:r.gradeRL,units:r.gradeRL==='win'?(o>0?o/100:100/Math.abs(o)):-1});}
+      if(r.totV){const o=parseFloat(r.totOdds);plays.push({result:r.gradeTot,units:r.gradeTot==='win'?(o>0?o/100:100/Math.abs(o)):-1});}
+    }
+    const w=plays.filter(p=>p.result==='win').length,l=plays.filter(p=>p.result==='loss').length;
+    const u=plays.reduce((s,p)=>s+p.units,0);
+    const pct=w+l>0?Math.round(100*w/(w+l)):0;
+    summary.innerHTML=`<div class="sb-stats-row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:8px 0 16px">
+      <div class="stat-card"><div class="stat-label">RECORD</div><div class="stat-big">${w}-${l}</div><div class="stat-sub">${pct}% win</div></div>
+      <div class="stat-card"><div class="stat-label">UNITS</div><div class="stat-big" style="color:${u>=0?'var(--green)':'var(--red)'}">${u>=0?'+':''}${u.toFixed(2)}u</div></div>
+      <div class="stat-card"><div class="stat-label">PLAYS</div><div class="stat-big">${plays.length}</div></div>
+      <div class="stat-card"><div class="stat-label">GAMES</div><div class="stat-big">${results.length}</div></div>
+    </div>`;
+    // Render cards
+    const col=v=>v?'var(--green)':'var(--text)';
+    const resTag=(r,o)=>r==='win'?`<span style="color:var(--green);font-weight:700">W ${(parseFloat(o)>0?parseFloat(o)/100:100/Math.abs(parseFloat(o))).toFixed(2)}u</span>`:r==='loss'?`<span style="color:var(--red);font-weight:700">L -1.00u</span>`:`<span style="color:var(--muted)">—</span>`;
+    const vTag=(v,ev)=>!v?`<div style="color:var(--muted);font-size:11px">SKIP</div>`:`<div style="color:${ev>=10?'var(--green)':'var(--amber)'};font-weight:600;font-size:12px">${displayVerdict(v,{away_team:'',home_team:''})}</div><div style="font-size:10px;color:var(--amber)">${ev>=0?'+':''}${ev.toFixed(1)}% EV</div>`;
+    const cards=results.map(r=>{
+      const g=r.g;
+      const oldML=g.det_ml_verdict,oldRL=g.det_rl_verdict,oldTot=g.det_total_verdict;
+      const fa=g.away_final,fh=g.home_final;
+      return`<div class="game-card" style="margin-bottom:16px">
+        <div class="card-header">
+          <div class="matchup">${g.away_team} @ ${g.home_team}</div>
+          <div style="font-size:11px;color:var(--muted);font-family:DM Mono,monospace">Final: ${fa!=null?fa+'-'+fh:'pending'} · Total: ${g.total_line}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px">
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:6px;font-family:DM Mono,monospace;text-transform:uppercase">NEW FORMULA</div>
+            <div style="font-size:12px;color:var(--text);font-family:DM Mono,monospace;margin-bottom:8px">Proj: ${r.awayRuns}-${r.homeRuns} (tot ${r.proj.toFixed(1)}) · last30: ${r.last30Away||'?'}/${r.last30Home||'?'}</div>
+            <div style="display:flex;gap:8px">
+              <div class="market-cell" style="${r.mlV?'border-color:var(--green)':''};min-width:90px">
+                <div class="market-label">ML</div>
+                ${vTag(r.mlV,r.mlEV)}
+                <div style="margin-top:4px">${resTag(r.gradeML,r.mlOdds)}</div>
+              </div>
+              <div class="market-cell" style="${r.rlV?'border-color:var(--green)':''};min-width:90px">
+                <div class="market-label">RL</div>
+                ${vTag(r.rlV,r.rlEV)}
+                <div style="margin-top:4px">${resTag(r.gradeRL,r.rlOdds)}</div>
+              </div>
+              <div class="market-cell" style="${r.totV?'border-color:var(--green)':''};min-width:90px">
+                <div class="market-label">Total</div>
+                ${vTag(r.totV,r.totEV)}
+                <div style="margin-top:4px">${resTag(r.gradeTot,r.totOdds)}</div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:6px;font-family:DM Mono,monospace;text-transform:uppercase">ORIGINAL DET</div>
+            <div style="font-size:12px;color:var(--text);font-family:DM Mono,monospace;margin-bottom:8px">Proj: ${g.det_proj_away||'?'}-${g.det_proj_home||'?'}</div>
+            <div style="display:flex;gap:8px">
+              <div class="market-cell" style="min-width:90px;opacity:0.6"><div class="market-label">ML</div><div style="font-size:11px;color:var(--text)">${oldML||'SKIP'}</div></div>
+              <div class="market-cell" style="min-width:90px;opacity:0.6"><div class="market-label">RL</div><div style="font-size:11px;color:var(--text)">${oldRL||'SKIP'}</div></div>
+              <div class="market-cell" style="min-width:90px;opacity:0.6"><div class="market-label">Total</div><div style="font-size:11px;color:var(--text)">${oldTot||'SKIP'}</div></div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    container.innerHTML=cards;
+    status.textContent=`Done — ${results.length} games tested for ${dateInput}`;
+  }catch(e){
+    status.textContent='Error: '+e.message;
+    container.innerHTML=`<div class="empty-state"><div class="empty-title">Error</div><div class="empty-sub">${e.message}</div></div>`;
+  }
+}
+// ── END TEST PAGE ─────────────────────────────────────────────────────────────
 function sbToggle(key,v){const a=sbFilter[key];const i=a.indexOf(v);if(i>=0)a.splice(i,1);else a.push(v);renderScoreboard();}
 function sbClear(key){sbFilter[key]=[];renderScoreboard();}
 function sbDate(which,v){sbFilter[which]=v;renderScoreboard();}
@@ -2373,6 +2687,7 @@ function goPage(name,btn){
   if(name==='plus'){plusGames=null;renderPlus();}
   if(name==='data'){dataGames=null;renderData();}
   if(name==='datastats'){dataGames=null;renderDataStats();}
+  if(name==='test'){const d=document.getElementById('test-date-input');if(d&&!d.value)d.value=isoDate(currentDate);}
 }
 
 async function openDeepLinkGame(){
@@ -3693,6 +4008,21 @@ async function renderPlus(){
     </div>
   </div>
   <div id="plus-container"><div class="empty-state"><div class="empty-title">No Plus plays yet — upload analyze.js and re-run analysis</div></div></div>
+</div>
+</div>
+
+<div class="page" id="page-test">
+<div class="container">
+  <div class="topbar">
+    <div class="topbar-left"><h2>Test</h2><p>Re-run det with updated formula against actual results</p></div>
+    <div style="display:flex;gap:8px">
+      <input type="date" id="test-date-input" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">
+      <button class="btn" onclick="runTest()">Run Test →</button>
+    </div>
+  </div>
+  <div id="test-status" style="font-size:12px;color:var(--muted);padding:8px 0;font-family:DM Mono,monospace"></div>
+  <div id="test-summary" style="margin-bottom:16px"></div>
+  <div id="test-container"><div class="empty-state"><div class="empty-title">Select a date and run test</div></div></div>
 </div>
 </div>
 
