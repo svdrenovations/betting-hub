@@ -3397,6 +3397,15 @@ function openLog(id){
   else if(bv&&bv.includes('UNDER')&&bk==='total')lt.value='Game total under';
   else if(bv&&bv.includes('AWAY')&&bk==='rl'){lt.value='Run line (away)';document.getElementById('log-line').value=g.away_rl||'';}
   else if(bv&&bv.includes('HOME')&&bk==='rl'){lt.value='Run line (home)';document.getElementById('log-line').value=g.home_rl||'';}
+  // Pre-populate EV from stored det verdict — don't recalculate from current lines
+  const detEV = bk === 'ml' ? parseFloat(g.det_ml_ev) : bk === 'rl' ? parseFloat(g.det_rl_ev) : bk === 'total' ? parseFloat(g.det_total_ev) : null;
+  if (detEV != null && !isNaN(detEV)) {
+    pendingLogEV = detEV;
+    const el = document.getElementById('log-ev-display');
+    if (el) { el.textContent = 'EV: +' + detEV.toFixed(1) + '% (stored at analysis time)'; el.style.color = detEV >= 2 ? 'var(--green)' : 'var(--amber)'; }
+  } else {
+    calcLiveEV();
+  }
   document.getElementById('log-modal').classList.add('show');
 }
 function closeModal(){document.getElementById('log-modal').classList.remove('show');pendingLog=null;}
