@@ -2599,6 +2599,8 @@ async function runTest(){
   status.textContent='Fetching games from Supabase...';
   summary.innerHTML='';
   container.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
+  // Clear pitcher cache so ERA is recalculated with correct throughDate
+  Object.keys(_pitcherCache).forEach(k=>delete _pitcherCache[k]);
   try{
     const cols='id,game_date,away_team,home_team,away_pitcher,home_pitcher,away_final,home_final,actual_total,away_ml,home_ml,away_rl,home_rl,away_rl_odds,home_rl_odds,total_line,over_odds,under_odds,away_pitcher_era,away_pitcher_recent_era,away_pitcher_home_era,away_pitcher_away_era,away_pitcher_avg_ip,home_pitcher_era,home_pitcher_recent_era,home_pitcher_home_era,home_pitcher_away_era,home_pitcher_avg_ip,away_pitcher_hand,home_pitcher_hand,away_velo,away_velo_trend,away_whiff_rate,away_hard_hit,home_velo,home_velo_trend,home_whiff_rate,home_hard_hit,away_lineup_ops,away_lineup_k_rate,home_lineup_ops,home_lineup_k_rate,away_team_ops,away_team_home_ops,away_team_away_ops,home_team_ops,home_team_home_ops,home_team_away_ops,weather_temp,weather_eff_wind,weather_flags,weather_dome,weather_field_wind_dir,bullpen_data,det_proj_away,det_proj_home,det_ml_verdict,det_rl_verdict,det_total_verdict';
     const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${dateInput}&analyzed=eq.true&select=${cols}&order=away_team`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
