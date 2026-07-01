@@ -2307,7 +2307,66 @@ function dataExportCSV(){
   const csv=[hdr,...rows.map(x=>[x.date,`"${x.matchup}"`,x.source,x.lbl,x.side.toLowerCase(),`"${x.line}"`,x.ev!=null?x.ev.toFixed(1):'',x.confidence,x.result,x.units.toFixed(2),x.predScore,x.final].join(','))].join('\n');
   const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);a.download=`data_plays_${new Date().toISOString().slice(0,10)}.csv`;a.click();
 }
-// ── TEST PAGE ─────────────────────────────────────────────────────────────────
+// ── STATIC LOG DATA FOR HISTORICAL BACKTESTING ───────────────────────────────
+const HISTORICAL_BULLPEN = {
+  '2026-06-28': {
+    'Arizona Diamondbacks':2.96,'Athletics':4.65,'Atlanta Braves':5.45,'Baltimore Orioles':3.70,
+    'Boston Red Sox':3.96,'Chicago Cubs':3.46,'Chicago White Sox':3.61,'Cincinnati Reds':3.17,
+    'Cleveland Guardians':3.30,'Colorado Rockies':5.06,'Detroit Tigers':6.89,'Houston Astros':3.50,
+    'Kansas City Royals':4.72,'Los Angeles Angels':3.50,'Los Angeles Dodgers':3.28,'Miami Marlins':3.44,
+    'Milwaukee Brewers':4.56,'Minnesota Twins':4.91,'New York Mets':7.56,'New York Yankees':3.08,
+    'Philadelphia Phillies':3.68,'Pittsburgh Pirates':3.91,'San Diego Padres':2.81,'San Francisco Giants':3.64,
+    'Seattle Mariners':2.89,'St. Louis Cardinals':4.44,'Tampa Bay Rays':3.71,'Texas Rangers':3.53,
+    'Toronto Blue Jays':2.97,'Washington Nationals':4.67
+  },
+  '2026-06-29': {
+    'Arizona Diamondbacks':2.93,'Athletics':4.50,'Baltimore Orioles':3.70,'Boston Red Sox':3.95,
+    'Chicago Cubs':3.46,'Chicago White Sox':3.53,'Cincinnati Reds':3.35,'Cleveland Guardians':3.28,
+    'Colorado Rockies':5.05,'Detroit Tigers':7.41,'Houston Astros':3.48,'Los Angeles Angels':3.44,
+    'Los Angeles Dodgers':3.27,'Miami Marlins':3.41,'Milwaukee Brewers':4.58,'Minnesota Twins':4.92,
+    'New York Mets':7.65,'New York Yankees':3.28,'Philadelphia Phillies':3.74,'Pittsburgh Pirates':3.90,
+    'San Diego Padres':2.61,'San Francisco Giants':3.68,'Seattle Mariners':3.16,
+    'Texas Rangers':3.25,'Toronto Blue Jays':2.96,'Washington Nationals':4.53
+  },
+  '2026-06-30': {
+    'Arizona Diamondbacks':3.47,'Athletics':4.58,'Atlanta Braves':5.44,'Baltimore Orioles':3.60,
+    'Boston Red Sox':3.89,'Chicago Cubs':3.32,'Chicago White Sox':3.48,'Cincinnati Reds':3.74,
+    'Cleveland Guardians':3.28,'Colorado Rockies':5.31,'Detroit Tigers':3.81,'Houston Astros':3.49,
+    'Kansas City Royals':4.61,'Los Angeles Angels':3.51,'Los Angeles Dodgers':2.90,'Miami Marlins':3.54,
+    'Milwaukee Brewers':4.53,'Minnesota Twins':5.00,'New York Mets':7.48,'New York Yankees':3.25,
+    'Philadelphia Phillies':3.60,'Pittsburgh Pirates':3.92,'San Diego Padres':2.60,
+    'San Francisco Giants':3.65,'Seattle Mariners':3.21,'St. Louis Cardinals':4.28,
+    'Tampa Bay Rays':3.70,'Texas Rangers':3.22,'Toronto Blue Jays':2.94,'Washington Nationals':4.59
+  }
+};
+// Historical lineup matchup OPS — away batters vs home pitcher, home batters vs away pitcher
+// Format: { 'vs PitcherName': { ops, k } }
+const HISTORICAL_LINEUP = {
+  '2026-06-28': {
+    away: {
+      'Brandon Woodruff':{ops:'0.756',k:'17.6'},'Drew Rasmussen':{ops:'0.846',k:'7.7'},
+      'Jack Flaherty':{ops:'1.029',k:'40.0'},'Michael King':{ops:'0.851',k:'30.8'},
+      'Mitch Keller':{ops:'0.822',k:'25.0'},'Sonny Gray':{ops:'0.577',k:'27.3'}
+    },
+    home: {
+      'Aaron Civale':{ops:'0.700',k:'40.0'},'Brady Singer':{ops:'0.364',k:'0.0'},
+      'Chris Sale':{ops:'0.385',k:'0.0'},'Hunter Brown':{ops:'0.607',k:'21.4'},
+      'Jesús Luzardo':{ops:'1.175',k:'20.0'},'Zack Littell':{ops:'0.616',k:'15.4'}
+    }
+  },
+  '2026-06-29': {
+    away: {
+      'Aaron Nola':{ops:'0.650',k:'40.0'},'Eduardo Rodriguez':{ops:'0.685',k:'26.8'},
+      'George Kirby':{ops:'0.550',k:'10.0'}
+    },
+    home: {
+      'Griffin Canning':{ops:'1.324',k:'11.8'},'Miles Mikolas':{ops:'1.000',k:'5.3'},
+      'Sandy Alcantara':{ops:'0.282',k:'20.0'},'Sean Manaea':{ops:'0.917',k:'27.3'},
+      'Tyler Alexander':{ops:'0.484',k:'20.0'},'Tyler Mahle':{ops:'1.103',k:'16.7'}
+    }
+  }
+};
+// ── END STATIC LOG DATA ───────────────────────────────────────────────────────
 const TEST_PARK_FACTORS = {
   'Arizona Diamondbacks':{runFactor:1.03,windFactor:0,retractable:true},
   'Atlanta Braves':{runFactor:1.02,windFactor:1.0,retractable:false},
@@ -2572,8 +2631,9 @@ async function runTest(){
       const pf=park;
       const weather={temp:parseFloat(g.weather_temp)||72,effWind:parseFloat(g.weather_eff_wind)||0,flags:g.weather_flags||[],dome:g.weather_dome||false,fieldWindDir:g.weather_field_wind_dir||''};
       const bd=typeof g.bullpen_data==='string'?JSON.parse(g.bullpen_data||'{}'):g.bullpen_data||{};
-      const awayBullpen={weightedERA:bd?.away?.weightedERA||TEST_LEAGUE_AVG_ERA};
-      const homeBullpen={weightedERA:bd?.home?.weightedERA||TEST_LEAGUE_AVG_ERA};
+      const histBullpen=HISTORICAL_BULLPEN[dateInput]||{};
+      const awayBullpen={weightedERA:bd?.away?.weightedERA||histBullpen[g.away_team]||TEST_LEAGUE_AVG_ERA};
+      const homeBullpen={weightedERA:bd?.home?.weightedERA||histBullpen[g.home_team]||TEST_LEAGUE_AVG_ERA};
       // Build pitcher objects — use stored columns first, fall back to live-fetched
       const liveHome=pitcherERA[g.home_pitcher]||{};
       const liveAway=pitcherERA[g.away_pitcher]||{};
@@ -2597,9 +2657,12 @@ async function runTest(){
       // Team stats objects
       const awayStats={ops:g.away_team_ops,homeOPS:g.away_team_home_ops,awayOPS:g.away_team_away_ops,last30OPS:last30[g.away_team]};
       const homeStats={ops:g.home_team_ops,homeOPS:g.home_team_home_ops,awayOPS:g.home_team_away_ops,last30OPS:last30[g.home_team]};
-      // Lineup matchup objects
-      const awayMatchups=g.away_lineup_ops?{avgOPS:g.away_lineup_ops,kRate:g.away_lineup_k_rate}:null;
-      const homeMatchups=g.home_lineup_ops?{avgOPS:g.home_lineup_ops,kRate:g.home_lineup_k_rate}:null;
+      // Lineup matchup objects — use stored columns, fall back to historical log data
+      const histLineup=HISTORICAL_LINEUP[dateInput]||{};
+      const histAwayMatchup=histLineup.away?.[g.home_pitcher]||histLineup.away?.[g.home_pitcher?.split(' ').slice(-1)[0]]||null;
+      const histHomeMatchup=histLineup.home?.[g.away_pitcher]||histLineup.home?.[g.away_pitcher?.split(' ').slice(-1)[0]]||null;
+      const awayMatchups=g.away_lineup_ops?{avgOPS:g.away_lineup_ops,kRate:g.away_lineup_k_rate}:histAwayMatchup?{avgOPS:histAwayMatchup.ops,kRate:histAwayMatchup.k}:null;
+      const homeMatchups=g.home_lineup_ops?{avgOPS:g.home_lineup_ops,kRate:g.home_lineup_k_rate}:histHomeMatchup?{avgOPS:histHomeMatchup.ops,kRate:histHomeMatchup.k}:null;
       // Away runs: away offense vs home pitcher (home pitcher is defending at home)
       const awayRuns=testProjectRunsExact({
         offenseStats:awayStats,offenseMatchups:awayMatchups,isOffenseHome:false,
