@@ -4225,7 +4225,8 @@ async function loadLlmPage() {
       else if (v.includes('OVER')) side = 'OVER';
       else if (v.includes('UNDER')) side = 'UNDER';
       const displayVerdict = action && side ? `${action} ${side}` : v;
-      const oddsHtml = bet.odds ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);margin-top:1px">${bet.odds}</div>` : '';
+      const lineStr = bet.rl_line ? `${bet.rl_line} ` : bet.total_line ? `o/u ${bet.total_line} ` : '';
+      const oddsHtml = (lineStr || bet.odds) ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);margin-top:1px">${lineStr}${bet.odds||''}</div>` : '';
       return `<div class="market-cell"><div class="market-label">${label}</div><div class="market-val ${cls}">${displayVerdict}</div>${oddsHtml}${evHtml}${resHtml}</div>`;
     };
 
@@ -4291,7 +4292,7 @@ function renderLlmTracker() {
     sub.textContent = 'No bets';
     return;
   }
-  const settled = llmBets.filter(b => b.result);
+  const settled = llmBets.filter(b => b.result && b.verdict !== 'SKIP');
   const wins = settled.filter(b => b.result === 'win').length;
   const losses = settled.filter(b => b.result === 'loss').length;
   const pushes = settled.filter(b => b.result === 'push').length;
