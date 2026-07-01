@@ -221,7 +221,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 }
 </style>
 <script>
-(function(){var p=new URLSearchParams(location.search).get('page');var valid=['games','tracker','kalshi','stats','msd','scoreboard','plus'];if(p&&valid.includes(p)&&p!=='games'){document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.page').forEach(function(el){el.classList.remove('on');});var el=document.getElementById('page-'+p);if(el)el.classList.add('on');});}})();
+(function(){var p=new URLSearchParams(location.search).get('page');var valid=['games','tracker','kalshi','stats','msd','scoreboard','plus','llm','llmtracker','llmstats'];if(p&&valid.includes(p)&&p!=='games'){document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.page').forEach(function(el){el.classList.remove('on');});var el=document.getElementById('page-'+p);if(el)el.classList.add('on');});}})();
 </script>
 </head>
 <body>
@@ -239,6 +239,9 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     <a class="nav-tab" href="?page=scoreboard" onclick="goPage('scoreboard',this);return false;">Scoreboard</a>
     <a class="nav-tab" href="?page=plus" onclick="goPage('plus',this);return false;">Plus</a>
     <a class="nav-tab" href="?page=test" onclick="goPage('test',this);return false;">Test</a>
+    <a class="nav-tab" href="?page=llm" onclick="goPage('llm',this);return false;" style="color:var(--green)">LLM</a>
+    <a class="nav-tab" href="?page=llmtracker" onclick="goPage('llmtracker',this);return false;" style="color:var(--green)">LLM Tracker</a>
+    <a class="nav-tab" href="?page=llmstats" onclick="goPage('llmstats',this);return false;" style="color:var(--green)">LLM Stats</a>
   </div>
   <div class="nav-record mono" id="nav-record">—</div>
   <div style="display:flex;align-items:center;gap:6px">
@@ -2855,6 +2858,9 @@ function goPage(name,btn){
   if(name==='data'){dataGames=null;renderData();}
   if(name==='datastats'){dataGames=null;renderDataStats();}
   if(name==='test'){const d=document.getElementById('test-date-input');if(d&&!d.value)d.value=isoDate(currentDate);}
+  if(name==='llm'){loadLlmPage();}
+  if(name==='llmtracker'){loadLlmTracker();}
+  if(name==='llmstats'){loadLlmStats();}
 }
 
 async function openDeepLinkGame(){
@@ -4162,6 +4168,225 @@ async function renderPlus(){
   const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr>${th('date','Date')}${th('matchup','Matchup')}${th('source','Source')}${th('market','Mkt')}${th('side','Side')}${th('line','Line')}${th('ev','EV')}${th('result','Res')}${th('units','Units')}<th></th></tr></thead><tbody>${rows||`<tr><td colspan="10" style="color:var(--text);padding:18px;text-align:center">No plays match.</td></tr>`}</tbody></table></div>`;
   el.innerHTML=fBar+stats+table;
 }
+// ── LLM PAGE ─────────────────────────────────────────────────────────────────
+let llmGames = null;
+let llmDate = null;
+
+async function loadLlmPage() {
+  if (!llmDate) llmDate = isoDate(currentDate);
+  document.getElementById('llm-subtitle').textContent = 'Loading…';
+  const grid = document.getElementById('llm-grid');
+  grid.innerHTML = '<div class="empty-state"><div class="empty-title">Loading…</div></div>';
+  try {
+    const res = await fetch(`${SUPA_URL}/rest/v1/mlb_games?game_date=eq.${llmDate}&select=*&order=commence_time.asc`, {
+      headers: { 'apikey': SUPA_KEY, 'Authorization': `Bearer ${SUPA_KEY}` }
+    });
+    llmGames = res.ok ? await res.json() : [];
+    renderLlmGrid();
+  } catch(e) {
+    grid.innerHTML = `<div class="empty-state"><div class="empty-title">Error: ${e.message}</div></div>`;
+  }
+}
+
+function renderLlmGrid() {
+  const grid = document.getElementById('llm-grid');
+  const subtitle = document.getElementById('llm-subtitle');
+  if (!llmGames || !llmGames.length) {
+    grid.innerHTML = '<div class="empty-state"><div class="empty-title">No games found</div></div>';
+    subtitle.textContent = 'No games';
+    return;
+  }
+  // Build date nav
+  const dateNav = document.getElementById('llm-date-nav');
+  const days = [-2,-1,0,1,2].map(d => { const dt = new Date(currentDate); dt.setDate(dt.getDate()+d); return isoDate(dt); });
+  dateNav.innerHTML = days.map(d => `<button class="date-btn ${d===llmDate?'on':''}" onclick="llmDate='${d}';loadLlmPage()">${d}</button>`).join('');
+
+  // Filter to games with LLM verdicts (analyzed and not all SKIP)
+  const analyzed = llmGames.filter(g => g.analyzed && (g.ml_verdict||g.rl_verdict||g.total_verdict));
+  subtitle.textContent = `${analyzed.length} games analyzed`;
+
+  if (!analyzed.length) {
+    grid.innerHTML = '<div class="empty-state"><div class="empty-title">No LLM plays yet for this date</div></div>';
+    return;
+  }
+
+  grid.innerHTML = analyzed.map(g => {
+    const sits = (g.situations||[]).filter(s=>s);
+    const sitHtml = sits.length ? sits.map(s=>`<span class="sit-flag sf-${s}">${s}</span>`).join('') : '<span class="sit-flag sf-none">no flags</span>';
+    const mkCell = (label, verdict, ev, isBest) => {
+      const v = verdict || 'SKIP';
+      const cls = v.startsWith('BET') ? 'mv-bet' : v.startsWith('LEAN') ? 'mv-lean' : 'mv-skip';
+      const evHtml = ev != null ? `<div class="ev-val ${ev>=10?'ev-pos':ev>=6?'ev-pos':'ev-neg'}">+${parseFloat(ev).toFixed(1)}%</div>` : '';
+      return `<div class="market-cell${isBest?' best':''}"><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}</div>`;
+    };
+    const best = g.best_market;
+    const proj = (g.proj_away_runs!=null&&g.proj_home_runs!=null) ? `Proj: ${parseFloat(g.proj_away_runs).toFixed(1)}-${parseFloat(g.proj_home_runs).toFixed(1)} (tot ${parseFloat(g.proj_total||0).toFixed(1)})` : '';
+    const conf = g.confidence ? `<span class="edge-badge ${g.confidence==='HIGH'?'eb-high':g.confidence==='MEDIUM'?'eb-med':'eb-skip'}">${g.confidence}</span>` : '';
+    const final = (g.away_final!=null&&g.home_final!=null) ? `<span style="font-size:11px;color:var(--text);font-family:DM Mono,monospace">Final: ${g.away_final}-${g.home_final} · Total: ${g.actual_total||'?'}</span>` : '';
+    return `<div class="game-card" id="llm-card-${g.id}">
+      <div class="card-header">
+        <div><div class="card-matchup">${g.away_team} @ ${g.home_team}</div><div class="card-meta">${proj}</div></div>
+        <div style="text-align:right"><div class="card-time">${fmtTime(g.commence_time)}</div>${final}</div>
+      </div>
+      <div class="card-body">
+        <div class="sit-flags">${sitHtml}</div>
+        <div class="markets">
+          ${mkCell('ML',g.ml_verdict,g.ml_ev,best==='ml')}
+          ${mkCell('RL',g.rl_verdict,g.rl_ev,best==='rl')}
+          ${mkCell('Total',g.total_verdict,g.total_ev,best==='total')}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:6px">${conf}
+          ${g.pitcher_edge&&g.pitcher_edge!=='EVEN'?`<span style="font-size:11px;color:var(--text);font-family:DM Mono,monospace">Edge: ${g.pitcher_edge}</span>`:''}
+        </div>
+        ${g.situation_text?`<div class="analysis-label">Situation</div><div class="analysis-full">${g.situation_text}</div>`:''}
+        ${g.factors_text?`<div class="analysis-label">Factors</div><div class="analysis-full">${g.factors_text}</div>`:''}
+        ${g.risks_text?`<div class="analysis-label">Risk</div><div class="analysis-full">${g.risks_text}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── LLM TRACKER ──────────────────────────────────────────────────────────────
+let llmBets = [];
+let llmSort = { col: 'created_at', dir: 'desc' };
+
+async function loadLlmTracker() {
+  document.getElementById('llmtracker-subtitle').textContent = 'Loading…';
+  try {
+    const res = await fetch(`${SUPA_URL}/rest/v1/llm_bets?select=*&order=created_at.desc&limit=500`, {
+      headers: { 'apikey': SUPA_KEY, 'Authorization': `Bearer ${SUPA_KEY}` }
+    });
+    llmBets = res.ok ? await res.json() : [];
+    renderLlmTracker();
+  } catch(e) {
+    document.getElementById('llmtracker-table').innerHTML = `<div class="empty-state"><div class="empty-title">Error: ${e.message}</div></div>`;
+  }
+}
+
+function renderLlmTracker() {
+  const el = document.getElementById('llmtracker-table');
+  const sub = document.getElementById('llmtracker-subtitle');
+  if (!llmBets.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-title">No LLM bets logged yet</div></div>';
+    sub.textContent = 'No bets';
+    return;
+  }
+  const settled = llmBets.filter(b => b.result);
+  const wins = settled.filter(b => b.result === 'win').length;
+  const losses = settled.filter(b => b.result === 'loss').length;
+  const pushes = settled.filter(b => b.result === 'push').length;
+  const pl = settled.reduce((s,b) => s + parseFloat(b.profit_loss||0), 0);
+  const pct = settled.length ? Math.round(wins/settled.length*100) : 0;
+  sub.textContent = `${settled.length} settled · ${wins}-${losses}${pushes?'-'+pushes+' push':''} (${pct}%) · ${pl>=0?'+':''}${pl.toFixed(2)}u`;
+
+  const th = col => {
+    const active = llmSort.col === col;
+    const labels = {game_date:'Date',away_team:'Matchup',market:'Mkt',verdict:'Verdict',ev:'EV',odds:'Odds',confidence:'Conf',result:'Result',profit_loss:'P/L'};
+    return `<th onclick="llmSetSort('${col}')" style="${active?'color:var(--green)':''}cursor:pointer;user-select:none">${labels[col]||col}${active?(llmSort.dir==='asc'?' ▲':' ▼'):''}</th>`;
+  };
+
+  const sorted = [...llmBets].sort((a,b) => {
+    let av = a[llmSort.col], bv = b[llmSort.col];
+    if (av == null) av = ''; if (bv == null) bv = '';
+    return llmSort.dir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+  });
+
+  const rows = sorted.map(b => {
+    const res = b.result;
+    const resColor = res==='win'?'var(--green)':res==='loss'?'var(--red)':res==='push'?'var(--amber)':'var(--text)';
+    const pl = b.profit_loss != null ? parseFloat(b.profit_loss) : null;
+    const plStr = pl != null ? `<span style="color:${pl>=0?'var(--green)':'var(--red)'}">${pl>=0?'+':''}${pl.toFixed(2)}u</span>` : '—';
+    const verdict = b.verdict || 'SKIP';
+    const vCls = verdict.startsWith('BET') ? 'mv-bet' : verdict.startsWith('LEAN') ? 'mv-lean' : 'mv-skip';
+    return `<tr>
+      <td class="mono" style="font-size:11px">${b.game_date||'—'}</td>
+      <td style="font-size:12px">${b.away_team} @ ${b.home_team}</td>
+      <td class="mono" style="font-size:11px">${(b.market||'').toUpperCase()}</td>
+      <td style="font-size:12px" class="${vCls}">${verdict}</td>
+      <td class="mono" style="font-size:11px;color:var(--green)">${b.ev!=null?'+'+parseFloat(b.ev).toFixed(1)+'%':'—'}</td>
+      <td class="mono" style="font-size:11px">${b.odds||'—'}</td>
+      <td class="mono" style="font-size:11px">${b.confidence||'—'}</td>
+      <td style="font-size:12px;color:${resColor};font-weight:500">${res||'pending'}</td>
+      <td>${plStr}</td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `<table class="t-table"><thead><tr>${th('game_date')}${th('away_team')}${th('market')}${th('verdict')}${th('ev')}${th('odds')}${th('confidence')}${th('result')}${th('profit_loss')}</tr></thead><tbody>${rows||'<tr><td colspan="9" style="text-align:center;padding:18px;color:var(--text)">No bets</td></tr>'}</tbody></table>`;
+}
+
+function llmSetSort(col) {
+  if (llmSort.col === col) llmSort.dir = llmSort.dir === 'asc' ? 'desc' : 'asc';
+  else { llmSort.col = col; llmSort.dir = 'desc'; }
+  renderLlmTracker();
+}
+
+function exportLlmCSV() {
+  if (!llmBets.length) return;
+  const cols = ['game_date','away_team','home_team','market','verdict','ev','odds','proj_away_runs','proj_home_runs','proj_total','confidence','result','profit_loss','units','created_at'];
+  const rows = [cols.join(','), ...llmBets.map(b => cols.map(c => JSON.stringify(b[c]??'')).join(','))];
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(rows.join('\n'));
+  a.download = 'llm_bets.csv'; a.click();
+}
+
+// ── LLM STATS ────────────────────────────────────────────────────────────────
+async function loadLlmStats() {
+  const el = document.getElementById('llmstats-content');
+  el.innerHTML = '<div class="empty-state"><div class="empty-title">Loading…</div></div>';
+  try {
+    const res = await fetch(`${SUPA_URL}/rest/v1/llm_bets?select=*&order=created_at.desc&limit=1000`, {
+      headers: { 'apikey': SUPA_KEY, 'Authorization': `Bearer ${SUPA_KEY}` }
+    });
+    const bets = res.ok ? await res.json() : [];
+    renderLlmStats(bets, el);
+  } catch(e) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-title">Error: ${e.message}</div></div>`;
+  }
+}
+
+function renderLlmStats(bets, el) {
+  const settled = bets.filter(b => b.result && b.result !== 'push');
+  if (!settled.length) { el.innerHTML = '<div class="empty-state"><div class="empty-title">No settled bets yet</div></div>'; return; }
+
+  const statBlock = (label, betsArr) => {
+    const w = betsArr.filter(b=>b.result==='win').length;
+    const l = betsArr.filter(b=>b.result==='loss').length;
+    const p = betsArr.filter(b=>b.result==='push').length;
+    const pl = betsArr.reduce((s,b)=>s+parseFloat(b.profit_loss||0),0);
+    const pct = (w+l) ? Math.round(w/(w+l)*100) : 0;
+    const plColor = pl>=0?'var(--green)':'var(--red)';
+    return `<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;min-width:160px">
+      <div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text);margin-bottom:6px">${label}</div>
+      <div style="font-size:14px;font-weight:600">${w}-${l}${p?'-'+p:''} <span style="font-size:12px;color:var(--text)">(${pct}%)</span></div>
+      <div style="font-size:13px;color:${plColor};font-family:DM Mono,monospace;margin-top:2px">${pl>=0?'+':''}${pl.toFixed(2)}u</div>
+    </div>`;
+  };
+
+  const byMarket = ['ml','rl','total'].map(m => statBlock(m.toUpperCase(), settled.filter(b=>b.market===m)));
+  const byVerdict = ['BET','LEAN'].map(v => statBlock(v, settled.filter(b=>(b.verdict||'').startsWith(v))));
+  const byConf = ['HIGH','MEDIUM','LOW'].map(c => statBlock(c, settled.filter(b=>b.confidence===c)));
+  const byEV = [
+    statBlock('6-9.9%', settled.filter(b=>parseFloat(b.ev||0)>=6&&parseFloat(b.ev||0)<10)),
+    statBlock('10-14.9%', settled.filter(b=>parseFloat(b.ev||0)>=10&&parseFloat(b.ev||0)<15)),
+    statBlock('15-19.9%', settled.filter(b=>parseFloat(b.ev||0)>=15&&parseFloat(b.ev||0)<20)),
+    statBlock('20%+', settled.filter(b=>parseFloat(b.ev||0)>=20)),
+  ];
+
+  const section = (title, blocks) => `
+    <div style="margin-bottom:1.5rem">
+      <div style="font-size:12px;font-family:DM Mono,monospace;color:var(--green);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px">${title}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">${blocks.join('')}</div>
+    </div>`;
+
+  el.innerHTML = `
+    ${section('Overall', [statBlock('All plays', settled)])}
+    ${section('By Market', byMarket)}
+    ${section('By Verdict', byVerdict)}
+    ${section('By Confidence', byConf)}
+    ${section('By EV Bucket', byEV)}
+  `;
+}
+
 </script>
 
 <!-- PLUS PAGE -->
@@ -4201,6 +4426,44 @@ async function renderPlus(){
     <button class="btn" onclick="loadLiveScoreboard()">Refresh ↻</button>
   </div>
   <div id="live-scoreboard-container"><div class="empty-state"><div class="empty-title">Loading…</div></div></div>
+</div>
+</div>
+
+
+<!-- LLM PAGE -->
+<div class="page" id="page-llm">
+<div class="container">
+  <div class="topbar">
+    <div class="topbar-left"><h2><span class="pulse"></span>LLM Analysis</h2><p id="llm-subtitle">LLM-driven game cards</p></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" onclick="loadLlmPage()">↻ Reload</button>
+    </div>
+  </div>
+  <div class="date-nav" id="llm-date-nav"></div>
+  <div class="games-grid" id="llm-grid"><div class="empty-state"><div class="empty-title">Loading…</div></div></div>
+</div>
+</div>
+
+<!-- LLM TRACKER PAGE -->
+<div class="page" id="page-llmtracker">
+<div class="container">
+  <div class="topbar">
+    <div class="topbar-left"><h2>LLM Tracker</h2><p id="llmtracker-subtitle">Auto-logged LLM plays</p></div>
+    <button class="btn" onclick="exportLlmCSV()">Export CSV</button>
+  </div>
+  <div class="t-table-wrap" id="llmtracker-table">
+    <div class="empty-state"><div class="empty-title">Loading…</div></div>
+  </div>
+</div>
+</div>
+
+<!-- LLM STATS PAGE -->
+<div class="page" id="page-llmstats">
+<div class="container">
+  <div class="topbar">
+    <div class="topbar-left"><h2>LLM Stats</h2><p>LLM performance breakdown</p></div>
+  </div>
+  <div id="llmstats-content"><div class="empty-state"><div class="empty-title">Loading…</div></div></div>
 </div>
 </div>
 
