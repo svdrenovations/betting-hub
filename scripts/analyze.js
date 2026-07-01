@@ -1691,9 +1691,21 @@ async function main() {
       const detProj = { awayRuns: awayRunProj.runs, homeRuns: homeRunProj.runs, awayDebug: awayRunProj._debug || null, homeDebug: homeRunProj._debug || null };
       console.log(`  DET (background): ${game.away_team} ${detProj.awayRuns} - ${game.home_team} ${detProj.homeRuns} (tot ${+(parseFloat(detProj.awayRuns)+parseFloat(detProj.homeRuns)).toFixed(2)})`);
 
-      const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName);
+      // Skip LLM if already analyzed for this game
+      const llmCheck = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_id=eq.${encodeURIComponent(game.id)}&select=id&limit=1`, {
+        headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
+      }).then(r => r.json()).catch(() => []);
+      const llmAlreadyDone = llmCheck && llmCheck.length > 0;
 
-      if (!analysis) { console.error(`  ✗ ${game.away_team} @ ${game.home_team}: analysis parse failed — keeping previous row`); continue; }
+      const analysis = llmAlreadyDone
+        ? null
+        : await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName);
+
+      if (llmAlreadyDone) {
+        console.log(`  ⏭ ${game.away_team} @ ${game.home_team}: LLM already analyzed — skipping`);
+      } else if (!analysis) {
+        console.error(`  ✗ ${game.away_team} @ ${game.home_team}: analysis parse failed — keeping previous row`); continue;
+      }
 
       // ── DET+ (enhanced det with xERA + batter Statcast + temp adjustment) ─
       const awayBatStatcast = awayMatchups?.lineup?.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null) || [];
@@ -1826,16 +1838,24 @@ async function main() {
       const sgn = sg?.seriesGameNumber || 0;
       if (sgn >= 3 && awayTeamId && homeTeamId) { try { sweepSide = await fetchSeriesSweepSide(awayTeamId, homeTeamId, _gd, sgn, sg?.gamePk || null); } catch(e) { /* best-effort */ } if (sweepSide) console.log(`  ⚑ sweep spot: ${sweepSide} in position to sweep (series G${sgn}) — fading their +EV ML/RL`); }
 
-      deriveRunModel(analysis, lines);
-      deriveNumbers(analysis, lines, f5Lines, sweepSide, _gd);
+      // When LLM already done, use a minimal placeholder so det/upsert still runs
+      const effectiveAnalysis = analysis || {
+        situations: [], fadeReason: [], projAwayRuns: null, projHomeRuns: null,
+        projTotal: null, f5ProjTotal: null, ml: 'SKIP', rl: 'SKIP', total: 'SKIP',
+        f5: 'SKIP', best: null, bestPlay: null, confidence: 'LOW',
+        lineSharp: false, sharpSide: 'NONE', lineNote: '', weatherImpact: 'none',
+        pitcherEdge: 'EVEN', situation: '', factors: '', risks: '',
+      };
 
+      deriveRunModel(effectiveAnalysis, lines);
+      deriveNumbers(effectiveAnalysis, lines, f5Lines, sweepSide, _gd);
 
       // ── LLM BETS — auto-log qualifying plays into llm_bets table ─────────
       try {
         const llmMarkets = [
-          { market: 'ml', verdict: analysis.ml, ev: analysis.mlEV, odds: analysis.ml?.includes('AWAY') ? lines.awayML : lines.homeML },
-          { market: 'rl', verdict: analysis.rl, ev: analysis.rlEV, odds: analysis.rl?.includes('AWAY') ? lines.awayRLOdds : lines.homeRLOdds },
-          { market: 'total', verdict: analysis.total, ev: analysis.totalEV, odds: analysis.total?.includes('OVER') ? lines.overOdds : lines.underOdds },
+          { market: 'ml', verdict: effectiveAnalysis.ml, ev: effectiveAnalysis.mlEV, odds: (effectiveAnalysis.ml||'').includes('AWAY') ? lines.awayML : lines.homeML },
+          { market: 'rl', verdict: effectiveAnalysis.rl, ev: effectiveAnalysis.rlEV, odds: (effectiveAnalysis.rl||'').includes('AWAY') ? lines.awayRLOdds : lines.homeRLOdds },
+          { market: 'total', verdict: effectiveAnalysis.total, ev: effectiveAnalysis.totalEV, odds: (effectiveAnalysis.total||'').includes('OVER') ? lines.overOdds : lines.underOdds },
         ];
         for (const m of llmMarkets) {
           if (!m.verdict || m.verdict === 'SKIP') continue;
@@ -1851,11 +1871,11 @@ async function main() {
             verdict: m.verdict,
             ev: ev,
             odds: m.odds ? String(m.odds) : null,
-            proj_away_runs: analysis.projAwayRuns != null ? parseFloat(analysis.projAwayRuns) : null,
-            proj_home_runs: analysis.projHomeRuns != null ? parseFloat(analysis.projHomeRuns) : null,
-            proj_total: analysis.projTotal != null ? parseFloat(analysis.projTotal) : null,
-            situations: (analysis.situations || []).filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase())),
-            confidence: analysis.confidence || 'LOW',
+            proj_away_runs: effectiveAnalysis.projAwayRuns != null ? parseFloat(effectiveAnalysis.projAwayRuns) : null,
+            proj_home_runs: effectiveAnalysis.projHomeRuns != null ? parseFloat(effectiveAnalysis.projHomeRuns) : null,
+            proj_total: effectiveAnalysis.projTotal != null ? parseFloat(effectiveAnalysis.projTotal) : null,
+            situations: (effectiveAnalysis.situations || []).filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase())),
+            confidence: effectiveAnalysis.confidence || 'LOW',
             units: 1,
           };
           const existing = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_id=eq.${encodeURIComponent(game.id)}&market=eq.${m.market}&select=id`, {
@@ -1878,7 +1898,7 @@ async function main() {
         }
       } catch(e) { console.log(`  llm_bets insert error: ${e.message}`); }
 
-      await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, pitcherStatus, resolvedGamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts, detPlusInputs, awayBullpen, homeBullpen, awayStats, homeStats);
+      await upsertGame(game, lines, effectiveAnalysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, pitcherStatus, resolvedGamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts, detPlusInputs, awayBullpen, homeBullpen, awayStats, homeStats);
 
       const ap = awayPitcherInfo?.name || 'TBD', hp = homePitcherInfo?.name || 'TBD';
       console.log(`  ✓ ${game.away_team} @ ${game.home_team} | ${ap} vs ${hp} | ${lines.total} | ${weather?.summary||'dome/no weather'}`);
