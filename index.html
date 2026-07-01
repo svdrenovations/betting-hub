@@ -3052,6 +3052,11 @@ function deriveDetVerdict(mk,g){
   if(storedV&&storedV!=='SKIP'&&!isNaN(storedEV)){
     const side=storedV.includes('AWAY')?'AWAY':storedV.includes('HOME')?'HOME':storedV.includes('OVER')?'OVER':'UNDER';
     const strength=storedEV>=10?'BET':'LEAN';
+    // Apply sweep fade — suppress det ML/RL if the bet side matches the sweep team
+    if(mk!=='TOTAL'&&g.sweep_fade){
+      const sweepSide=g.sweep_fade.includes('AWAY')?'AWAY':g.sweep_fade.includes('HOME')?'HOME':null;
+      if(sweepSide&&side===sweepSide)return{verdict:'SKIP',ev:+storedEV.toFixed(1),sweepFaded:true};
+    }
     return{verdict:`${strength} ${side}`,ev:+storedEV.toFixed(1)};
   }
   if(storedV==='SKIP')return{verdict:'SKIP',ev:!isNaN(storedEV)?storedEV:null};
