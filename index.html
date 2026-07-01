@@ -2348,14 +2348,32 @@ function testGetPark(team){
   return f||{runFactor:1.0,windFactor:1.0,retractable:false};
 }
 
-function testWeatherFactor(g){
-  if(g.weather_dome)return 1.0;
-  const park=testGetPark(g.home_team);
+function testNcdf(x){const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;}
+
+// ── EXACT PORT OF projectRuns FROM analyze.js ────────────────────────────────
+function testComputeOffenseFactor(teamStats, lineupMatchups, isHome){
+  if(!teamStats)return 1.0;
+  let teamOPS;
+  if(isHome&&teamStats.homeOPS)teamOPS=parseFloat(teamStats.homeOPS);
+  else if(!isHome&&teamStats.awayOPS)teamOPS=parseFloat(teamStats.awayOPS);
+  else teamOPS=parseFloat(teamStats.ops||TEST_LEAGUE_AVG_OPS);
+  let opsFactor=teamOPS/TEST_LEAGUE_AVG_OPS;
+  if(lineupMatchups?.avgOPS){
+    const mOPS=parseFloat(lineupMatchups.avgOPS);
+    opsFactor=((mOPS*0.50)+(teamOPS*0.50))/TEST_LEAGUE_AVG_OPS;
+  } else if(teamStats.last30OPS){
+    const r=parseFloat(teamStats.last30OPS),s=parseFloat(teamStats.ops||TEST_LEAGUE_AVG_OPS);
+    opsFactor=((r*0.60)+(s*0.40))/TEST_LEAGUE_AVG_OPS;
+  }
+  if(lineupMatchups?.kRate){const kAdj=1-((parseFloat(lineupMatchups.kRate)-22.0)*0.004);opsFactor*=Math.min(Math.max(kAdj,0.90),1.10);}
+  return Math.min(Math.max(opsFactor,0.55),1.55);
+}
+
+function testComputeWeatherFactor(weather,parkFactors){
+  if(!weather||weather.dome||parkFactors?.dome)return 1.0;
   let mult=1.0;
-  const temp=parseFloat(g.weather_temp)||72;
-  const effWind=parseFloat(g.weather_eff_wind)||0;
-  const flags=g.weather_flags||[];
-  const wf=park.windFactor||1.0;
+  const temp=weather.temp||72,effWind=weather.effWind||0,flags=weather.flags||[];
+  const wf=parkFactors?.windFactor||1.0;
   if(temp>=90)mult*=1.05;else if(temp>=80)mult*=1.02;else if(temp<=50)mult*=0.95;else if(temp<=40)mult*=0.90;
   if(flags.some(f=>(f||'').includes('OUT')))mult*=1+Math.min(effWind*0.006,0.12);
   else if(flags.some(f=>(f||'').includes('IN')))mult*=1-Math.min(effWind*0.005,0.10);
@@ -2363,36 +2381,45 @@ function testWeatherFactor(g){
   return Math.min(Math.max(mult,0.88),1.18);
 }
 
-function testNcdf(x){const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return x>0?1-p:p;}
+function testComputePlatoon(pitcherHand,handedness){
+  if(!pitcherHand||!handedness)return 1.0;
+  const{L=0,R=0}=handedness,total=L+R+(handedness.S||0);
+  if(!total)return 1.0;
+  const samePct=pitcherHand==='R'?R/total:L/total;
+  const oppPct=pitcherHand==='R'?L/total:R/total;
+  return Math.min(Math.max(1.0-(samePct*0.03)+(oppPct*0.03),0.94),1.06);
+}
 
-function testProjectRuns(era, bullpenERA, offenseOPS, lineup_ops, lineup_k_rate, last30OPS, seasonOPS, isHome, homeOPS, awayOPS, parkFactor, wxFactor){
-  const avgIP=6.0;
-  const starterERA=parseFloat(era)||TEST_LEAGUE_AVG_ERA;
-  const starterAdj=starterERA/TEST_LEAGUE_AVG_ERA;
-  const bulERA=parseFloat(bullpenERA)||TEST_LEAGUE_AVG_ERA;
-  const bulAdj=Math.min(Math.max(bulERA/TEST_LEAGUE_AVG_ERA,0.85),1.25);
-  const bullpenGameAdj=Math.min(Math.sqrt(bulAdj*1.0),1.20);
-  const blendERA=(starterERA*(avgIP/9)+bulERA*((9-avgIP)/9));
-  const baselineRuns=(blendERA/9)*9;
-  let teamOPS;
-  if(isHome&&homeOPS)teamOPS=parseFloat(homeOPS);
-  else if(!isHome&&awayOPS)teamOPS=parseFloat(awayOPS);
-  else teamOPS=parseFloat(seasonOPS||TEST_LEAGUE_AVG_OPS);
-  let opsFactor;
-  if(lineup_ops){
-    const mOPS=parseFloat(lineup_ops);
-    opsFactor=((mOPS*0.50)+(teamOPS*0.50))/TEST_LEAGUE_AVG_OPS;
-  } else if(last30OPS){
-    const r=parseFloat(last30OPS),s=parseFloat(seasonOPS||TEST_LEAGUE_AVG_OPS);
-    opsFactor=((r*0.60)+(s*0.40))/TEST_LEAGUE_AVG_OPS;
-  } else {
-    opsFactor=teamOPS/TEST_LEAGUE_AVG_OPS;
+function testProjectRunsExact({offenseStats,offenseMatchups,isOffenseHome,defPitcher,defStatcast,defPitcherHand,isPitcherHome,defBullpen,parkFactors,weather}){
+  const avgIP=parseFloat(defPitcher?.avgIP||6.0);
+  const starterERA=(()=>{
+    if(!defPitcher)return TEST_LEAGUE_AVG_ERA;
+    const seasonERA=parseFloat(defPitcher.era||TEST_LEAGUE_AVG_ERA);
+    const rawRecent=parseFloat(defPitcher.recentERA||seasonERA);
+    const recentERA=Math.min(rawRecent,Math.max(seasonERA*3.0,9.0));
+    const splitERA=isPitcherHome&&defPitcher.homeERA?parseFloat(defPitcher.homeERA):!isPitcherHome&&defPitcher.awayERA?parseFloat(defPitcher.awayERA):seasonERA;
+    return(seasonERA*0.60)+(splitERA*0.20)+(recentERA*0.20);
+  })();
+  const starterRuns=(starterERA/9)*avgIP;
+  const bullpenIP=Math.max(0,9-avgIP);
+  const bullpenERA=parseFloat(defBullpen?.weightedERA||TEST_LEAGUE_AVG_ERA);
+  const bullpenRuns=(bullpenERA/9)*bullpenIP;
+  const baselineRuns=starterRuns+bullpenRuns;
+  const of_=testComputeOffenseFactor(offenseStats,offenseMatchups,isOffenseHome);
+  const park=parseFloat(parkFactors?.runFactor||1.0);
+  const wx=testComputeWeatherFactor(weather,parkFactors);
+  const plat=testComputePlatoon(defPitcherHand,offenseMatchups?.handedness||null);
+  let statcastAdj=1.0;
+  if(defStatcast){
+    if(defStatcast.whiffRate!=null){const w=parseFloat(defStatcast.whiffRate);if(!isNaN(w))statcastAdj*=Math.min(Math.max(1-((w-25)*0.010),0.85),1.15);}
+    if(defStatcast.hardHitRate!=null){const hh=parseFloat(defStatcast.hardHitRate);if(!isNaN(hh))statcastAdj*=Math.min(Math.max(1+((hh-38)*0.008),0.88),1.12);}
+    if(defStatcast.veloTrend==='DOWN')statcastAdj*=1.06;
+    else if(defStatcast.veloTrend==='UP')statcastAdj*=0.96;
   }
-  if(lineup_k_rate){const kAdj=1-((parseFloat(lineup_k_rate)-22.0)*0.004);opsFactor*=Math.min(Math.max(kAdj,0.90),1.10);}
-  opsFactor=Math.min(Math.max(opsFactor,0.55),1.55);
-  const raw=baselineRuns*opsFactor*(parkFactor||1.0)*(wxFactor||1.0);
+  const raw=baselineRuns*of_*park*wx*plat*statcastAdj;
   return +Math.max(3.0,Math.min(raw,9.5)).toFixed(2);
 }
+// ── END EXACT PORT ────────────────────────────────────────────────────────────
 
 function testEV(p, odds){
   const o=parseFloat(odds);
@@ -2470,11 +2497,30 @@ async function fetchPitcherERA(name){
     const person=d.people?.[0];
     if(!person)return null;
     const pid=person.id;
-    const r2=await fetch(`https://statsapi.mlb.com/api/v1/people/${pid}/stats?stats=season&group=pitching&season=2026`);
-    if(!r2.ok)return null;
-    const d2=await r2.json();
-    const stat=d2.stats?.[0]?.splits?.[0]?.stat;
-    const result={era:parseFloat(stat?.era||TEST_LEAGUE_AVG_ERA),whip:parseFloat(stat?.whip||1.3),id:pid};
+    const [statsRes,splitRes,dnRes]=await Promise.all([
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pid}/stats?stats=season,gameLog&group=pitching&season=2026`),
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pid}/stats?stats=statSplits&group=pitching&season=2026&sitCodes=h,a`),
+      fetch(`https://statsapi.mlb.com/api/v1/people/${pid}/stats?stats=statSplits&group=pitching&season=2026&sitCodes=d,n`)
+    ]);
+    if(!statsRes.ok)return null;
+    const sd=await statsRes.json();
+    const season=sd.stats?.find(s=>s.type?.displayName==='season')?.splits?.[0]?.stat;
+    const gameLog=sd.stats?.find(s=>s.type?.displayName==='gameLog')?.splits||[];
+    const starts=gameLog.filter(g=>parseInt(g.stat?.gamesStarted||0)>0||parseFloat(g.stat?.inningsPitched||0)>=3).slice(-5);
+    const avgIP=starts.length?(starts.reduce((s,g)=>s+parseFloat(g.stat?.inningsPitched||0),0)/starts.length).toFixed(1):null;
+    const last3=gameLog.slice(-3);
+    const recentERA=last3.length?(last3.reduce((s,g)=>s+parseFloat(g.stat?.earnedRuns||0),0)/Math.max(0.1,last3.reduce((s,g)=>s+parseFloat(g.stat?.inningsPitched||0),0))*9).toFixed(2):null;
+    let homeERA=null,awayERA=null;
+    if(splitRes.ok){const sp=await splitRes.json();const splits=sp.stats?.[0]?.splits||[];homeERA=splits.find(s=>s.split?.code==='h')?.stat?.era||null;awayERA=splits.find(s=>s.split?.code==='a')?.stat?.era||null;}
+    const result={
+      era:parseFloat(season?.era||TEST_LEAGUE_AVG_ERA),
+      whip:parseFloat(season?.whip||1.3),
+      recentERA:recentERA?parseFloat(recentERA):null,
+      homeERA:homeERA?parseFloat(homeERA):null,
+      awayERA:awayERA?parseFloat(awayERA):null,
+      avgIP:avgIP?parseFloat(avgIP):6.0,
+      id:pid
+    };
     _pitcherCache[name]=result;
     return result;
   }catch(e){return null;}
@@ -2490,7 +2536,7 @@ async function runTest(){
   summary.innerHTML='';
   container.innerHTML='<div class="empty-state"><div class="empty-title">Loading…</div></div>';
   try{
-    const cols='id,game_date,away_team,home_team,away_pitcher,home_pitcher,away_final,home_final,actual_total,away_ml,home_ml,away_rl,home_rl,away_rl_odds,home_rl_odds,total_line,over_odds,under_odds,away_pitcher_era,away_pitcher_recent_era,home_pitcher_era,home_pitcher_recent_era,away_velo,away_whiff_rate,home_velo,home_whiff_rate,away_lineup_ops,away_lineup_k_rate,home_lineup_ops,home_lineup_k_rate,away_team_ops,away_team_home_ops,away_team_away_ops,home_team_ops,home_team_home_ops,home_team_away_ops,weather_temp,weather_eff_wind,weather_flags,weather_dome,weather_field_wind_dir,bullpen_data,det_proj_away,det_proj_home,det_ml_verdict,det_rl_verdict,det_total_verdict';
+    const cols='id,game_date,away_team,home_team,away_pitcher,home_pitcher,away_final,home_final,actual_total,away_ml,home_ml,away_rl,home_rl,away_rl_odds,home_rl_odds,total_line,over_odds,under_odds,away_pitcher_era,away_pitcher_recent_era,away_pitcher_home_era,away_pitcher_away_era,away_pitcher_avg_ip,home_pitcher_era,home_pitcher_recent_era,home_pitcher_home_era,home_pitcher_away_era,home_pitcher_avg_ip,away_pitcher_hand,home_pitcher_hand,away_velo,away_velo_trend,away_whiff_rate,away_hard_hit,home_velo,home_velo_trend,home_whiff_rate,home_hard_hit,away_lineup_ops,away_lineup_k_rate,home_lineup_ops,home_lineup_k_rate,away_team_ops,away_team_home_ops,away_team_away_ops,home_team_ops,home_team_home_ops,home_team_away_ops,weather_temp,weather_eff_wind,weather_flags,weather_dome,weather_field_wind_dir,bullpen_data,det_proj_away,det_proj_home,det_ml_verdict,det_rl_verdict,det_total_verdict';
     const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${dateInput}&analyzed=eq.true&select=${cols}&order=away_team`,{headers:{apikey:SUPABASE_KEY,Authorization:`Bearer ${SUPABASE_KEY}`}});
     if(!res.ok)throw new Error('Supabase '+res.status);
     const games=await res.json();
@@ -2517,35 +2563,53 @@ async function runTest(){
         status.textContent=`Fetched last30OPS for ${name}...`;
       }
     }
-    status.textContent='Running det projections with new formula...';
-    // Run det for each game
+    status.textContent='Running det projections with exact formula...';
     const results=[];
     for(const g of games){
       const park=testGetPark(g.home_team);
-      const wxF=testWeatherFactor(g);
-      const pf=park.runFactor||1.0;
-      const bd=typeof g.bullpen_data==='string'?JSON.parse(g.bullpen_data):g.bullpen_data;
-      const awayBulERA=bd?.away?.weightedERA||TEST_LEAGUE_AVG_ERA;
-      const homeBulERA=bd?.home?.weightedERA||TEST_LEAGUE_AVG_ERA;
-      // Use stored pitcher ERA if available, else use live-fetched ERA
-      const homePitcherERA=parseFloat(g.home_pitcher_era)||pitcherERA[g.home_pitcher]||TEST_LEAGUE_AVG_ERA;
-      const awayPitcherERA=parseFloat(g.away_pitcher_era)||pitcherERA[g.away_pitcher]||TEST_LEAGUE_AVG_ERA;
-      // Away runs: away offense vs home pitcher
-      const awayRuns=testProjectRuns(
-        homePitcherERA, awayBulERA,
-        null, g.away_lineup_ops, g.away_lineup_k_rate,
-        last30[g.away_team], g.away_team_ops,
-        false, g.away_team_home_ops, g.away_team_away_ops,
-        pf, wxF
-      );
-      // Home runs: home offense vs away pitcher
-      const homeRuns=testProjectRuns(
-        awayPitcherERA, homeBulERA,
-        null, g.home_lineup_ops, g.home_lineup_k_rate,
-        last30[g.home_team], g.home_team_ops,
-        true, g.home_team_home_ops, g.home_team_away_ops,
-        pf, wxF
-      );
+      const pf=park;
+      const weather={temp:parseFloat(g.weather_temp)||72,effWind:parseFloat(g.weather_eff_wind)||0,flags:g.weather_flags||[],dome:g.weather_dome||false,fieldWindDir:g.weather_field_wind_dir||''};
+      const bd=typeof g.bullpen_data==='string'?JSON.parse(g.bullpen_data||'{}'):g.bullpen_data||{};
+      const awayBullpen={weightedERA:bd?.away?.weightedERA||TEST_LEAGUE_AVG_ERA};
+      const homeBullpen={weightedERA:bd?.home?.weightedERA||TEST_LEAGUE_AVG_ERA};
+      // Build pitcher objects — use stored columns first, fall back to live-fetched
+      const liveHome=pitcherERA[g.home_pitcher]||{};
+      const liveAway=pitcherERA[g.away_pitcher]||{};
+      const homePitcher={
+        era:parseFloat(g.home_pitcher_era)||liveHome.era||TEST_LEAGUE_AVG_ERA,
+        recentERA:parseFloat(g.home_pitcher_recent_era)||liveHome.recentERA||null,
+        homeERA:parseFloat(g.home_pitcher_home_era)||liveHome.homeERA||null,
+        awayERA:parseFloat(g.home_pitcher_away_era)||liveHome.awayERA||null,
+        avgIP:parseFloat(g.home_pitcher_avg_ip)||liveHome.avgIP||6.0
+      };
+      const awayPitcher={
+        era:parseFloat(g.away_pitcher_era)||liveAway.era||TEST_LEAGUE_AVG_ERA,
+        recentERA:parseFloat(g.away_pitcher_recent_era)||liveAway.recentERA||null,
+        homeERA:parseFloat(g.away_pitcher_home_era)||liveAway.homeERA||null,
+        awayERA:parseFloat(g.away_pitcher_away_era)||liveAway.awayERA||null,
+        avgIP:parseFloat(g.away_pitcher_avg_ip)||liveAway.avgIP||6.0
+      };
+      // Statcast objects — from stored columns
+      const homeStatcast={whiffRate:parseFloat(g.home_whiff_rate)||null,hardHitRate:parseFloat(g.home_hard_hit)||null,veloTrend:g.home_velo_trend||'STABLE'};
+      const awayStatcast={whiffRate:parseFloat(g.away_whiff_rate)||null,hardHitRate:parseFloat(g.away_hard_hit)||null,veloTrend:g.away_velo_trend||'STABLE'};
+      // Team stats objects
+      const awayStats={ops:g.away_team_ops,homeOPS:g.away_team_home_ops,awayOPS:g.away_team_away_ops,last30OPS:last30[g.away_team]};
+      const homeStats={ops:g.home_team_ops,homeOPS:g.home_team_home_ops,awayOPS:g.home_team_away_ops,last30OPS:last30[g.home_team]};
+      // Lineup matchup objects
+      const awayMatchups=g.away_lineup_ops?{avgOPS:g.away_lineup_ops,kRate:g.away_lineup_k_rate}:null;
+      const homeMatchups=g.home_lineup_ops?{avgOPS:g.home_lineup_ops,kRate:g.home_lineup_k_rate}:null;
+      // Away runs: away offense vs home pitcher (home pitcher is defending at home)
+      const awayRuns=testProjectRunsExact({
+        offenseStats:awayStats,offenseMatchups:awayMatchups,isOffenseHome:false,
+        defPitcher:homePitcher,defStatcast:homeStatcast,defPitcherHand:g.home_pitcher_hand||null,isPitcherHome:true,
+        defBullpen:homeBullpen,parkFactors:pf,weather
+      });
+      // Home runs: home offense vs away pitcher (away pitcher is defending away)
+      const homeRuns=testProjectRunsExact({
+        offenseStats:homeStats,offenseMatchups:homeMatchups,isOffenseHome:true,
+        defPitcher:awayPitcher,defStatcast:awayStatcast,defPitcherHand:g.away_pitcher_hand||null,isPitcherHome:false,
+        defBullpen:awayBullpen,parkFactors:pf,weather
+      });
       const mu=awayRuns-homeRuns;
       // ML
       const pA_raw=1-testNcdf((0.5-mu)/TEST_MSD),pH_raw=testNcdf((-0.5-mu)/TEST_MSD),den=pA_raw+pH_raw;
@@ -2580,7 +2644,7 @@ async function runTest(){
         if(mkt==='total'){const tot=fa+fh;return (s==='OVER'?tot>totLine:tot<totLine)?'win':'loss';}
         return 'pending';
       }
-      results.push({g,awayRuns,homeRuns,proj,mlV,mlEV,rlV,rlEV,totV,totEV,gradeML:grade(mlV,'ml'),gradeRL:grade(rlV,'rl'),gradeTot:grade(totV,'total'),mlOdds,rlOdds,totOdds,last30Away:last30[g.away_team],last30Home:last30[g.home_team],homePitcherERA,awayPitcherERA});
+      results.push({g,awayRuns,homeRuns,proj,mlV,mlEV,rlV,rlEV,totV,totEV,gradeML:grade(mlV,'ml'),gradeRL:grade(rlV,'rl'),gradeTot:grade(totV,'total'),mlOdds,rlOdds,totOdds,last30Away:last30[g.away_team],last30Home:last30[g.home_team],homePitcherERA:homePitcher.era,awayPitcherERA:awayPitcher.era});
     }
     // Summary stats
     const plays=[];
