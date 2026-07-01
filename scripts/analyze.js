@@ -227,7 +227,16 @@ function computeOffenseFactor(teamStats, lineupMatchups, isHome) {
   else if (!isHome && teamStats.awayOPS) teamOPS = parseFloat(teamStats.awayOPS);
   else teamOPS = parseFloat(teamStats.ops || LEAGUE_AVG_OPS);
   let opsFactor = teamOPS / LEAGUE_AVG_OPS;
-  if (lineupMatchups?.avgOPS) { const matchupOPS = parseFloat(lineupMatchups.avgOPS); opsFactor = ((matchupOPS * 0.50) + (teamOPS * 0.50)) / LEAGUE_AVG_OPS; }
+  if (lineupMatchups?.avgOPS) {
+    const matchupOPS = parseFloat(lineupMatchups.avgOPS);
+    opsFactor = ((matchupOPS * 0.50) + (teamOPS * 0.50)) / LEAGUE_AVG_OPS;
+  } else if (teamStats.last30OPS) {
+    // No lineup matchup data — blend last30 OPS (60%) with season OPS (40%)
+    // Last 30 days is a better proxy for current offense than full season
+    const recent = parseFloat(teamStats.last30OPS);
+    const season = parseFloat(teamStats.ops || LEAGUE_AVG_OPS);
+    opsFactor = ((recent * 0.60) + (season * 0.40)) / LEAGUE_AVG_OPS;
+  }
   if (lineupMatchups?.kRate) { const kAdj = 1 - ((parseFloat(lineupMatchups.kRate) - 22.0) * 0.004); opsFactor *= Math.min(Math.max(kAdj, 0.90), 1.10); }
   return Math.min(Math.max(opsFactor, 0.55), 1.55);
 }
@@ -237,9 +246,17 @@ function computeWeatherRunFactor(weather, parkFactors) {
   if (!weather || weather.dome || parkFactors?.dome) return 1.0;
   let mult = 1.0;
   const temp = weather.temp || 72, effWind = weather.effWind || 0, flags = weather.flags || [];
+  const windFactor = parkFactors?.windFactor || 1.0;
   if (temp >= 90) mult *= 1.05; else if (temp >= 80) mult *= 1.02; else if (temp <= 50) mult *= 0.95; else if (temp <= 40) mult *= 0.90;
-  if (flags.some(f => (f||''). includes('OUT'))) mult *= 1 + Math.min(effWind * 0.006, 0.12);
+  if (flags.some(f => (f||'').includes('OUT'))) mult *= 1 + Math.min(effWind * 0.006, 0.12);
   else if (flags.some(f => (f||'').includes('IN'))) mult *= 1 - Math.min(effWind * 0.005, 0.10);
+  else if (effWind >= 10 && windFactor >= 1.3) {
+    // Crosswind (R-to-L or L-to-R) at a high-windFactor park (e.g. Wrigley).
+    // Even crosswind creates turbulence that elevates run scoring at wind-sensitive parks.
+    // Scale: windFactor 1.3 at 10mph → ~2% boost; 1.5 at 15mph → ~4% boost.
+    const crossBoost = Math.min(((windFactor - 1.0) * effWind * 0.003), 0.05);
+    mult *= 1 + crossBoost;
+  }
   return Math.min(Math.max(mult, 0.88), 1.18);
 }
 
@@ -543,21 +560,25 @@ async function fetchTeamStats(teamName) {
     const teamsData = await teamsRes.json();
     const team = teamsData.teams?.find(t => t.name.toLowerCase().includes(teamName.toLowerCase().split(' ').pop().toLowerCase()) || teamName.toLowerCase().includes(t.name.toLowerCase().split(' ').pop().toLowerCase()));
     if (!team) return null;
-    const [statsRes, splitRes, schedRes] = await Promise.all([
+    const today = new Date().toISOString().split('T')[0];
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+    const [statsRes, splitRes, schedRes, last30Res] = await Promise.all([
       fetch(`https://statsapi.mlb.com/api/v1/teams/${team.id}/stats?stats=season&group=hitting&season=2026`),
       fetch(`https://statsapi.mlb.com/api/v1/teams/${team.id}/stats?stats=statSplits&group=hitting&season=2026&sitCodes=h,a`),
-      fetch(`https://statsapi.mlb.com/api/v1/schedule?teamId=${team.id}&sportId=1&season=2026&gameType=R&startDate=2026-01-01&endDate=${new Date().toISOString().split('T')[0]}`)
+      fetch(`https://statsapi.mlb.com/api/v1/schedule?teamId=${team.id}&sportId=1&season=2026&gameType=R&startDate=2026-01-01&endDate=${today}`),
+      fetch(`https://statsapi.mlb.com/api/v1/teams/${team.id}/stats?stats=byDateRange&group=hitting&season=2026&startDate=${thirtyDaysAgo}&endDate=${today}`)
     ]);
     if (!statsRes.ok) return null;
     const statsData = await statsRes.json();
     const stats = statsData.stats?.[0]?.splits?.[0]?.stat;
     if (!stats) return null;
-    // homeOPS/awayOPS fetched for deterministic engine only — NOT shown to LLM
     let homeOPS = null, awayOPS = null;
     if (splitRes.ok) { const sd = await splitRes.json(); const splits = sd.stats?.[0]?.splits || []; homeOPS = splits.find(s => s.split?.code === 'h')?.stat?.ops || null; awayOPS = splits.find(s => s.split?.code === 'a')?.stat?.ops || null; }
     let last10 = null;
     if (schedRes.ok) { const schedData = await schedRes.json(); const games = schedData.dates?.flatMap(d => d.games) || []; const completed = games.filter(g => g.status?.abstractGameState === 'Final').slice(-10); const wins = completed.filter(g => { const isHome = g.teams?.home?.team?.id === team.id; return isHome ? g.teams?.home?.isWinner : g.teams?.away?.isWinner; }).length; last10 = `${wins}-${completed.length - wins}`; }
-    return { teamId: team.id, teamName: team.name, avg: stats.avg, ops: stats.ops, runs: stats.runs, hr: stats.homeRuns, obp: stats.obp, slg: stats.slg, homeOPS, awayOPS, last10 };
+    let last30OPS = null;
+    if (last30Res.ok) { const ld = await last30Res.json(); last30OPS = ld.stats?.[0]?.splits?.[0]?.stat?.ops || null; }
+    return { teamId: team.id, teamName: team.name, avg: stats.avg, ops: stats.ops, runs: stats.runs, hr: stats.homeRuns, obp: stats.obp, slg: stats.slg, homeOPS, awayOPS, last10, last30OPS };
   } catch(e) { return null; }
 }
 
@@ -704,7 +725,9 @@ async function fetchMatchupStats(batterId, pitcherId) {
     const allSplits = (data.stats || []).flatMap(s => s.splits || []);
     const stat = allSplits.find(s => (s.stat?.atBats || 0) > 0)?.stat;
     if (!stat || !stat.atBats) return null;
-    return { ab: stat.atBats || 0, avg: stat.avg || '.000', ops: stat.ops || '.000', hr: stat.homeRuns || 0, so: stat.strikeOuts || 0, bb: stat.baseOnBalls || 0, obp: stat.obp || '.000', slg: stat.slg || '.000' };
+    // PA = AB + BB + HBP + SF + SH (use plateAppearances if available, otherwise estimate)
+    const pa = stat.plateAppearances || (parseInt(stat.atBats||0) + parseInt(stat.baseOnBalls||0) + parseInt(stat.hitByPitch||0) + parseInt(stat.sacFlies||0) + parseInt(stat.sacBunts||0));
+    return { ab: stat.atBats || 0, pa, avg: stat.avg || '.000', ops: stat.ops || '.000', hr: stat.homeRuns || 0, so: stat.strikeOuts || 0, bb: stat.baseOnBalls || 0, obp: stat.obp || '.000', slg: stat.slg || '.000' };
   } catch(e) { return null; }
 }
 
@@ -727,16 +750,31 @@ async function fetchLineupMatchups(teamId, pitcherId, gameDate) {
     if (!lineup || !lineup.length) return null;
     const handedness = await lineupHandedness(lineup.slice(0, 9));
     const matchups = await Promise.all(lineup.slice(0, 9).map(batter => fetchMatchupStats(batter.id, pitcherId)));
-    const meaningful = matchups.filter(m => m && m.ab >= 10);
-    if (!meaningful.length) return { lineup: lineup.slice(0,9), matchups, meaningful: 0, handedness, note: 'Insufficient sample vs this pitcher' };
-    const avgOPS = meaningful.reduce((sum, m) => sum + parseFloat(m.ops || 0), 0) / meaningful.length;
-    const avgAVG = meaningful.reduce((sum, m) => sum + parseFloat(m.avg || 0), 0) / meaningful.length;
-    const totalK = meaningful.reduce((sum, m) => sum + m.so, 0);
-    const totalAB = meaningful.reduce((sum, m) => sum + m.ab, 0);
+
+    // PA-weighted OPS tiers: 1-3PA=10%, 4-6PA=25%, 7-10PA=50%, 11+PA=100%
+    function paWeight(pa) {
+      if (pa >= 11) return 1.00;
+      if (pa >= 7)  return 0.50;
+      if (pa >= 4)  return 0.25;
+      if (pa >= 1)  return 0.10;
+      return 0;
+    }
+
+    const withData = matchups.filter(m => m && m.pa >= 1);
+    if (!withData.length) return { lineup: lineup.slice(0,9), matchups, meaningful: 0, handedness, note: 'No batter-vs-pitcher history' };
+
+    const totalWeight = withData.reduce((s, m) => s + paWeight(m.pa), 0);
+    const weightedOPS = withData.reduce((s, m) => s + parseFloat(m.ops || 0) * paWeight(m.pa), 0) / totalWeight;
+    const weightedAVG = withData.reduce((s, m) => s + parseFloat(m.avg || 0) * paWeight(m.pa), 0) / totalWeight;
+    const totalK = withData.reduce((sum, m) => sum + m.so, 0);
+    const totalAB = withData.reduce((sum, m) => sum + m.ab, 0);
     const kRate = totalAB > 0 ? ((totalK / totalAB) * 100).toFixed(1) : null;
-    const hotBatters = meaningful.filter(m => parseFloat(m.ops) > .900).length;
-    const coldBatters = meaningful.filter(m => parseFloat(m.ops) < .550).length;
-    return { lineup: lineup.slice(0, 9), meaningful: meaningful.length, avgOPS: avgOPS.toFixed(3), avgAVG: avgAVG.toFixed(3), kRate, hotBatters, coldBatters, handedness, sample: `${meaningful.length} of 9 batters with 10+ AB vs this pitcher` };
+    const hotBatters = withData.filter(m => parseFloat(m.ops) > .900).length;
+    const coldBatters = withData.filter(m => parseFloat(m.ops) < .550).length;
+    const meaningful = withData.filter(m => m.pa >= 11).length;
+    const sampleNote = `${withData.length} of 9 batters with history vs this pitcher (PA-weighted: ${totalWeight.toFixed(1)} effective weight)`;
+
+    return { lineup: lineup.slice(0, 9), meaningful, avgOPS: weightedOPS.toFixed(3), avgAVG: weightedAVG.toFixed(3), kRate, hotBatters, coldBatters, handedness, sample: sampleNote };
   } catch(e) { console.log('  Lineup matchup error:', e.message); return null; }
 }
 
@@ -1061,7 +1099,7 @@ function computeConfidence(analysis, lines) {
   return 'LOW';
 }
 
-async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData, pitcherStatus, gamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts, detPlusInputs) {
+async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherData, homePitcherData, awayStatcastData, homeStatcastData, awayMatchupData, homeMatchupData, pitcherStatus, gamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts, detPlusInputs, awayBullpenData, homeBullpenData, awayTeamStats, homeTeamStats) {
   const row = {
     id: game.id, game_pk: gamePk || null,
     game_date: new Date(game.commence_time).toLocaleDateString('en-CA', {timeZone: 'America/New_York'}),
@@ -1079,7 +1117,38 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
     away_velo: awayStatcastData?.avgVelo || null, away_velo_trend: awayStatcastData?.veloTrend || null, away_whiff_rate: awayStatcastData?.whiffRate || null, away_barrel_rate: awayStatcastData?.barrelRate || null, away_hard_hit: awayStatcastData?.hardHitRate || null,
     home_velo: homeStatcastData?.avgVelo || null, home_velo_trend: homeStatcastData?.veloTrend || null, home_whiff_rate: homeStatcastData?.whiffRate || null, home_barrel_rate: homeStatcastData?.barrelRate || null, home_hard_hit: homeStatcastData?.hardHitRate || null,
     away_lineup_ops: awayMatchupData?.avgOPS || null, away_lineup_k_rate: awayMatchupData?.kRate || null, home_lineup_ops: homeMatchupData?.avgOPS || null, home_lineup_k_rate: homeMatchupData?.kRate || null,
-    lineup_status: (awayMatchupData && homeMatchupData) ? 'confirmed' : (awayMatchupData || homeMatchupData) ? 'partial' : 'projected'
+    lineup_matchup_data: JSON.stringify({ away: awayMatchupData || null, home: homeMatchupData || null }),
+    lineup_status: (awayMatchupData && homeMatchupData) ? 'confirmed' : (awayMatchupData || homeMatchupData) ? 'partial' : 'projected',
+    // ── Full pitcher inputs for backtesting ──
+    away_pitcher_era: awayPitcherData?.era || null, away_pitcher_whip: awayPitcherData?.whip || null,
+    away_pitcher_recent_era: awayPitcherData?.recentERA || null, away_pitcher_trending: awayPitcherData?.trending || null,
+    away_pitcher_avg_ip: awayPitcherData?.avgIP || null, away_pitcher_last_pitches: awayPitcherData?.lastStartPitches || null,
+    away_pitcher_home_era: awayPitcherData?.homeERA || null, away_pitcher_away_era: awayPitcherData?.awayERA || null,
+    away_pitcher_day_era: awayPitcherData?.dayERA || null, away_pitcher_night_era: awayPitcherData?.nightERA || null,
+    away_pitcher_last3: awayPitcherData?.last3 ? JSON.stringify(awayPitcherData.last3) : null,
+    away_pitcher_revenge: awayPitcherData?.revenge || false,
+    home_pitcher_era: homePitcherData?.era || null, home_pitcher_whip: homePitcherData?.whip || null,
+    home_pitcher_recent_era: homePitcherData?.recentERA || null, home_pitcher_trending: homePitcherData?.trending || null,
+    home_pitcher_avg_ip: homePitcherData?.avgIP || null, home_pitcher_last_pitches: homePitcherData?.lastStartPitches || null,
+    home_pitcher_home_era: homePitcherData?.homeERA || null, home_pitcher_away_era: homePitcherData?.awayERA || null,
+    home_pitcher_day_era: homePitcherData?.dayERA || null, home_pitcher_night_era: homePitcherData?.nightERA || null,
+    home_pitcher_last3: homePitcherData?.last3 ? JSON.stringify(homePitcherData.last3) : null,
+    home_pitcher_revenge: homePitcherData?.revenge || false,
+    // ── Full bullpen inputs ──
+    bullpen_data: JSON.stringify({
+      away: { weightedERA: awayBullpenData?.weightedERA || null, kbbPct: awayBullpenData?.kbbPct || null, fatigueNote: awayBullpenData?.fatigueNote || null, closerInfo: awayBullpenData?.closerInfo || null, count: awayBullpenData?.count || null },
+      home: { weightedERA: homeBullpenData?.weightedERA || null, kbbPct: homeBullpenData?.kbbPct || null, fatigueNote: homeBullpenData?.fatigueNote || null, closerInfo: homeBullpenData?.closerInfo || null, count: homeBullpenData?.count || null }
+    }),
+    // ── Team stats inputs ──
+    away_team_ops: awayTeamStats?.ops || null, away_team_last30_ops: awayTeamStats?.last30OPS || null,
+    away_team_home_ops: awayTeamStats?.homeOPS || null, away_team_away_ops: awayTeamStats?.awayOPS || null,
+    away_team_last10: awayTeamStats?.last10 || null,
+    home_team_ops: homeTeamStats?.ops || null, home_team_last30_ops: homeTeamStats?.last30OPS || null,
+    home_team_home_ops: homeTeamStats?.homeOPS || null, home_team_away_ops: homeTeamStats?.awayOPS || null,
+    home_team_last10: homeTeamStats?.last10 || null,
+    // ── Full weather inputs ──
+    weather_eff_wind: weather?.effWind || null, weather_wind_impact: weather?.windImpact || null,
+    weather_roof_open_prob: weather?.roofOpenProb || null
   };
 
   if (analysis) {
@@ -1563,7 +1632,7 @@ async function main() {
       deriveRunModel(analysis, lines);
       deriveNumbers(analysis, lines, f5Lines, sweepSide, _gd);
 
-      await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, pitcherStatus, resolvedGamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts, detPlusInputs);
+      await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, pitcherStatus, resolvedGamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts, detPlusInputs, awayBullpen, homeBullpen, awayStats, homeStats);
 
       const ap = awayPitcherInfo?.name || 'TBD', hp = homePitcherInfo?.name || 'TBD';
       console.log(`  ✓ ${game.away_team} @ ${game.home_team} | ${ap} vs ${hp} | ${lines.total} | ${weather?.summary||'dome/no weather'}`);
