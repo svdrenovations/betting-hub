@@ -4204,7 +4204,7 @@ async function loadLlmPage() {
     const games = [...gameMap.values()];
     document.getElementById('llm-subtitle').textContent = `${games.length} games · ${bets.length} plays`;
 
-    const mkCell = (label, bet) => {
+    const mkCell = (label, bet, awayTeam, homeTeam) => {
       if (!bet) return `<div class="market-cell"><div class="market-label">${label}</div><div class="market-val mv-skip">SKIP</div></div>`;
       const v = bet.verdict || 'SKIP';
       const cls = v.startsWith('BET') ? 'mv-bet' : v.startsWith('LEAN') ? 'mv-lean' : 'mv-skip';
@@ -4212,7 +4212,16 @@ async function loadLlmPage() {
       const evHtml = ev != null ? `<div class="ev-val ev-pos">+${ev.toFixed(1)}%</div>` : '';
       const res = bet.result;
       const resHtml = res ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:${res==='win'?'var(--green)':res==='loss'?'var(--red)':'var(--amber)'};margin-top:2px">${res}</div>` : '';
-      return `<div class="market-cell"><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}${resHtml}</div>`;
+      // Replace AWAY/HOME with team abbreviation
+      const action = v.startsWith('BET') ? 'BET' : v.startsWith('LEAN') ? 'LEAN' : null;
+      let side = '';
+      if (v.includes('AWAY')) side = teamAbbr(awayTeam);
+      else if (v.includes('HOME')) side = teamAbbr(homeTeam);
+      else if (v.includes('OVER')) side = 'OVER';
+      else if (v.includes('UNDER')) side = 'UNDER';
+      const displayVerdict = action && side ? `${action} ${side}` : v;
+      const oddsHtml = bet.odds ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);margin-top:1px">${bet.odds}</div>` : '';
+      return `<div class="market-cell"><div class="market-label">${label}</div><div class="market-val ${cls}">${displayVerdict}</div>${oddsHtml}${evHtml}${resHtml}</div>`;
     };
 
     grid.innerHTML = games.map(g => {
@@ -4233,7 +4242,7 @@ async function loadLlmPage() {
         <div class="card-body">
           ${sitHtml?`<div class="sit-flags">${sitHtml}</div>`:''}
           <div class="markets">
-            ${mkCell('ML',ml)}${mkCell('RL',rl)}${mkCell('Total',tot)}
+            ${mkCell('ML',ml,g.away_team,g.home_team)}${mkCell('RL',rl,g.away_team,g.home_team)}${mkCell('Total',tot,g.away_team,g.home_team)}
           </div>
           ${conf?`<div style="margin-top:6px"><span class="edge-badge ${conf==='HIGH'?'eb-high':conf==='MEDIUM'?'eb-med':'eb-skip'}">${conf}</span></div>`:''}
         </div>
@@ -4251,10 +4260,18 @@ let llmSort = { col: 'created_at', dir: 'desc' };
 async function loadLlmTracker() {
   document.getElementById('llmtracker-subtitle').textContent = 'Loading…';
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?select=*&order=created_at.desc&limit=500`, {
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    });
-    llmBets = res.ok ? await res.json() : [];
+    const [betsRes, gamesRes] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/llm_bets?select=*&order=created_at.desc&limit=500`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      }),
+      fetch(`${SUPABASE_URL}/rest/v1/mlb_games?select=id,away_final,home_final,actual_total&away_final=not.is.null`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      })
+    ]);
+    llmBets = betsRes.ok ? await betsRes.json() : [];
+    const scoreMap = new Map();
+    if (gamesRes.ok) { for (const g of await gamesRes.json()) scoreMap.set(g.id, g); }
+    llmBets = llmBets.map(b => ({ ...b, _scores: scoreMap.get(b.game_id) || null }));
     renderLlmTracker();
   } catch(e) {
     document.getElementById('llmtracker-table').innerHTML = `<div class="empty-state"><div class="empty-title">Error: ${e.message}</div></div>`;
@@ -4277,10 +4294,9 @@ function renderLlmTracker() {
   const pct = settled.length ? Math.round(wins/settled.length*100) : 0;
   sub.textContent = `${settled.length} settled · ${wins}-${losses}${pushes?'-'+pushes+' push':''} (${pct}%) · ${pl>=0?'+':''}${pl.toFixed(2)}u`;
 
-  const th = col => {
+  const th = (col, label) => {
     const active = llmSort.col === col;
-    const labels = {game_date:'Date',away_team:'Matchup',market:'Mkt',verdict:'Verdict',ev:'EV',odds:'Odds',confidence:'Conf',result:'Result',profit_loss:'P/L'};
-    return `<th onclick="llmSetSort('${col}')" style="${active?'color:var(--green)':''}cursor:pointer;user-select:none">${labels[col]||col}${active?(llmSort.dir==='asc'?' ▲':' ▼'):''}</th>`;
+    return `<th onclick="llmSetSort('${col}')" style="${active?'color:var(--green)':''}cursor:pointer;user-select:none">${label}${active?(llmSort.dir==='asc'?' ▲':' ▼'):''}</th>`;
   };
 
   const sorted = [...llmBets].sort((a,b) => {
@@ -4296,20 +4312,35 @@ function renderLlmTracker() {
     const plStr = pl != null ? `<span style="color:${pl>=0?'var(--green)':'var(--red)'}">${pl>=0?'+':''}${pl.toFixed(2)}u</span>` : '—';
     const verdict = b.verdict || 'SKIP';
     const vCls = verdict.startsWith('BET') ? 'mv-bet' : verdict.startsWith('LEAN') ? 'mv-lean' : 'mv-skip';
+    const vAction = verdict.startsWith('BET') ? 'BET' : verdict.startsWith('LEAN') ? 'LEAN' : null;
+    let displayV = verdict;
+    if (vAction) {
+      if (verdict.includes('AWAY')) displayV = vAction + ' ' + teamAbbr(b.away_team);
+      else if (verdict.includes('HOME')) displayV = vAction + ' ' + teamAbbr(b.home_team);
+      else if (verdict.includes('OVER')) displayV = vAction + ' OVR';
+      else if (verdict.includes('UNDER')) displayV = vAction + ' UND';
+    }
+    const predA = b.proj_away_runs != null ? parseFloat(b.proj_away_runs).toFixed(1) : null;
+    const predH = b.proj_home_runs != null ? parseFloat(b.proj_home_runs).toFixed(1) : null;
+    const predStr = predA && predH ? `${predA}-${predH}` : '—';
+    const sc = b._scores;
+    const finalStr = sc ? `${sc.away_final}-${sc.home_final}` : '—';
     return `<tr>
       <td class="mono" style="font-size:11px">${b.game_date||'—'}</td>
       <td style="font-size:12px">${b.away_team} @ ${b.home_team}</td>
       <td class="mono" style="font-size:11px">${(b.market||'').toUpperCase()}</td>
-      <td style="font-size:12px" class="${vCls}">${verdict}</td>
+      <td style="font-size:12px" class="${vCls}">${displayV}</td>
       <td class="mono" style="font-size:11px;color:var(--green)">${b.ev!=null?'+'+parseFloat(b.ev).toFixed(1)+'%':'—'}</td>
       <td class="mono" style="font-size:11px">${b.odds||'—'}</td>
+      <td class="mono" style="font-size:11px">${predStr}</td>
+      <td class="mono" style="font-size:11px">${finalStr}</td>
       <td class="mono" style="font-size:11px">${b.confidence||'—'}</td>
       <td style="font-size:12px;color:${resColor};font-weight:500">${res||'pending'}</td>
       <td>${plStr}</td>
     </tr>`;
   }).join('');
 
-  el.innerHTML = `<table class="t-table"><thead><tr>${th('game_date')}${th('away_team')}${th('market')}${th('verdict')}${th('ev')}${th('odds')}${th('confidence')}${th('result')}${th('profit_loss')}</tr></thead><tbody>${rows||'<tr><td colspan="9" style="text-align:center;padding:18px;color:var(--text)">No bets</td></tr>'}</tbody></table>`;
+  el.innerHTML = `<table class="t-table"><thead><tr>${th('game_date','Date')}${th('away_team','Matchup')}${th('market','Mkt')}${th('verdict','Verdict')}${th('ev','EV')}${th('odds','Odds')}${th('proj_away_runs','Pred')}${'<th>Final</th>'}${th('confidence','Conf')}${th('result','Result')}${th('profit_loss','P/L')}</tr></thead><tbody>${rows||'<tr><td colspan="11" style="text-align:center;padding:18px;color:var(--text)">No bets</td></tr>'}</tbody></table>`;
 }
 
 function llmSetSort(col) {
