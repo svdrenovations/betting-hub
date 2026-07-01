@@ -984,71 +984,180 @@ function validateTotal(oddsTotal, anTotal) {
 async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName) {
   console.log(`  Analyzing ${game.away_team} @ ${game.home_team}...`);
 
-  // ── SITUATIONS (deterministic) ────────────────────────────────────────────
-  const situations = [];
-  const fadeReason = [];
+  const weatherInfo = weather
+    ? weather.dome ? 'Indoor dome — weather not a factor'
+    : weather.weatherNeutralized ? `Retractable roof likely CLOSED (~${Math.round((weather.roofOpenProb ?? 0.2)*100)}% open) — treat as INDOOR: weather is NOT a factor and you must NOT tag this game "weather". (Outside conditions, for reference only: ${weather.summary})`
+    : `${weather.summary}${weather.flags?.length ? '\nWeather flags: ' + weather.flags.join(', ') : ''}`
+    : 'Weather data unavailable';
 
-  if (weather && !weather.dome && (weather.flags||[]).some(f => f && (f.includes('WIND')||f.includes('COLD')||f.includes('HOT')||f.includes('RAIN'))))
-    situations.push('weather');
+  const awayPitcherInfo = awayPitcher
+    ? `${awayPitcher.name} (${awayPitcher.throwHand||'?'}HP): ERA ${awayPitcher.era}, WHIP ${awayPitcher.whip}, ${awayPitcher.wins}W-${awayPitcher.losses}L, Recent ERA ${awayPitcher.recentERA} (${awayPitcher.trending}), avg ${awayPitcher.avgIP||'?'} IP/start, Last 3: ${awayPitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}`
+    : 'Away pitcher: TBD';
 
-  const awayMoneyPct = parseFloat(anData?.awayMoneyPct||0);
-  const homeMoneyPct = parseFloat(anData?.homeMoneyPct||0);
-  const awayMLPct = parseFloat(anData?.awayMLPct||0);
-  const homeMLPct = parseFloat(anData?.homeMLPct||0);
-  let lineSharp = false, sharpSide = 'NONE';
-  if (awayMoneyPct && awayMLPct && awayMoneyPct > awayMLPct + 15) { situations.push('sharp'); lineSharp = true; sharpSide = game.away_team; }
-  else if (homeMoneyPct && homeMLPct && homeMoneyPct > homeMLPct + 15) { situations.push('sharp'); lineSharp = true; sharpSide = game.home_team; }
+  const homePitcherInfo = homePitcher
+    ? `${homePitcher.name} (${homePitcher.throwHand||'?'}HP): ERA ${homePitcher.era}, WHIP ${homePitcher.whip}, ${homePitcher.wins}W-${homePitcher.losses}L, Recent ERA ${homePitcher.recentERA} (${homePitcher.trending}), avg ${homePitcher.avgIP||'?'} IP/start, Last 3: ${homePitcher.last3?.map(g=>`${g.ip}IP/${g.er}ER`).join(', ')}`
+    : 'Home pitcher: TBD';
 
-  let hasFade = false;
-  if (awayStatcast && String(awayStatcast.veloTrend||'').toUpperCase() === 'DOWN') { fadeReason.push('velo'); hasFade = true; }
-  if (homeStatcast && String(homeStatcast.veloTrend||'').toUpperCase() === 'DOWN') { fadeReason.push('velo'); hasFade = true; }
-  if (awayPitcher?.recentERA && awayPitcher?.era && parseFloat(awayPitcher.recentERA) > parseFloat(awayPitcher.era) + 1.0) { fadeReason.push('coldarm'); hasFade = true; }
-  if (homePitcher?.recentERA && homePitcher?.era && parseFloat(homePitcher.recentERA) > parseFloat(homePitcher.era) + 1.0) { fadeReason.push('coldarm'); hasFade = true; }
-  if (awayStatcast && parseFloat(awayStatcast.hardHitRate||0) >= 42) { fadeReason.push('contact'); hasFade = true; }
-  if (homeStatcast && parseFloat(homeStatcast.hardHitRate||0) >= 42) { fadeReason.push('contact'); hasFade = true; }
-  if (hasFade) situations.push('fade');
-  if (awayPitcher?.debut || homePitcher?.debut) situations.push('debut');
+  const awayBullpenInfo = awayBullpen ? `${game.away_team} bullpen: ${awayBullpen.summary}` : `${game.away_team} bullpen: unavailable`;
+  const homeBullpenInfo = homeBullpen ? `${game.home_team} bullpen: ${homeBullpen.summary}` : `${game.home_team} bullpen: unavailable`;
 
-  // ── LINE ANALYSIS ─────────────────────────────────────────────────────────
-  const lineNote = anData ? `${Math.round(awayMLPct||0)}% tickets away, ${Math.round(homeMLPct||0)}% home` : '';
+  const awayHand = awayMatchups?.handedness;
+  const homeHand = homeMatchups?.handedness;
+  const platoonInfo =
+    `${game.away_team} lineup bats: ${awayHand ? `${awayHand.L}L/${awayHand.R}R/${awayHand.S}S` : '?'} vs ${homePitcher?.throwHand||'?'}HP (home starter)\n` +
+    `${game.home_team} lineup bats: ${homeHand ? `${homeHand.L}L/${homeHand.R}R/${homeHand.S}S` : '?'} vs ${awayPitcher?.throwHand||'?'}HP (away starter)`;
 
-  // ── WEATHER IMPACT ────────────────────────────────────────────────────────
-  const weatherImpact = (() => {
-    if (!weather || weather.dome) return 'none';
-    const flags = weather.flags || [];
-    if (flags.some(f => f && f.includes('significant over'))) return 'significant over';
-    if (flags.some(f => f && f.includes('significant under'))) return 'significant under';
-    if (flags.some(f => f && (f.includes('OVER') || f.includes('OUT to CF')))) return 'over';
-    if (flags.some(f => f && (f.includes('UNDER') || f.includes('IN from CF')))) return 'under';
-    return 'none';
-  })();
+  const pf = getParkFactors(game.home_team, venueName);
+  const atNeutral = venueName && VENUE_PARKS[venueName];
+  const parkInfo = `${atNeutral ? `Venue: ${venueName} (neutral/alternate site) — ` : ''}${game.home_team} park: run factor ${pf.runFactor} (1.0 = neutral, >1 = hitter-friendly), wind plays ${pf.windFactor}x (how much wind matters here)${pf.retractable ? ', retractable roof' : ''}`;
 
-  // ── PITCHER EDGE ──────────────────────────────────────────────────────────
-  const pitcherEdge = (() => {
-    const diff = parseFloat(homePitcher?.era||4.5) - parseFloat(awayPitcher?.era||4.5);
-    if (diff > 0.75) return game.away_team;
-    if (diff < -0.75) return game.home_team;
-    return 'EVEN';
-  })();
+  const shadow = shadowProfile(game.home_team, game.commence_time, venueName);
+  const shadowInfo = shadow ? shadow.note : 'No day-game shadow factor (night game, roofed park, or low susceptibility).';
 
-  return {
-    situations: [...new Set(situations)],
-    fadeReason: [...new Set(fadeReason)],
-    projAwayRuns: null, projHomeRuns: null, projTotal: null, f5ProjTotal: null,
-    ml: 'SKIP', mlEV: null, mlAwayProb: null, mlHomeProb: null, mlBreakeven: null,
-    rl: 'SKIP', rlEV: null, rlAwayProb: null, rlHomeProb: null, rlBreakeven: null,
-    total: 'SKIP', totalEV: null, totalLine: lines.total, totalBreakeven: null, totalJuiceSensitivity: null,
-    f5: 'SKIP', f5EV: null, f5Line: f5Lines?.f5Total||null, f5Breakeven: null, f5JuiceSensitivity: null,
-    best: null, bestPlay: null,
-    lineSharp, sharpSide, lineNote, weatherImpact, pitcherEdge,
-    awayWinPct: null, homeWinPct: null, edgePct: null,
-    situation: `${awayPitcher?.name||'Away'} vs ${homePitcher?.name||'Home'}. ${weather?.summary||''}`.trim(),
-    factors: `Away ERA ${awayPitcher?.era||'N/A'}, Home ERA ${homePitcher?.era||'N/A'}. Away pen ERA ${awayBullpen?.weightedERA||'N/A'}, Home pen ERA ${homeBullpen?.weightedERA||'N/A'}.`,
-    risks: situations.length ? `Key flags: ${[...new Set(situations)].join(', ')}.` : 'No major situational flags.',
-    sweepFade: null,
-    simAwayRuns: null, simHomeRuns: null,
-    simMl: null, simMlEV: null, simRl: null, simRlEV: null, simTotal: null, simTotalEV: null,
-  };
+  const awayTeamInfo = awayStats
+    ? `${awayStats.teamName}: AVG ${awayStats.avg}, OPS ${awayStats.ops}, ${awayStats.runs} runs scored, ${awayStats.hr} HR, Last 10: ${awayStats.last10||'N/A'}`
+    : `${game.away_team}: Stats unavailable`;
+
+  const homeTeamInfo = homeStats
+    ? `${homeStats.teamName}: AVG ${homeStats.avg}, OPS ${homeStats.ops}, ${homeStats.runs} runs scored, ${homeStats.hr} HR, Last 10: ${homeStats.last10||'N/A'}`
+    : `${game.home_team}: Stats unavailable`;
+
+  const publicInfo = anData
+    ? `ML public: Away ${anData.awayMLPct||'?'}% bets/${anData.awayMoneyPct||'?'}% money | Home ${anData.homeMLPct||'?'}% bets/${anData.homeMoneyPct||'?'}% money\nTotal public: ${anData.overPct||'?'}% Over / ${anData.underPct||'?'}% Under`
+    : 'Public betting data unavailable';
+
+  const awayStatcastInfo = awayStatcast
+    ? `${awayPitcher?.name||'Away'} Statcast: avg velo ${awayStatcast.avgVelo}mph (${awayStatcast.veloTrend}), last start ${awayStatcast.lastStartVelo}mph, whiff% ${awayStatcast.whiffRate}, hard hit% ${awayStatcast.hardHitRate}, barrel% ${awayStatcast.barrelRate}`
+    : 'Away pitcher Statcast: unavailable';
+
+  const homeStatcastInfo = homeStatcast
+    ? `${homePitcher?.name||'Home'} Statcast: avg velo ${homeStatcast.avgVelo}mph (${homeStatcast.veloTrend}), last start ${homeStatcast.lastStartVelo}mph, whiff% ${homeStatcast.whiffRate}, hard hit% ${homeStatcast.hardHitRate}, barrel% ${homeStatcast.barrelRate}`
+    : 'Home pitcher Statcast: unavailable';
+
+  const awayMatchupInfo = (awayMatchups && awayMatchups.avgOPS != null)
+    ? `${game.away_team} lineup vs ${homePitcher?.name||'home pitcher'}: avg OPS ${awayMatchups.avgOPS}, avg AVG ${awayMatchups.avgAVG}, K% ${awayMatchups.kRate}, hot bats ${awayMatchups.hotBatters}, cold bats ${awayMatchups.coldBatters} (${awayMatchups.sample})`
+    : `${game.away_team} lineup matchup data: unavailable (lineup not yet posted or no history vs this pitcher)`;
+
+  const homeMatchupInfo = (homeMatchups && homeMatchups.avgOPS != null)
+    ? `${game.home_team} lineup vs ${awayPitcher?.name||'away pitcher'}: avg OPS ${homeMatchups.avgOPS}, avg AVG ${homeMatchups.avgAVG}, K% ${homeMatchups.kRate}, hot bats ${homeMatchups.hotBatters}, cold bats ${homeMatchups.coldBatters} (${homeMatchups.sample})`
+    : `${game.home_team} lineup matchup data: unavailable (lineup not yet posted or no history vs this pitcher)`;
+
+  const f5Info = f5Lines
+    ? `F5 ML: Away ${f5Lines.f5AwayML||'N/A'} / Home ${f5Lines.f5HomeML||'N/A'}\nF5 Total: ${f5Lines.f5Total||'N/A'} (Over ${f5Lines.f5OverOdds||'N/A'} / Under ${f5Lines.f5UnderOdds||'N/A'})`
+    : 'F5 lines unavailable';
+
+  const prompt = `You are an expert MLB betting analyst. Today is ${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}. Analyze this game using all provided data and return ONLY valid JSON.
+
+GAME: ${game.away_team} @ ${game.home_team}
+Time: ${new Date(game.commence_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/New_York'})} ET
+
+FULL GAME LINES:
+ML: Away ${lines.awayML||'?'} / Home ${lines.homeML||'?'}
+RL: Away ${lines.awayRL||'?'} (${lines.awayRLOdds||'?'}) / Home ${lines.homeRL||'?'} (${lines.homeRLOdds||'?'})
+Total: ${lines.total||'?'} — Over ${lines.overOdds||'?'} / Under ${lines.underOdds||'?'}
+
+FIRST 5 INNINGS:
+${f5Info}
+
+WEATHER:
+${weatherInfo}
+
+PARK FACTORS:
+${parkInfo}
+
+DAY-GAME SHADOW / SCORING DISTRIBUTION:
+${shadowInfo}
+
+PITCHING MATCHUP:
+Away: ${awayPitcherInfo}
+${awayStatcastInfo}
+Home: ${homePitcherInfo}
+${homeStatcastInfo}
+
+BULLPENS (quality + recent workload — a tired or weak pen loses late leads):
+${awayBullpenInfo}
+${homeBullpenInfo}
+
+PLATOON / HANDEDNESS:
+${platoonInfo}
+
+LINEUP VS PITCHER MATCHUPS (career stats — min 10 AB):
+${awayMatchupInfo}
+${homeMatchupInfo}
+
+TEAM STATS (2026 season):
+Away: ${awayTeamInfo}
+Home: ${homeTeamInfo}
+
+PUBLIC BETTING:
+${publicInfo}
+
+ANALYSIS INSTRUCTIONS — CRITICAL:
+- Your job is PROBABILITIES and PROJECTIONS, nothing else. The EV, breakeven, win probabilities, and juice-sensitivity numbers are computed DOWNSTREAM from your projections — do not freehand them.
+- PROJECT EACH TEAM'S EXPECTED RUNS separately as projAwayRuns and projHomeRuns. These are the most important numbers you produce: the downstream math derives ML (who wins), RL (margin), and the total (their sum) all from these two numbers via a run-margin model. Project them carefully from 2026 run rates, the pitching matchup, Statcast, bullpens, platoon edges, lineup matchups, park, and weather.
+- ML / RL come from the projected run MARGIN (projAwayRuns - projHomeRuns), not a gut feel. A bigger projected margin = bigger favorite and better run-line cover odds. Do not hand-tune mlAwayProb; just project the runs accurately.
+- BULLPEN matters for who WINS, not just totals: a TAXED or high-ERA pen is more likely to blow a late lead — shade the run margin toward the team with the stronger/fresher pen, especially in tight projected games.
+- PLATOON: a lineup stacked opposite-handed to the starter (e.g. many R bats vs a LHP) should score more; same-handed heavy lineups score less. Fold this into the run projections.
+- EXPECTED STARTER LENGTH: a starter averaging under ~5 IP exposes the bullpen earlier — weight the bullpen more heavily for that team.
+- SHARP / LINE ACTION IS INFORMATIONAL ONLY. Report any sharp or line-movement read in lineNote / sharpSide / lineSharp for display, but DO NOT let public or sharp money move your run projections or probabilities. Project independently of the market.
+- The "situations" array must ONLY contain these exact lowercase values: revenge, travel, sharp, weather, rest, series, fade, mustwin, debut. DO NOT add any other values. DO NOT use situations to flag data availability issues. If data is missing just work with what you have.
+- fadeReason: WHENEVER you tag "fade", also populate fadeReason with the specific reason(s) that drove it, using ONLY these values: velo (starter velocity trending DOWN vs season), coldarm (starter recent ERA worse than season), contact (starter hard-hit >=42% or high barrel / low whiff), form (team 2-8 or worse in last 10). Multiple allowed. This is ANNOTATION ONLY — it does NOT change whether or how you fade, it only records why you faded. Leave it [] if you did not tag "fade" (or if the fade was for a reason outside this list).
+- USE ONLY 2026 SEASON STATS for all projections. IGNORE all prior year data entirely.
+- STATCAST IS CRITICAL: A pitcher with velocity DOWN trend is significantly worse than ERA suggests — fade. A pitcher with low barrel rate and high whiff rate is elite regardless of ERA — back. Hard hit rate above 42% means the pitcher is getting hit hard even if runs haven't scored yet.
+- LINEUP MATCHUPS OVERRIDE SEASON STATS: if the opposing lineup has OPS below .600 vs this pitcher with 25%+ K rate, project that team's runs 20-25% lower than season average. If lineup has OPS above .850 vs this pitcher, project 20-25% higher.
+- Velocity DOWN on last start vs season average = COLD flag, reduce confidence, lean against this pitcher
+- Velocity UP or STABLE = trust the ERA and recent form
+- Hot pitchers (trending HOT — recent ERA significantly lower than season ERA) = team edge
+- Cold pitchers (trending COLD) = fade regardless of reputation or contract
+- Wind 15+ mph blowing out = more runs, 15+ mph in = fewer runs. The wind figure already accounts for how much THIS park plays the wind, so trust it as given.
+- APPLY THE PARK RUN FACTOR to your run projections: multiply the run environment by it (e.g. 1.06 = project ~6% more runs, 0.92 = ~8% fewer). This is a real number — use it instead of recalling park reputations.
+- DAY-GAME SHADOW: if a shadow profile is given, apply it as a SCORING-DISTRIBUTION shift, not a flat under — add its early-innings runs to your F5 projection and its late-innings runs to the full game. It is a small, approximate effect; do not let it swing a play on its own.
+- Current season form only — a team 2-8 in last 10 is a fade regardless of brand
+
+Return ONLY this JSON (no markdown, no code fences). Return ONLY these fields — every EV, breakeven, win-probability, and juice table is recomputed downstream from your projections, so do NOT include them:
+{
+  "situations": ["revenge","travel","sharp","weather","rest","series","fade","mustwin","debut"],
+  "fadeReason": [],
+  "projAwayRuns": NUMBER,
+  "projHomeRuns": NUMBER,
+  "projTotal": NUMBER,
+  "f5ProjTotal": NUMBER,
+  "ml": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
+  "rl": "BET AWAY|BET HOME|LEAN AWAY|LEAN HOME|SKIP",
+  "total": "BET OVER|BET UNDER|LEAN OVER|LEAN UNDER|SKIP",
+  "f5": "BET AWAY|BET HOME|BET OVER|BET UNDER|LEAN AWAY|LEAN HOME|LEAN OVER|LEAN UNDER|SKIP",
+  "best": "ml|rl|total|f5",
+  "bestPlay": "one sentence on the strongest play",
+  "confidence": "LOW|MEDIUM|HIGH",
+  "lineSharp": true|false,
+  "sharpSide": "${game.away_team}|${game.home_team}|NONE",
+  "lineNote": "brief note on line movement or public action",
+  "weatherImpact": "none|over|under|significant",
+  "pitcherEdge": "${game.away_team}|${game.home_team}|EVEN",
+  "situation": "2 sentences on key situational and pitching factors",
+  "factors": "2 sentences on stats, hot/cold streaks, and matchup",
+  "risks": "1 sentence on biggest risk to the top play"
+}
+
+The projTotal and f5ProjTotal are the most important numbers you produce — the downstream math converts them into win probabilities, EV, breakeven lines, and the full juice-sensitivity table. Project carefully using 2026 data, Statcast, and lineup matchups.`;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] })
+  });
+
+  if (!res.ok) throw new Error(`Claude error: ${res.status}`);
+  const data = await res.json();
+  const text = data.content.map(c => c.text||'').join('').trim();
+  try {
+    const clean = text.replace(/```json|```/g,'').trim();
+    const s=clean.indexOf('{'), e=clean.lastIndexOf('}');
+    return JSON.parse(clean.substring(s,e+1));
+  } catch(err) {
+    console.error(`Parse error:`, text.substring(0,200));
+    return null;
+  }
 }
 
 
@@ -1245,6 +1354,64 @@ async function fetchF5Raw(){ try{ const url = `https://api.the-odds-api.com/v4/s
 async function computeClvFromBooks(){ try{ const recentCutoff = new Date(Date.now() - 2*86400000).toLocaleDateString('en-CA',{timeZone:'America/New_York'}); const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?book=not.is.null&or=(clv.is.null,game_date.gte.${recentCutoff})&order=game_date.desc&limit=400`, { headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` } }); if(!res.ok){ console.error(`  CLV pass query failed: ${res.status}`); return; } const bets = await res.json(); if(!bets.length){ console.log('  CLV pass: nothing to resolve.'); return; } console.log(`\nResolving CLV for ${bets.length} candidate bets...`); const cache = new Map(); let filled=0, refreshed=0, frozen=0, unchanged=0, noSnap=0, noBook=0, noOdds=0; for (const bet of bets){ try{ if(!bet.book || !String(bet.book).trim()){ noBook++; continue; } const aw=(bet.matchup||'').split(' @ ')[0]||'', hm=(bet.matchup||'').split(' @ ')[1]||''; if(!cache.has(bet.game_date)){ const gRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=away_team,home_team,closing_lines,commence_time`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }}); cache.set(bet.game_date, gRes.ok ? await gRes.json() : []); } const rows = cache.get(bet.game_date)||[]; const g = rows.find(r=>{ const at=r.away_team||'',ht=r.home_team||''; return (at.includes(aw.split(' ').pop())||aw.includes(at.split(' ').pop())) && (ht.includes(hm.split(' ').pop())||hm.includes(ht.split(' ').pop())); }); if(!g || !g.closing_lines){ noSnap++; continue; } const notStarted = g.commence_time ? (Date.now() < new Date(g.commence_time).getTime()) : false; const isFirstFill = (bet.clv == null); if(!isFirstFill && !notStarted){ frozen++; continue; } const key = resolveBookKey(bet.book, g.closing_lines); if(!key){ noBook++; continue; } const c = closingForBet(bet.bet_type, g.closing_lines[key]); const pc = americanToProb(c.odds), pb = americanToProb(bet.odds); if(pc==null || pb==null){ noOdds++; continue; } if(!isFirstFill && String(bet.closing_odds??'') === String(c.odds??'')){ unchanged++; continue; } const clv = +(((pc-pb)*100).toFixed(1)); const r = await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?id=eq.${bet.id}`, { method:'PATCH', headers:{ 'Content-Type':'application/json','apikey':SUPABASE_SERVICE_KEY,'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}`,'Prefer':'return=minimal' }, body: JSON.stringify({ closing_odds: c.odds||null, closing_line:(c.line!=null&&c.line!=='')?String(c.line):null, clv }) }); if(r.ok){ if(isFirstFill) filled++; else refreshed++; const tag = !notStarted ? 'finalized' : (isFirstFill ? 'set' : '↻ updated'); console.log(`  ✓ CLV ${clv>=0?'+':''}${clv}% ${tag} — ${bet.matchup} @ ${g.closing_lines[key].title||key} (closed ${c.odds||'?'})`); } await new Promise(rr=>setTimeout(rr,150)); }catch(e){ /* skip */ } } console.log(`  CLV done — ${filled} set, ${refreshed} refreshed, ${unchanged} unchanged, ${frozen} frozen(started); no snap ${noSnap}, book miss ${noBook}, no odds ${noOdds}`); }catch(e){ console.error('CLV pass error:', e.message); } }
 
 function pickScheduleGame(games, awayName, homeName, targetTimeMs) { const matches = (games || []).filter(g => { const at = g.teams?.away?.team?.name || '', ht = g.teams?.home?.team?.name || ''; return (at.includes(String(awayName).split(' ').pop()) || String(awayName).includes(at.split(' ').pop())) && (ht.includes(String(homeName).split(' ').pop()) || String(homeName).includes(ht.split(' ').pop())); }); if (matches.length <= 1) return matches[0] || null; if (targetTimeMs == null) return matches[0]; return matches.reduce((best, g) => Math.abs(new Date(g.gameDate).getTime() - targetTimeMs) < Math.abs(new Date(best.gameDate).getTime() - targetTimeMs) ? g : best); }
+
+
+async function settleLlmBets() {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?result=is.null&select=*`, {
+      headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
+    });
+    if (!res.ok) { console.error(`  settleLlmBets query failed: ${res.status}`); return; }
+    const bets = await res.json();
+    if (!bets.length) { console.log('  LLM bets: nothing to settle.'); return; }
+    console.log(`\nSettling ${bets.length} LLM bets...`);
+    const gameCache = new Map();
+    for (const bet of bets) {
+      try {
+        if (!gameCache.has(bet.game_date)) {
+          const gr = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=id,away_team,home_team,away_final,home_final,total,away_rl`, {
+            headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
+          });
+          gameCache.set(bet.game_date, gr.ok ? await gr.json() : []);
+        }
+        const games = gameCache.get(bet.game_date) || [];
+        const g = games.find(r => r.id === bet.game_id);
+        if (!g || g.away_final == null || g.home_final == null) continue;
+        const af = parseFloat(g.away_final), hf = parseFloat(g.home_final);
+        const tot = af + hf;
+        let result = null;
+        const v = bet.verdict || '';
+        if (bet.market === 'ml') {
+          if (v.includes('AWAY')) result = af > hf ? 'win' : af === hf ? 'push' : 'loss';
+          else if (v.includes('HOME')) result = hf > af ? 'win' : af === hf ? 'push' : 'loss';
+        } else if (bet.market === 'rl') {
+          const rlPt = parseFloat(g.away_rl || -1.5);
+          const margin = af - hf;
+          if (v.includes('AWAY')) result = margin > Math.abs(rlPt) ? 'win' : margin === -rlPt ? 'push' : 'loss';
+          else if (v.includes('HOME')) result = margin < rlPt ? 'win' : margin === -rlPt ? 'push' : 'loss';
+        } else if (bet.market === 'total') {
+          const line = parseFloat(bet.proj_total) || null;
+          const actualLine = parseFloat(g.total) || line;
+          if (actualLine == null) continue;
+          if (v.includes('OVER')) result = tot > actualLine ? 'win' : tot === actualLine ? 'push' : 'loss';
+          else if (v.includes('UNDER')) result = tot < actualLine ? 'win' : tot === actualLine ? 'push' : 'loss';
+        }
+        if (!result) continue;
+        const odds = parseFloat(bet.odds || -110);
+        let pl = 0;
+        if (result === 'win') pl = odds > 0 ? +(odds / 100).toFixed(2) : +(100 / Math.abs(odds)).toFixed(2);
+        else if (result === 'loss') pl = -1;
+        else pl = 0;
+        await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?id=eq.${bet.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ result, profit_loss: pl, settled_at: new Date().toISOString() })
+        });
+        console.log(`  ✓ LLM bet settled: ${bet.away_team} @ ${bet.home_team} ${bet.market.toUpperCase()} ${bet.verdict} → ${result} (${pl >= 0 ? '+' : ''}${pl}u)`);
+      } catch(e) { console.log(`  LLM settle error for bet ${bet.id}: ${e.message}`); }
+    }
+  } catch(e) { console.error('settleLlmBets error:', e.message); }
+}
 
 async function settlePendingBets() {
   console.log('\nChecking pending bets for settlement...');
@@ -1524,11 +1691,6 @@ async function main() {
       console.log(`  DET (background): ${game.away_team} ${detProj.awayRuns} - ${game.home_team} ${detProj.homeRuns} (tot ${+(parseFloat(detProj.awayRuns)+parseFloat(detProj.homeRuns)).toFixed(2)})`);
 
       const analysis = await analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName);
-      if (analysis && detProj) {
-        analysis.projAwayRuns = detProj.awayRuns;
-        analysis.projHomeRuns = detProj.homeRuns;
-        analysis.projTotal = +(parseFloat(detProj.awayRuns) + parseFloat(detProj.homeRuns)).toFixed(2);
-      }
 
       if (!analysis) { console.error(`  ✗ ${game.away_team} @ ${game.home_team}: analysis parse failed — keeping previous row`); continue; }
 
@@ -1666,6 +1828,55 @@ async function main() {
       deriveRunModel(analysis, lines);
       deriveNumbers(analysis, lines, f5Lines, sweepSide, _gd);
 
+
+      // ── LLM BETS — auto-log qualifying plays into llm_bets table ─────────
+      try {
+        const llmMarkets = [
+          { market: 'ml', verdict: analysis.ml, ev: analysis.mlEV, odds: analysis.ml?.includes('AWAY') ? lines.awayML : lines.homeML },
+          { market: 'rl', verdict: analysis.rl, ev: analysis.rlEV, odds: analysis.rl?.includes('AWAY') ? lines.awayRLOdds : lines.homeRLOdds },
+          { market: 'total', verdict: analysis.total, ev: analysis.totalEV, odds: analysis.total?.includes('OVER') ? lines.overOdds : lines.underOdds },
+        ];
+        for (const m of llmMarkets) {
+          if (!m.verdict || m.verdict === 'SKIP') continue;
+          const ev = parseFloat(m.ev || 0);
+          if (ev < 6) continue;
+          const betRow = {
+            game_id: game.id,
+            game_date: new Date(game.commence_time).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }),
+            away_team: game.away_team,
+            home_team: game.home_team,
+            commence_time: game.commence_time,
+            market: m.market,
+            verdict: m.verdict,
+            ev: ev,
+            odds: m.odds ? String(m.odds) : null,
+            proj_away_runs: analysis.projAwayRuns != null ? parseFloat(analysis.projAwayRuns) : null,
+            proj_home_runs: analysis.projHomeRuns != null ? parseFloat(analysis.projHomeRuns) : null,
+            proj_total: analysis.projTotal != null ? parseFloat(analysis.projTotal) : null,
+            situations: (analysis.situations || []).filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase())),
+            confidence: analysis.confidence || 'LOW',
+            units: 1,
+          };
+          const existing = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_id=eq.${encodeURIComponent(game.id)}&market=eq.${m.market}&select=id`, {
+            headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
+          }).then(r => r.json()).catch(() => []);
+          if (existing && existing.length > 0) {
+            await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_id=eq.${encodeURIComponent(game.id)}&market=eq.${m.market}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` },
+              body: JSON.stringify({ verdict: betRow.verdict, ev: betRow.ev, odds: betRow.odds, proj_away_runs: betRow.proj_away_runs, proj_home_runs: betRow.proj_home_runs, proj_total: betRow.proj_total, situations: betRow.situations, confidence: betRow.confidence })
+            });
+          } else {
+            await fetch(`${SUPABASE_URL}/rest/v1/llm_bets`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'Prefer': 'return=minimal' },
+              body: JSON.stringify(betRow)
+            });
+          }
+          console.log(`  📝 LLM bet logged: ${m.market.toUpperCase()} ${m.verdict} EV ${ev.toFixed(1)}%`);
+        }
+      } catch(e) { console.log(`  llm_bets insert error: ${e.message}`); }
+
       await upsertGame(game, lines, analysis, anData, f5Lines, weather, awayPitcherInfo, homePitcherInfo, awayStatcast, homeStatcast, awayMatchups, homeMatchups, pitcherStatus, resolvedGamePk, detProj, detPlusProj, detPlusVerdicts, detVerdicts, detPlusInputs, awayBullpen, homeBullpen, awayStats, homeStats);
 
       const ap = awayPitcherInfo?.name || 'TBD', hp = homePitcherInfo?.name || 'TBD';
@@ -1677,6 +1888,7 @@ async function main() {
   console.log(`\n✅ Done — ${todayGames.length} games`);
   await settlePendingBets();
   await settleGameScores();
+  await settleLlmBets();
   await computeClvFromBooks();
 }
 
