@@ -4169,7 +4169,6 @@ async function renderPlus(){
   el.innerHTML=fBar+stats+table;
 }
 // ── LLM PAGE ─────────────────────────────────────────────────────────────────
-let llmGames = null;
 let llmDate = null;
 
 async function loadLlmPage() {
@@ -4177,73 +4176,72 @@ async function loadLlmPage() {
   document.getElementById('llm-subtitle').textContent = 'Loading…';
   const grid = document.getElementById('llm-grid');
   grid.innerHTML = '<div class="empty-state"><div class="empty-title">Loading…</div></div>';
+
+  // Build date nav
+  const dateNav = document.getElementById('llm-date-nav');
+  const days = [-2,-1,0,1,2].map(offset => { const dt = new Date(currentDate); dt.setDate(dt.getDate()+offset); return isoDate(dt); });
+  dateNav.innerHTML = days.map(d => `<button class="date-btn ${d===llmDate?'on':''}" onclick="llmDate='${d}';loadLlmPage()">${d}</button>`).join('');
+
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${llmDate}&select=*&order=commence_time.asc`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_date=eq.${llmDate}&select=*&order=commence_time.asc`, {
       headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
     });
-    llmGames = res.ok ? await res.json() : [];
-    renderLlmGrid();
+    const bets = res.ok ? await res.json() : [];
+
+    if (!bets.length) {
+      grid.innerHTML = '<div class="empty-state"><div class="empty-title">No LLM plays for this date</div></div>';
+      document.getElementById('llm-subtitle').textContent = 'No plays';
+      return;
+    }
+
+    // Group bets by game
+    const gameMap = new Map();
+    for (const b of bets) {
+      const key = b.game_id;
+      if (!gameMap.has(key)) gameMap.set(key, { game_id: b.game_id, away_team: b.away_team, home_team: b.home_team, commence_time: b.commence_time, bets: [] });
+      gameMap.get(key).bets.push(b);
+    }
+    const games = [...gameMap.values()];
+    document.getElementById('llm-subtitle').textContent = `${games.length} games · ${bets.length} plays`;
+
+    const mkCell = (label, bet) => {
+      if (!bet) return `<div class="market-cell"><div class="market-label">${label}</div><div class="market-val mv-skip">SKIP</div></div>`;
+      const v = bet.verdict || 'SKIP';
+      const cls = v.startsWith('BET') ? 'mv-bet' : v.startsWith('LEAN') ? 'mv-lean' : 'mv-skip';
+      const ev = bet.ev != null ? parseFloat(bet.ev) : null;
+      const evHtml = ev != null ? `<div class="ev-val ev-pos">+${ev.toFixed(1)}%</div>` : '';
+      const res = bet.result;
+      const resHtml = res ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:${res==='win'?'var(--green)':res==='loss'?'var(--red)':'var(--amber)'};margin-top:2px">${res}</div>` : '';
+      return `<div class="market-cell"><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}${resHtml}</div>`;
+    };
+
+    grid.innerHTML = games.map(g => {
+      const ml = g.bets.find(b=>b.market==='ml');
+      const rl = g.bets.find(b=>b.market==='rl');
+      const tot = g.bets.find(b=>b.market==='total');
+      const anyBet = ml || rl || tot;
+      const conf = anyBet?.confidence;
+      const sits = (anyBet?.situations||[]).filter(s=>s);
+      const sitHtml = sits.length ? sits.map(s=>`<span class="sit-flag sf-${s}">${s}</span>`).join('') : '';
+      const proj = (anyBet?.proj_away_runs!=null) ? `Proj: ${parseFloat(anyBet.proj_away_runs).toFixed(1)}-${parseFloat(anyBet.proj_home_runs).toFixed(1)} (tot ${parseFloat(anyBet.proj_total||0).toFixed(1)})` : '';
+      const time = g.commence_time ? new Date(g.commence_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/New_York'})+' ET' : '';
+      return `<div class="game-card">
+        <div class="card-header">
+          <div><div class="card-matchup">${g.away_team} @ ${g.home_team}</div><div class="card-meta">${proj}</div></div>
+          <div style="text-align:right"><div class="card-time">${time}</div></div>
+        </div>
+        <div class="card-body">
+          ${sitHtml?`<div class="sit-flags">${sitHtml}</div>`:''}
+          <div class="markets">
+            ${mkCell('ML',ml)}${mkCell('RL',rl)}${mkCell('Total',tot)}
+          </div>
+          ${conf?`<div style="margin-top:6px"><span class="edge-badge ${conf==='HIGH'?'eb-high':conf==='MEDIUM'?'eb-med':'eb-skip'}">${conf}</span></div>`:''}
+        </div>
+      </div>`;
+    }).join('');
   } catch(e) {
     grid.innerHTML = `<div class="empty-state"><div class="empty-title">Error: ${e.message}</div></div>`;
   }
-}
-
-function renderLlmGrid() {
-  const grid = document.getElementById('llm-grid');
-  const subtitle = document.getElementById('llm-subtitle');
-  if (!llmGames || !llmGames.length) {
-    grid.innerHTML = '<div class="empty-state"><div class="empty-title">No games found</div></div>';
-    subtitle.textContent = 'No games';
-    return;
-  }
-  // Build date nav
-  const dateNav = document.getElementById('llm-date-nav');
-  const days = [-2,-1,0,1,2].map(d => { const dt = new Date(currentDate); dt.setDate(dt.getDate()+d); return isoDate(dt); });
-  dateNav.innerHTML = days.map(d => `<button class="date-btn ${d===llmDate?'on':''}" onclick="llmDate='${d}';loadLlmPage()">${d}</button>`).join('');
-
-  // Filter to games with LLM verdicts (analyzed and not all SKIP)
-  const analyzed = llmGames.filter(g => g.analyzed && (g.ml_verdict||g.rl_verdict||g.total_verdict));
-  subtitle.textContent = `${analyzed.length} games analyzed`;
-
-  if (!analyzed.length) {
-    grid.innerHTML = '<div class="empty-state"><div class="empty-title">No LLM plays yet for this date</div></div>';
-    return;
-  }
-
-  grid.innerHTML = analyzed.map(g => {
-    const sits = (g.situations||[]).filter(s=>s);
-    const sitHtml = sits.length ? sits.map(s=>`<span class="sit-flag sf-${s}">${s}</span>`).join('') : '<span class="sit-flag sf-none">no flags</span>';
-    const mkCell = (label, verdict, ev, isBest) => {
-      const v = verdict || 'SKIP';
-      const cls = v.startsWith('BET') ? 'mv-bet' : v.startsWith('LEAN') ? 'mv-lean' : 'mv-skip';
-      const evHtml = ev != null ? `<div class="ev-val ${ev>=10?'ev-pos':ev>=6?'ev-pos':'ev-neg'}">+${parseFloat(ev).toFixed(1)}%</div>` : '';
-      return `<div class="market-cell${isBest?' best':''}"><div class="market-label">${label}</div><div class="market-val ${cls}">${v}</div>${evHtml}</div>`;
-    };
-    const best = g.best_market;
-    const proj = (g.proj_away_runs!=null&&g.proj_home_runs!=null) ? `Proj: ${parseFloat(g.proj_away_runs).toFixed(1)}-${parseFloat(g.proj_home_runs).toFixed(1)} (tot ${parseFloat(g.proj_total||0).toFixed(1)})` : '';
-    const conf = g.confidence ? `<span class="edge-badge ${g.confidence==='HIGH'?'eb-high':g.confidence==='MEDIUM'?'eb-med':'eb-skip'}">${g.confidence}</span>` : '';
-    const final = (g.away_final!=null&&g.home_final!=null) ? `<span style="font-size:11px;color:var(--text);font-family:DM Mono,monospace">Final: ${g.away_final}-${g.home_final} · Total: ${g.actual_total||'?'}</span>` : '';
-    return `<div class="game-card" id="llm-card-${g.id}">
-      <div class="card-header">
-        <div><div class="card-matchup">${g.away_team} @ ${g.home_team}</div><div class="card-meta">${proj}</div></div>
-        <div style="text-align:right"><div class="card-time">${fmtTime(g.commence_time)}</div>${final}</div>
-      </div>
-      <div class="card-body">
-        <div class="sit-flags">${sitHtml}</div>
-        <div class="markets">
-          ${mkCell('ML',g.ml_verdict,g.ml_ev,best==='ml')}
-          ${mkCell('RL',g.rl_verdict,g.rl_ev,best==='rl')}
-          ${mkCell('Total',g.total_verdict,g.total_ev,best==='total')}
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-top:6px">${conf}
-          ${g.pitcher_edge&&g.pitcher_edge!=='EVEN'?`<span style="font-size:11px;color:var(--text);font-family:DM Mono,monospace">Edge: ${g.pitcher_edge}</span>`:''}
-        </div>
-        ${g.situation_text?`<div class="analysis-label">Situation</div><div class="analysis-full">${g.situation_text}</div>`:''}
-        ${g.factors_text?`<div class="analysis-label">Factors</div><div class="analysis-full">${g.factors_text}</div>`:''}
-        ${g.risks_text?`<div class="analysis-label">Risk</div><div class="analysis-full">${g.risks_text}</div>`:''}
-      </div>
-    </div>`;
-  }).join('');
 }
 
 // ── LLM TRACKER ──────────────────────────────────────────────────────────────
