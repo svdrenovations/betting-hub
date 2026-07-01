@@ -1853,9 +1853,9 @@ async function main() {
       // ── LLM BETS — auto-log qualifying plays into llm_bets table ─────────
       try {
         const llmMarkets = [
-          { market: 'ml', verdict: effectiveAnalysis.ml, ev: effectiveAnalysis.mlEV, odds: (effectiveAnalysis.ml||'').includes('AWAY') ? lines.awayML : lines.homeML, rl_line: null, total_line: null },
-          { market: 'rl', verdict: effectiveAnalysis.rl, ev: effectiveAnalysis.rlEV, odds: (effectiveAnalysis.rl||'').includes('AWAY') ? lines.awayRLOdds : lines.homeRLOdds, rl_line: (effectiveAnalysis.rl||'').includes('AWAY') ? String(lines.awayRL||'') : String(lines.homeRL||''), total_line: null },
-          { market: 'total', verdict: effectiveAnalysis.total, ev: effectiveAnalysis.totalEV, odds: (effectiveAnalysis.total||'').includes('OVER') ? lines.overOdds : lines.underOdds, rl_line: null, total_line: String(lines.total||'') },
+          { market: 'ml', verdict: effectiveAnalysis.ml, ev: effectiveAnalysis.mlEV, odds: (effectiveAnalysis.ml||'').includes('AWAY') ? lines.awayML : lines.homeML, rl_line: null, total_line: null, skipped_side: (effectiveAnalysis.ml||'')==='SKIP' ? ((effectiveAnalysis.mlEV||0)>0 ? (parseFloat(lines.awayML)<parseFloat(lines.homeML)?'HOME':'AWAY') : null) : null },
+          { market: 'rl', verdict: effectiveAnalysis.rl, ev: effectiveAnalysis.rlEV, odds: (effectiveAnalysis.rl||'').includes('AWAY') ? lines.awayRLOdds : lines.homeRLOdds, rl_line: (effectiveAnalysis.rl||'').includes('AWAY') ? String(lines.awayRL||'') : String(lines.homeRL||''), total_line: null, skipped_side: (effectiveAnalysis.rl||'')==='SKIP' ? ((effectiveAnalysis.rlEV||0)>0 ? (parseFloat(lines.awayRL)<0?'AWAY':'HOME') : null) : null },
+          { market: 'total', verdict: effectiveAnalysis.total, ev: effectiveAnalysis.totalEV, odds: (effectiveAnalysis.total||'').includes('OVER') ? lines.overOdds : lines.underOdds, rl_line: null, total_line: String(lines.total||''), skipped_side: (effectiveAnalysis.total||'')==='SKIP' ? ((effectiveAnalysis.totalEV||0)>0 ? 'OVER' : null) : null },
         ];
         for (const m of llmMarkets) {
           const ev = parseFloat(m.ev || 0);
@@ -1876,6 +1876,7 @@ async function main() {
             confidence: effectiveAnalysis.confidence || 'LOW',
             rl_line: m.rl_line || null,
             total_line: m.total_line || null,
+            skipped_side: m.skipped_side || null,
             units: 1,
           };
           const existing = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_id=eq.${encodeURIComponent(game.id)}&market=eq.${m.market}&select=id`, {
@@ -1885,7 +1886,7 @@ async function main() {
             await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_id=eq.${encodeURIComponent(game.id)}&market=eq.${m.market}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` },
-              body: JSON.stringify({ verdict: betRow.verdict, ev: betRow.ev, odds: betRow.odds, proj_away_runs: betRow.proj_away_runs, proj_home_runs: betRow.proj_home_runs, proj_total: betRow.proj_total, situations: betRow.situations, confidence: betRow.confidence, rl_line: betRow.rl_line, total_line: betRow.total_line })
+              body: JSON.stringify({ verdict: betRow.verdict, ev: betRow.ev, odds: betRow.odds, proj_away_runs: betRow.proj_away_runs, proj_home_runs: betRow.proj_home_runs, proj_total: betRow.proj_total, situations: betRow.situations, confidence: betRow.confidence, rl_line: betRow.rl_line, total_line: betRow.total_line, skipped_side: betRow.skipped_side })
             });
           } else {
             await fetch(`${SUPABASE_URL}/rest/v1/llm_bets`, {
