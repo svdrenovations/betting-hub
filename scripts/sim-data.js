@@ -97,7 +97,8 @@ async function fetchPitcherRates(playerId, season = SEASON_DEFAULT, isPitcherHom
 
   const seasonERA = parseFloat(seasonStat.era) || LEAGUE_AVG_ERA;
 
-  // ERA blend: season 60%, split 20%, recent 20%
+  // ERA/FIP blend: FIP 50%, ERA 30%, split 10%, recent 10% when FIP available
+  // Falls back to season 60% / split 20% / recent 20% (same as det) when no FIP
   if (pitcherDetail) {
     const splitERA = isPitcherHome && pitcherDetail.homeERA
       ? parseFloat(pitcherDetail.homeERA)
@@ -106,7 +107,13 @@ async function fetchPitcherRates(playerId, season = SEASON_DEFAULT, isPitcherHom
       : seasonERA;
     const rawRecent = parseFloat(pitcherDetail.recentERA || seasonERA);
     const recentERA = Math.min(rawRecent, Math.max(seasonERA * 3.0, 9.0));
-    const blendedERA = (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20);
+    const fip = pitcherDetail.fip ? parseFloat(pitcherDetail.fip) : null;
+    let blendedERA;
+    if (fip && !isNaN(fip) && fip > 1.5 && fip < 9.0) {
+      blendedERA = (fip * 0.50) + (seasonERA * 0.30) + (splitERA * 0.10) + (recentERA * 0.10);
+    } else {
+      blendedERA = (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20);
+    }
     const eraAdj = Math.min(Math.max(blendedERA / Math.max(seasonERA, 0.1), 0.65), 1.55);
 
     if (Math.abs(eraAdj - 1.0) > 0.02) {
