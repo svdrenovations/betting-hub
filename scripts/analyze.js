@@ -1359,7 +1359,7 @@ function pickScheduleGame(games, awayName, homeName, targetTimeMs) { const match
 
 async function settleLlmBets() {
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?result=is.null&select=*`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?result=is.null&verdict=not.eq.SKIP&select=*`, {
       headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
     });
     if (!res.ok) { console.error(`  settleLlmBets query failed: ${res.status}`); return; }
@@ -1853,14 +1853,12 @@ async function main() {
       // ── LLM BETS — auto-log qualifying plays into llm_bets table ─────────
       try {
         const llmMarkets = [
-          { market: 'ml', verdict: effectiveAnalysis.ml, ev: effectiveAnalysis.mlEV, odds: (effectiveAnalysis.ml||'').includes('AWAY') ? lines.awayML : lines.homeML },
-          { market: 'rl', verdict: effectiveAnalysis.rl, ev: effectiveAnalysis.rlEV, odds: (effectiveAnalysis.rl||'').includes('AWAY') ? lines.awayRLOdds : lines.homeRLOdds },
-          { market: 'total', verdict: effectiveAnalysis.total, ev: effectiveAnalysis.totalEV, odds: (effectiveAnalysis.total||'').includes('OVER') ? lines.overOdds : lines.underOdds },
+          { market: 'ml', verdict: effectiveAnalysis.ml, ev: effectiveAnalysis.mlEV, odds: (effectiveAnalysis.ml||'').includes('AWAY') ? lines.awayML : lines.homeML, rl_line: null, total_line: null },
+          { market: 'rl', verdict: effectiveAnalysis.rl, ev: effectiveAnalysis.rlEV, odds: (effectiveAnalysis.rl||'').includes('AWAY') ? lines.awayRLOdds : lines.homeRLOdds, rl_line: (effectiveAnalysis.rl||'').includes('AWAY') ? String(lines.awayRL||'') : String(lines.homeRL||''), total_line: null },
+          { market: 'total', verdict: effectiveAnalysis.total, ev: effectiveAnalysis.totalEV, odds: (effectiveAnalysis.total||'').includes('OVER') ? lines.overOdds : lines.underOdds, rl_line: null, total_line: String(lines.total||'') },
         ];
         for (const m of llmMarkets) {
-          if (!m.verdict || m.verdict === 'SKIP') continue;
           const ev = parseFloat(m.ev || 0);
-          if (ev < 6) continue;
           const betRow = {
             game_id: game.id,
             game_date: new Date(game.commence_time).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }),
@@ -1876,6 +1874,8 @@ async function main() {
             proj_total: effectiveAnalysis.projTotal != null ? parseFloat(effectiveAnalysis.projTotal) : null,
             situations: (effectiveAnalysis.situations || []).filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase())),
             confidence: effectiveAnalysis.confidence || 'LOW',
+            rl_line: m.rl_line || null,
+            total_line: m.total_line || null,
             units: 1,
           };
           const existing = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_id=eq.${encodeURIComponent(game.id)}&market=eq.${m.market}&select=id`, {
@@ -1885,7 +1885,7 @@ async function main() {
             await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_id=eq.${encodeURIComponent(game.id)}&market=eq.${m.market}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` },
-              body: JSON.stringify({ verdict: betRow.verdict, ev: betRow.ev, odds: betRow.odds, proj_away_runs: betRow.proj_away_runs, proj_home_runs: betRow.proj_home_runs, proj_total: betRow.proj_total, situations: betRow.situations, confidence: betRow.confidence })
+              body: JSON.stringify({ verdict: betRow.verdict, ev: betRow.ev, odds: betRow.odds, proj_away_runs: betRow.proj_away_runs, proj_home_runs: betRow.proj_home_runs, proj_total: betRow.proj_total, situations: betRow.situations, confidence: betRow.confidence, rl_line: betRow.rl_line, total_line: betRow.total_line })
             });
           } else {
             await fetch(`${SUPABASE_URL}/rest/v1/llm_bets`, {
@@ -1894,7 +1894,7 @@ async function main() {
               body: JSON.stringify(betRow)
             });
           }
-          console.log(`  📝 LLM bet logged: ${m.market.toUpperCase()} ${m.verdict} EV ${ev.toFixed(1)}%`);
+          if (m.verdict && m.verdict !== 'SKIP') console.log(`  📝 LLM bet logged: ${m.market.toUpperCase()} ${m.verdict} EV ${ev.toFixed(1)}%`);
         }
       } catch(e) { console.log(`  llm_bets insert error: ${e.message}`); }
 
