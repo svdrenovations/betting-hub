@@ -230,12 +230,6 @@ function computeOffenseFactor(teamStats, lineupMatchups, isHome) {
   if (lineupMatchups?.avgOPS) {
     const matchupOPS = parseFloat(lineupMatchups.avgOPS);
     opsFactor = ((matchupOPS * 0.50) + (teamOPS * 0.50)) / LEAGUE_AVG_OPS;
-  } else if (teamStats.last30OPS) {
-    // No lineup matchup data — blend last30 OPS (60%) with season OPS (40%)
-    // Last 30 days is a better proxy for current offense than full season
-    const recent = parseFloat(teamStats.last30OPS);
-    const season = parseFloat(teamStats.ops || LEAGUE_AVG_OPS);
-    opsFactor = ((recent * 0.60) + (season * 0.40)) / LEAGUE_AVG_OPS;
   }
   if (lineupMatchups?.kRate) { const kAdj = 1 - ((parseFloat(lineupMatchups.kRate) - 22.0) * 0.004); opsFactor *= Math.min(Math.max(kAdj, 0.90), 1.10); }
   return Math.min(Math.max(opsFactor, 0.55), 1.55);
@@ -375,8 +369,14 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
   const bullpenRuns = (adjustedBullpenERA / 9) * bullpenIP * kbbAdj;
   const baselineRuns = starterRuns + bullpenRuns;
 
-  // ── Offense factor (same as det) ──
-  const of_ = computeOffenseFactor(offenseStats, offenseMatchups, isOffenseHome);
+  // ── Offense factor — det+ uses PA-weighted matchup OPS when available ──
+  // Build an enhanced matchups object that uses paWeightedOPS if avgOPS is null
+  const enhancedMatchups = offenseMatchups ? {
+    ...offenseMatchups,
+    avgOPS: offenseMatchups.avgOPS || offenseMatchups.paWeightedOPS || null,
+    kRate: offenseMatchups.kRate || offenseMatchups.paKRate || null
+  } : null;
+  const of_ = computeOffenseFactor(offenseStats, enhancedMatchups, isOffenseHome);
   const park = parseFloat(parkFactors?.runFactor || 1.0);
   const wx = computeWeatherRunFactor(weather, parkFactors);
   const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
@@ -746,7 +746,16 @@ async function fetchLineupMatchups(teamId, pitcherId, gameDate) {
     const meaningful = withData.filter(m => m.pa >= 11).length;
     const sampleNote = `${withData.length} of 9 batters with history vs this pitcher (PA-weighted: ${totalWeight.toFixed(1)} effective weight)`;
 
-    return { lineup: lineup.slice(0, 9), meaningful, avgOPS: weightedOPS.toFixed(3), avgAVG: weightedAVG.toFixed(3), kRate, hotBatters, coldBatters, handedness, sample: sampleNote };
+    return {
+      lineup: lineup.slice(0, 9), meaningful, handedness, sample: sampleNote,
+      // avgOPS only set when 3+ batters have 11+ PA — matches original 10 AB cutoff behavior for det
+      avgOPS: meaningful >= 3 ? weightedOPS.toFixed(3) : null,
+      avgAVG: meaningful >= 3 ? weightedAVG.toFixed(3) : null,
+      kRate: meaningful >= 3 ? kRate : null,
+      hotBatters, coldBatters,
+      // Full PA-weighted data for det+ and backtesting
+      paWeightedOPS: weightedOPS.toFixed(3), paWeightedAVG: weightedAVG.toFixed(3), paKRate: kRate, totalWeight: +totalWeight.toFixed(1)
+    };
   } catch(e) { console.log('  Lineup matchup error:', e.message); return null; }
 }
 
@@ -1551,6 +1560,11 @@ async function main() {
       const detVerdicts = (() => {
         const da = parseFloat(detProj.awayRuns), dh = parseFloat(detProj.homeRuns);
         if (isNaN(da) || isNaN(dh)) return {};
+        // If either team hits the floor, data is insufficient — skip all markets
+        if (da <= 3.0 || dh <= 3.0) {
+          console.log(`  ⚠ Det floor hit (${da}-${dh}) — skipping all det verdicts`);
+          return { ml:'SKIP', mlEV:null, rl:'SKIP', rlEV:null, total:'SKIP', totalEV:null };
+        }
         const mu = da - dh, MSD = 4.0, TSD = 5.5;
         const ncdf = x => { const t=1/(1+0.2316419*Math.abs(x)),d=0.3989423*Math.exp(-x*x/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274)))); return x>0?1-p:p; };
         const pA=(1-ncdf((0.5-mu)/MSD)),pH=ncdf((-0.5-mu)/MSD),den=(pA+pH)||1;
