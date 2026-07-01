@@ -270,7 +270,16 @@ function projectRuns({ offenseStats, offenseMatchups, offenseHandedness, isOffen
   const rawRecent = parseFloat(defPitcher?.recentERA || seasonERA);
   const recentERA = Math.min(rawRecent, Math.max(seasonERA * 3.0, 9.0));
   const splitERA = isPitcherHome && defPitcher?.homeERA ? parseFloat(defPitcher.homeERA) : !isPitcherHome && defPitcher?.awayERA ? parseFloat(defPitcher.awayERA) : seasonERA;
-  const starterERA = defPitcher ? (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20) : LEAGUE_AVG_ERA;
+  const blendedERA = defPitcher ? (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20) : LEAGUE_AVG_ERA;
+  // Regress toward league average for small sample pitchers
+  // Under 10 IP: 80% league avg + 20% actual; 10-20 IP: 50/50; 20-40 IP: 20% league avg + 80% actual; 40+ IP: 100% actual
+  const pitcherIP = parseFloat(defPitcher?.ip || 0);
+  let regressionWeight;
+  if (pitcherIP < 10) regressionWeight = 0.80;
+  else if (pitcherIP < 20) regressionWeight = 0.50;
+  else if (pitcherIP < 40) regressionWeight = 0.20;
+  else regressionWeight = 0.0;
+  const starterERA = (blendedERA * (1 - regressionWeight)) + (LEAGUE_AVG_ERA * regressionWeight);
   const starterRuns = (starterERA / 9) * avgIP;
   const bullpenIP = Math.max(0, 9 - avgIP);
   const bullpenERA = parseFloat(defBullpen?.weightedERA || LEAGUE_AVG_ERA);
@@ -294,7 +303,7 @@ function projectRuns({ offenseStats, offenseMatchups, offenseHandedness, isOffen
     runs,
     _debug: {
       seasonERA: +seasonERA.toFixed(2), splitERA: +splitERA.toFixed(2), recentERA: +recentERA.toFixed(2),
-      starterERA: +starterERA.toFixed(2), avgIP: +avgIP.toFixed(1), bullpenERA: +bullpenERA.toFixed(2),
+      starterERA: +starterERA.toFixed(2), pitcherIP: +pitcherIP.toFixed(1), regressionWeight,
       baselineRuns: +baselineRuns.toFixed(3), offenseFactor: +of_.toFixed(3),
       parkFactor: +park.toFixed(3), weatherFactor: +wx.toFixed(3), platoonFactor: +plat.toFixed(3),
       statcastAdj: +statcastAdj.toFixed(3), whiffAdj: +whiffAdj.toFixed(3),
@@ -330,9 +339,7 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
     avgIP = Math.min(Math.max(avgIP + bullpenGameAdj, 2.0), 7.0);
   }
 
-  // ── ERA/FIP blend ──
-  // ERA reflects actual results; FIP reflects skill (removes defense/luck)
-  // Blend 50/50 when FIP available, otherwise fall back to ERA-only blend
+  // ── ERA/FIP blend with IP-based regression to mean ──
   const starterERA = (() => {
     if (!defPitcher) return LEAGUE_AVG_ERA;
     const seasonERA = parseFloat(defPitcher.era || LEAGUE_AVG_ERA);
@@ -342,12 +349,16 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
       : !isPitcherHome && defPitcher.awayERA ? parseFloat(defPitcher.awayERA)
       : seasonERA;
     const fip = defPitcher.fip ? parseFloat(defPitcher.fip) : null;
+    let blended;
     if (fip && !isNaN(fip) && fip > 1.5 && fip < 9.0) {
-      // 50% FIP + 30% ERA + 10% splitERA + 10% recentERA
-      return (fip * 0.50) + (seasonERA * 0.30) + (splitERA * 0.10) + (recentERA * 0.10);
+      blended = (fip * 0.50) + (seasonERA * 0.30) + (splitERA * 0.10) + (recentERA * 0.10);
+    } else {
+      blended = (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20);
     }
-    // No FIP: use same blend as det
-    return (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20);
+    // Regress toward league average for small sample pitchers
+    const pitcherIP = parseFloat(defPitcher.ip || 0);
+    const rw = pitcherIP < 10 ? 0.80 : pitcherIP < 20 ? 0.50 : pitcherIP < 40 ? 0.20 : 0.0;
+    return (blended * (1 - rw)) + (LEAGUE_AVG_ERA * rw);
   })();
 
   const starterRuns = (starterERA / 9) * avgIP;
