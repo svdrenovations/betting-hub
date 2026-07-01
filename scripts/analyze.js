@@ -762,7 +762,17 @@ async function fetchPitcherDetail(pitcherId, venueId = null) {
     if (!season) return throwHand ? { throwHand, homeERA, awayERA } : null;
     const starts = gameLog.filter(g => parseInt(g.stat?.gamesStarted || 0) > 0 || parseFloat(g.stat?.inningsPitched || 0) >= 3).slice(-5);
     const avgIP = starts.length ? (starts.reduce((s, g) => s + parseFloat(g.stat?.inningsPitched || 0), 0) / starts.length).toFixed(1) : null;
-    const last3 = gameLog.slice(-3).map(g => ({ ip: g.stat?.inningsPitched, er: g.stat?.earnedRuns, date: g.date, pitches: g.stat?.numberOfPitches || null }));
+    const last3 = gameLog.slice(-3).map(g => ({
+      ip: g.stat?.inningsPitched,
+      er: g.stat?.earnedRuns,
+      date: g.date,
+      pitches: g.stat?.numberOfPitches || null,
+      isHome: g.isHome ?? null,
+      opponent: g.opponent?.name || null,
+      opponentId: g.opponent?.id || null,
+      win: g.stat?.wins > 0,
+      loss: g.stat?.losses > 0
+    }));
     const lastStartPitches = last3[last3.length-1]?.pitches ? parseInt(last3[last3.length-1].pitches) : null;
     const recentERA = last3.length ? (last3.reduce((s, g) => s + parseFloat(g.er || 0), 0) / Math.max(0.1, last3.reduce((s, g) => s + parseFloat(g.ip || 0), 0)) * 9).toFixed(2) : null;
     const trending = recentERA && season.era ? (parseFloat(recentERA) < parseFloat(season.era) - 0.5 ? 'HOT' : parseFloat(recentERA) > parseFloat(season.era) + 0.5 ? 'COLD' : 'NEUTRAL') : 'UNKNOWN';
@@ -1075,9 +1085,20 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
   if (analysis) {
     Object.assign(row, {
       analyzed: true, analyzed_at: new Date().toISOString(),
-      situations: (analysis.situations||[])
-        .filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase().trim()))
-        .filter(s => !(weather?.weatherNeutralized && (s||'').toLowerCase().trim() === 'weather')),
+      situations: (() => {
+        const sits = (analysis.situations||[])
+          .filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase().trim()))
+          .filter(s => !(weather?.weatherNeutralized && (s||'').toLowerCase().trim() === 'weather'));
+        // Auto-add revenge if pitcher flagged it
+        if (awayPitcherData?.revenge || homePitcherData?.revenge) {
+          if (!sits.includes('revenge')) sits.push('revenge');
+        }
+        // Auto-add debut
+        if (awayPitcherData?.debut || homePitcherData?.debut) {
+          if (!sits.includes('debut')) sits.push('debut');
+        }
+        return sits;
+      })(),
       fade_reason: (() => {
         const faded = (analysis.situations||[]).map(s => (s||'').toLowerCase().trim()).includes('fade');
         if (!faded) return '';
@@ -1358,6 +1379,21 @@ async function main() {
       if (homePitcherInfo) homePitcherInfo.debut = homeDebut;
       if (awayDebut) console.log(`  🚨 MLB DEBUT: ${awayPitcherInfo.name} (${game.away_team})`);
       if (homeDebut) console.log(`  🚨 MLB DEBUT: ${homePitcherInfo.name} (${game.home_team})`);
+
+      // ── REVENGE GAME DETECTION ─────────────────────────────────────────────
+      // Flag if a pitcher's last start was a loss against today's opponent
+      const checkRevenge = (pitcherInfo, opponentName) => {
+        if (!pitcherInfo?.last3?.length) return false;
+        const lastStart = pitcherInfo.last3[pitcherInfo.last3.length - 1];
+        if (!lastStart.loss) return false;
+        const opp = (lastStart.opponent || '').toLowerCase();
+        const target = (opponentName || '').toLowerCase().split(' ').pop();
+        return opp.includes(target) || target.includes(opp.split(' ').pop());
+      };
+      if (awayPitcherInfo) awayPitcherInfo.revenge = checkRevenge(awayPitcherInfo, game.home_team);
+      if (homePitcherInfo) homePitcherInfo.revenge = checkRevenge(homePitcherInfo, game.away_team);
+      if (awayPitcherInfo?.revenge) console.log(`  🔥 REVENGE START: ${awayPitcherInfo.name} (${game.away_team}) — last start was a loss vs ${game.home_team}`);
+      if (homePitcherInfo?.revenge) console.log(`  🔥 REVENGE START: ${homePitcherInfo.name} (${game.home_team}) — last start was a loss vs ${game.away_team}`);
 
       const [awayStatcast, homeStatcast, awayMatchups, homeMatchups] = await Promise.all([
         awayPitcherInfo?.id ? fetchStatcast(awayPitcherInfo.name, awayPitcherInfo.id) : Promise.resolve(null),
