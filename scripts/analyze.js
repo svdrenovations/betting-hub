@@ -313,28 +313,22 @@ function projectRuns({ offenseStats, offenseMatchups, offenseHandedness, isOffen
 
 
 // ── DET+ ENGINE ───────────────────────────────────────────────────────────────
-// Adds: xERA blending, batter Statcast (barrel/hardHit), temperature park factor
-function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isOffenseHome, defPitcher, defStatcast, defPitcherHand, isPitcherHome, defBullpen, parkFactors, weather, batterStatcastList, gameTime, umpire }) {
+// Uses ERA/FIP blend + pitch arsenal vs batter matchup as core signals
+// Removes: dnPitcherAdj, whipAdj, trendingAdj, pitchCountAdj, tempAdj, umpAdj (all noise)
+// Keeps: ERA/FIP blend, bullpen fatigue, kbbAdj, offenseFactor, park, weather, platoon, Statcast
+// Adds: pitch arsenal vs batter swing path matchup score
+function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isOffenseHome, defPitcher, defStatcast, defPitcherHand, isPitcherHome, defBullpen, parkFactors, weather, batterStatcastList, pitcherArsenal }) {
 
-  // IMPROVEMENT 2 & 3: Starter innings with bullpen game detection
+  // ── Starter innings (bullpen game detection) ──
   const avgIPRaw = parseFloat(defPitcher?.avgIP || 6.0);
   let avgIP = Math.min(Math.max(avgIPRaw, 3.0), 7.0);
   let bullpenGameAdj = 0;
   if (defPitcher) {
-    // Signal 1: Low avgIP = opener/bulk pattern
     if (avgIP < 4.5) bullpenGameAdj -= 0.5;
-    // Signal 2: Recent ERA much worse than season ERA = short leash
     if (defPitcher.recentERA && defPitcher.era) {
-      const recentERA = parseFloat(defPitcher.recentERA);
-      const seasonERA = parseFloat(defPitcher.era);
-      if (!isNaN(recentERA) && !isNaN(seasonERA) && recentERA > seasonERA * 1.5 && recentERA > 6.0) bullpenGameAdj -= 0.75;
+      const rERA = parseFloat(defPitcher.recentERA), sERA = parseFloat(defPitcher.era);
+      if (!isNaN(rERA) && !isNaN(sERA) && rERA > sERA * 1.5 && rERA > 6.0) bullpenGameAdj -= 0.75;
     }
-    // Signal 3: Velo drop magnitude
-    if (defStatcast?.veloTrend != null) {
-      const trend = parseFloat(defStatcast.veloTrend);
-      if (!isNaN(trend)) { if (trend < -2.0) bullpenGameAdj -= 1.0; else if (trend < -1.0) bullpenGameAdj -= 0.5; }
-    }
-    // Signal 4: Odds API opener/bullpen note
     if (defPitcher.note) {
       const note = (defPitcher.note || '').toLowerCase();
       if (note.includes('opener') || note.includes('bullpen')) bullpenGameAdj -= 2.0;
@@ -342,150 +336,117 @@ function projectRunsPlus({ offenseStats, offenseMatchups, offenseHandedness, isO
     avgIP = Math.min(Math.max(avgIP + bullpenGameAdj, 2.0), 7.0);
   }
 
-  // ERA blend: xERA takes 40% weight when available
+  // ── ERA/FIP blend ──
+  // ERA reflects actual results; FIP reflects skill (removes defense/luck)
+  // Blend 50/50 when FIP available, otherwise fall back to ERA-only blend
   const starterERA = (() => {
     if (!defPitcher) return LEAGUE_AVG_ERA;
     const seasonERA = parseFloat(defPitcher.era || LEAGUE_AVG_ERA);
     const rawRecent = parseFloat(defPitcher.recentERA || seasonERA);
     const recentERA = Math.min(rawRecent, Math.max(seasonERA * 3.0, 9.0));
-    const splitERA = isPitcherHome && defPitcher.homeERA ? parseFloat(defPitcher.homeERA) : !isPitcherHome && defPitcher.awayERA ? parseFloat(defPitcher.awayERA) : seasonERA;
-    const xERA = defStatcast?.xera ? parseFloat(defStatcast.xera) : null;
-    if (xERA && !isNaN(xERA) && xERA > 1.0 && xERA < 8.0) {
-      return (xERA * 0.40) + (seasonERA * 0.35) + (splitERA * 0.15) + (recentERA * 0.10);
+    const splitERA = isPitcherHome && defPitcher.homeERA ? parseFloat(defPitcher.homeERA)
+      : !isPitcherHome && defPitcher.awayERA ? parseFloat(defPitcher.awayERA)
+      : seasonERA;
+    const fip = defPitcher.fip ? parseFloat(defPitcher.fip) : null;
+    if (fip && !isNaN(fip) && fip > 1.5 && fip < 9.0) {
+      // 50% FIP + 30% ERA + 10% splitERA + 10% recentERA
+      return (fip * 0.50) + (seasonERA * 0.30) + (splitERA * 0.10) + (recentERA * 0.10);
     }
+    // No FIP: use same blend as det
     return (seasonERA * 0.60) + (splitERA * 0.20) + (recentERA * 0.20);
   })();
 
   const starterRuns = (starterERA / 9) * avgIP;
   const bullpenIP = Math.max(0, 9 - avgIP);
 
-  // IMPROVEMENT 1: Bullpen fatigue — taxed arms allow more runs
+  // ── Bullpen ERA + fatigue (geometric mean, 20% cap) ──
   const bullpenERA = parseFloat(defBullpen?.weightedERA || LEAGUE_AVG_ERA);
   const fatigueNote = (defBullpen?.fatigueNote || '').toLowerCase();
   let fatigueMultiplier = 1.0;
-  if (fatigueNote.includes('taxed')) fatigueMultiplier = 1.12;
-  else if (fatigueNote.includes('heavy')) fatigueMultiplier = 1.20;
-  const adjustedBullpenERA = bullpenERA * fatigueMultiplier;
+  if (fatigueNote.includes('taxed')) fatigueMultiplier = 1.06;
+  else if (fatigueNote.includes('heavy')) fatigueMultiplier = 1.10;
+  const eraAdj = Math.min(Math.max(bullpenERA / LEAGUE_AVG_ERA, 0.85), 1.25);
+  const adjustedBullpenERA = bullpenERA * Math.min(Math.sqrt(eraAdj * fatigueMultiplier), 1.20);
 
-  // IMPROVEMENT 3: K-BB% as quality signal on top of ERA
+  // ── K-BB% bullpen quality ──
   const kbbPct = parseFloat(defBullpen?.kbbPct || 0);
-  let kbbAdj = 1.0;
-  if (!isNaN(kbbPct)) {
-    // League avg K-BB% ~14%. Higher = better bullpen (fewer runs), lower = worse
-    kbbAdj = Math.min(Math.max(1 - ((kbbPct - 14) * 0.005), 0.92), 1.08);
-  }
+  const kbbAdj = !isNaN(kbbPct) ? Math.min(Math.max(1 - ((kbbPct - 14) * 0.005), 0.92), 1.08) : 1.0;
 
   const bullpenRuns = (adjustedBullpenERA / 9) * bullpenIP * kbbAdj;
   const baselineRuns = starterRuns + bullpenRuns;
 
+  // ── Offense factor (same as det) ──
   const of_ = computeOffenseFactor(offenseStats, offenseMatchups, isOffenseHome);
   const park = parseFloat(parkFactors?.runFactor || 1.0);
   const wx = computeWeatherRunFactor(weather, parkFactors);
   const plat = computePlatoonRunFactor(defPitcherHand, offenseHandedness);
 
-  // Statcast pitcher adjustments
+  // ── Pitcher Statcast (same as det) ──
   let statcastAdj = 1.0;
   if (defStatcast) {
     if (defStatcast.whiffRate != null) { const w = parseFloat(defStatcast.whiffRate); if (!isNaN(w)) statcastAdj *= Math.min(Math.max(1 - ((w - 25) * 0.010), 0.85), 1.15); }
     if (defStatcast.hardHitRate != null) { const hh = parseFloat(defStatcast.hardHitRate); if (!isNaN(hh)) statcastAdj *= Math.min(Math.max(1 + ((hh - 38) * 0.008), 0.88), 1.12); }
-    // IMPROVEMENT 5: Velo trend with magnitude instead of binary UP/DOWN
-    if (defStatcast.veloTrend != null) {
-      const trend = parseFloat(defStatcast.veloTrend);
-      if (!isNaN(trend)) {
-        if (trend < -2.0) statcastAdj *= 1.09;
-        else if (trend < -1.0) statcastAdj *= 1.05;
-        else if (trend < -0.5) statcastAdj *= 1.02;
-        else if (trend > 2.0) statcastAdj *= 0.93;
-        else if (trend > 1.0) statcastAdj *= 0.96;
-        else if (trend > 0.5) statcastAdj *= 0.98;
-      } else {
-        if (defStatcast.veloTrend === 'DOWN') statcastAdj *= 1.06;
-        else if (defStatcast.veloTrend === 'UP') statcastAdj *= 0.96;
+    if (defStatcast.veloTrend === 'DOWN') statcastAdj *= 1.06;
+    else if (defStatcast.veloTrend === 'UP') statcastAdj *= 0.96;
+  }
+
+  // ── Pitch arsenal vs batter matchup (det+'s unique signal) ──
+  // For each batter with Statcast pitch-type data, compare their weakness vs pitcher's arsenal
+  // Aggregate into a team-level adjustment
+  let arsenalAdj = 1.0;
+  if (pitcherArsenal?.arsenal && batterStatcastList && batterStatcastList.length > 0) {
+    let kMult = 1.0, contactMult = 1.0, battersUsed = 0;
+    for (const batterStat of batterStatcastList) {
+      if (!batterStat?.pitchTypeStats) continue;
+      let batterKMult = 1.0, batterContactMult = 1.0, pitchesUsed = 0;
+      for (const [pt, pitchData] of Object.entries(pitcherArsenal.arsenal)) {
+        const usage = parseFloat(pitchData.pct || 0) / 100;
+        if (usage < 0.10) continue;
+        const batterVsPitch = batterStat.pitchTypeStats[pt];
+        if (!batterVsPitch) continue;
+        const batterWhiff = parseFloat(batterVsPitch.whiffPct || 0);
+        const pitcherWhiff = parseFloat(pitchData.whiffRate || 0);
+        const whiffEdge = (pitcherWhiff - batterWhiff) / 25;
+        batterKMult += whiffEdge * usage * 0.15;
+        const batterHH = parseFloat(batterVsPitch.hardHitPct || 0);
+        batterContactMult += ((batterHH - 38) / 38) * usage * 0.10;
+        pitchesUsed++;
+      }
+      if (pitchesUsed > 0) {
+        kMult += (batterKMult - 1.0);
+        contactMult += (batterContactMult - 1.0);
+        battersUsed++;
       }
     }
-  }
-
-  // Batter Statcast adjustment
-  let batterAdj = 1.0;
-  if (batterStatcastList && batterStatcastList.length > 0) {
-    const valid = batterStatcastList.filter(b => b && b.hardHitRate != null);
-    if (valid.length >= 3) {
-      const avgHH = valid.reduce((s, b) => s + parseFloat(b.hardHitRate || 0), 0) / valid.length;
-      const avgBarrel = valid.reduce((s, b) => s + parseFloat(b.barrelRate || 0), 0) / valid.length;
-      const leagueHH = 38.0, leagueBarrel = 8.0;
-      const hhAdj = Math.min(Math.max(1 + ((avgHH - leagueHH) / leagueHH) * 0.12, 0.90), 1.12);
-      const barrelAdj = Math.min(Math.max(1 + ((avgBarrel - leagueBarrel) / leagueBarrel) * 0.08, 0.92), 1.10);
-      batterAdj = (hhAdj + barrelAdj) / 2;
+    if (battersUsed >= 3) {
+      // Average across batters
+      const avgKMult = 1.0 + (kMult - 1.0) / battersUsed;
+      const avgContactMult = 1.0 + (contactMult - 1.0) / battersUsed;
+      // Higher k = fewer runs; higher contact = more runs
+      const cappedK = Math.min(Math.max(avgKMult, 0.88), 1.12);
+      const cappedC = Math.min(Math.max(avgContactMult, 0.90), 1.10);
+      arsenalAdj = cappedK * cappedC;
+      arsenalAdj = Math.min(Math.max(arsenalAdj, 0.85), 1.15);
     }
   }
 
-  // IMPROVEMENT 4: Lineup matchup quality vs this specific pitcher
-  let matchupAdj = 1.0;
-  if (offenseMatchups && offenseMatchups.meaningful >= 3) {
-    const matchupOPS = parseFloat(offenseMatchups.avgOPS || 0);
-    const leagueOPS = 0.720;
-    if (!isNaN(matchupOPS) && matchupOPS > 0) {
-      matchupAdj = Math.min(Math.max(1 + ((matchupOPS - leagueOPS) / leagueOPS) * 0.15, 0.88), 1.14);
-    }
-  }
-
-  // Temperature park factor
-  let tempAdj = 1.0;
-  if (weather && !weather.dome && weather.temp != null) {
-    const temp = parseFloat(weather.temp);
-    if (temp <= 45) tempAdj = 0.91;
-    else if (temp <= 55) tempAdj = 0.95;
-    else if (temp <= 65) tempAdj = 0.98;
-    else if (temp >= 90) tempAdj = 1.06;
-    else if (temp >= 82) tempAdj = 1.03;
-  }
-
-  // WHIP adjustment
-  let whipAdj = 1.0;
-  if (defPitcher?.whip) { const whip = parseFloat(defPitcher.whip); if (!isNaN(whip) && whip > 0) whipAdj = Math.min(Math.max(whip / 1.30, 0.85), 1.20); }
-
-  // Trending
-  let trendingAdj = 1.0;
-  if (defPitcher?.trending === 'HOT') trendingAdj = 0.95;
-  else if (defPitcher?.trending === 'COLD') trendingAdj = 1.07;
-
-  // Last start pitch count
-  let pitchCountAdj = 1.0;
-  if (defPitcher?.lastStartPitches) { const pc = parseInt(defPitcher.lastStartPitches); if (!isNaN(pc)) { if (pc >= 115) pitchCountAdj = 1.08; else if (pc >= 100) pitchCountAdj = 1.04; } }
-
-  // Day/night pitcher split
-  let dnPitcherAdj = 1.0;
-  if (defPitcher && gameTime != null) {
-    const isDay = (new Date(gameTime).getUTCHours() - 4) < 17;
-    const splitERA = isDay ? parseFloat(defPitcher.dayERA || 0) : parseFloat(defPitcher.nightERA || 0);
-    const seasonERA = parseFloat(defPitcher.era || LEAGUE_AVG_ERA);
-    if (!isNaN(splitERA) && splitERA > 0 && seasonERA > 0) dnPitcherAdj = Math.min(Math.max(splitERA / seasonERA, 0.80), 1.25);
-  }
-
-  // Umpire
-  const umpAdj = umpire?.runFactor ?? 1.0;
-
-  // ── COMPOUND CAP ───────────────────────────────────────────────────────────
-  // 14 factors multiplied together unconstrained let correlated signals (e.g. a
-  // tired starter + hot weather + a hot recent stretch) stack into a 40-50%+ swing
-  // from baseline. Cap the COMBINED adjustment (everything except baselineRuns
-  // itself) to a max deviation of ±28% from neutral (1.0), so the model can still
-  // express a strong lean but can't compound itself into an outlier.
-  const combinedAdj = of_ * park * wx * plat * statcastAdj * batterAdj * matchupAdj * tempAdj * whipAdj * trendingAdj * pitchCountAdj * dnPitcherAdj * umpAdj;
-  const cappedAdj = Math.min(Math.max(combinedAdj, 0.72), 1.28);
+  // ── Compound cap ±15% ──
+  const combinedAdj = of_ * park * wx * plat * statcastAdj * arsenalAdj;
+  const cappedAdj = Math.min(Math.max(combinedAdj, 0.85), 1.15);
 
   const raw = baselineRuns * cappedAdj;
   const finalRuns = +Math.max(3.0, Math.min(raw, 9.5)).toFixed(2);
   return {
     runs: finalRuns,
     _debug: {
-      starterERA: +starterERA.toFixed(2), avgIP: +avgIP.toFixed(1), bullpenGameAdj,
+      starterERA: +starterERA.toFixed(2), fip: defPitcher?.fip || null,
+      avgIP: +avgIP.toFixed(1), bullpenGameAdj,
       bullpenERA: +bullpenERA.toFixed(2), fatigueMultiplier, kbbAdj: +kbbAdj.toFixed(3),
       baselineRuns: +baselineRuns.toFixed(2),
       of_: +of_.toFixed(3), park, wx: +wx.toFixed(3), plat: +plat.toFixed(3),
-      statcastAdj: +statcastAdj.toFixed(3), batterAdj: +batterAdj.toFixed(3), matchupAdj: +matchupAdj.toFixed(3),
-      tempAdj, whipAdj: +whipAdj.toFixed(3), trendingAdj, pitchCountAdj, dnPitcherAdj: +dnPitcherAdj.toFixed(3), umpAdj,
-      combinedAdj: +combinedAdj.toFixed(3), cappedAdj: +cappedAdj.toFixed(3), rawBeforeCap: +raw.toFixed(2)
+      statcastAdj: +statcastAdj.toFixed(3), arsenalAdj: +arsenalAdj.toFixed(3),
+      combinedAdj: +combinedAdj.toFixed(3), cappedAdj: +cappedAdj.toFixed(3),
+      rawBeforeCap: +raw.toFixed(2)
     }
   };
 }
@@ -825,7 +786,21 @@ async function fetchPitcherDetail(pitcherId, venueId = null) {
     const lastStartPitches = last3[last3.length-1]?.pitches ? parseInt(last3[last3.length-1].pitches) : null;
     const recentERA = last3.length ? (last3.reduce((s, g) => s + parseFloat(g.er || 0), 0) / Math.max(0.1, last3.reduce((s, g) => s + parseFloat(g.ip || 0), 0)) * 9).toFixed(2) : null;
     const trending = recentERA && season.era ? (parseFloat(recentERA) < parseFloat(season.era) - 0.5 ? 'HOT' : parseFloat(recentERA) > parseFloat(season.era) + 0.5 ? 'COLD' : 'NEUTRAL') : 'UNKNOWN';
-    return { era: season.era, whip: season.whip, wins: season.wins, losses: season.losses, ip: season.inningsPitched, recentERA, trending, avgIP, throwHand, last3, lastStartPitches, homeERA, awayERA, dayERA, nightERA };
+    // Calculate FIP: ((13*HR) + (3*(BB+HBP)) - (2*K)) / IP + FIP_constant
+    // FIP_constant ≈ 3.15 for 2026 season (keeps FIP on ERA scale)
+    const FIP_CONSTANT = 3.15;
+    let fip = null;
+    const ip = parseFloat(season.inningsPitched || 0);
+    if (ip >= 10) {
+      const hr = parseInt(season.homeRuns || 0);
+      const bb = parseInt(season.baseOnBalls || 0);
+      const hbp = parseInt(season.hitByPitch || 0);
+      const k = parseInt(season.strikeOuts || 0);
+      fip = +( ((13*hr) + (3*(bb+hbp)) - (2*k)) / ip + FIP_CONSTANT ).toFixed(2);
+      // Cap FIP at reasonable range
+      fip = Math.min(Math.max(fip, 1.50), 9.00);
+    }
+    return { era: season.era, fip, whip: season.whip, wins: season.wins, losses: season.losses, ip: season.inningsPitched, recentERA, trending, avgIP, throwHand, last3, lastStartPitches, homeERA, awayERA, dayERA, nightERA };
   } catch(e) { return null; }
 }
 
@@ -1136,6 +1111,7 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
     away_pitcher_avg_ip: awayPitcherData?.avgIP || null, away_pitcher_last_pitches: awayPitcherData?.lastStartPitches || null,
     away_pitcher_home_era: awayPitcherData?.homeERA || null, away_pitcher_away_era: awayPitcherData?.awayERA || null,
     away_pitcher_day_era: awayPitcherData?.dayERA || null, away_pitcher_night_era: awayPitcherData?.nightERA || null,
+    away_pitcher_fip: awayPitcherData?.fip || null,
     away_pitcher_last3: awayPitcherData?.last3 ? JSON.stringify(awayPitcherData.last3) : null,
     away_pitcher_revenge: awayPitcherData?.revenge || false,
     home_pitcher_era: homePitcherData?.era || null, home_pitcher_whip: homePitcherData?.whip || null,
@@ -1143,6 +1119,7 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
     home_pitcher_avg_ip: homePitcherData?.avgIP || null, home_pitcher_last_pitches: homePitcherData?.lastStartPitches || null,
     home_pitcher_home_era: homePitcherData?.homeERA || null, home_pitcher_away_era: homePitcherData?.awayERA || null,
     home_pitcher_day_era: homePitcherData?.dayERA || null, home_pitcher_night_era: homePitcherData?.nightERA || null,
+    home_pitcher_fip: homePitcherData?.fip || null,
     home_pitcher_last3: homePitcherData?.last3 ? JSON.stringify(homePitcherData.last3) : null,
     home_pitcher_revenge: homePitcherData?.revenge || false,
     // ── Full bullpen inputs ──
@@ -1538,8 +1515,11 @@ async function main() {
       // ── DET+ (enhanced det with xERA + batter Statcast + temp adjustment) ─
       const awayBatStatcast = awayMatchups?.lineup?.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null) || [];
       const homeBatStatcast = homeMatchups?.lineup?.slice(0,9).map(b => _statcastCache?.batters?.[String(b.id)] || null) || [];
-      const awayRunProjPlus = projectRunsPlus({ offenseStats: awayStats, offenseMatchups: awayMatchups, offenseHandedness: awayMatchups?.handedness, isOffenseHome: false, defPitcher: homePitcherInfo, defStatcast: homeStatcast, defPitcherHand: homePitcherInfo?.throwHand, isPitcherHome: true, defBullpen: homeBullpen, parkFactors, weather, gameTime: game.commence_time, umpire, batterStatcastList: awayBatStatcast });
-      const homeRunProjPlus = projectRunsPlus({ offenseStats: homeStats, offenseMatchups: homeMatchups, offenseHandedness: homeMatchups?.handedness, isOffenseHome: true, defPitcher: awayPitcherInfo, defStatcast: awayStatcast, defPitcherHand: awayPitcherInfo?.throwHand, isPitcherHome: false, defBullpen: awayBullpen, parkFactors, weather, gameTime: game.commence_time, umpire, batterStatcastList: homeBatStatcast });
+      const awayPitcherArsenal = awayPitcherInfo?.id && _statcastCache?.pitchers?.[String(awayPitcherInfo.id)]?.arsenal ? { arsenal: _statcastCache.pitchers[String(awayPitcherInfo.id)].arsenal } : null;
+      const homePitcherArsenal = homePitcherInfo?.id && _statcastCache?.pitchers?.[String(homePitcherInfo.id)]?.arsenal ? { arsenal: _statcastCache.pitchers[String(homePitcherInfo.id)].arsenal } : null;
+      // Away offense vs home pitcher arsenal; home offense vs away pitcher arsenal
+      const awayRunProjPlus = projectRunsPlus({ offenseStats: awayStats, offenseMatchups: awayMatchups, offenseHandedness: awayMatchups?.handedness, isOffenseHome: false, defPitcher: homePitcherInfo, defStatcast: homeStatcast, defPitcherHand: homePitcherInfo?.throwHand, isPitcherHome: true, defBullpen: homeBullpen, parkFactors, weather, batterStatcastList: awayBatStatcast, pitcherArsenal: homePitcherArsenal });
+      const homeRunProjPlus = projectRunsPlus({ offenseStats: homeStats, offenseMatchups: homeMatchups, offenseHandedness: homeMatchups?.handedness, isOffenseHome: true, defPitcher: awayPitcherInfo, defStatcast: awayStatcast, defPitcherHand: awayPitcherInfo?.throwHand, isPitcherHome: false, defBullpen: awayBullpen, parkFactors, weather, batterStatcastList: homeBatStatcast, pitcherArsenal: awayPitcherArsenal });
       const detPlusProj = { awayRuns: awayRunProjPlus.runs, homeRuns: homeRunProjPlus.runs };
       const detPlusInputs = { away: awayRunProjPlus._debug || null, home: homeRunProjPlus._debug || null };
       console.log(`  DET+ ${game.away_team} ${detPlusProj.awayRuns} - ${game.home_team} ${detPlusProj.homeRuns} (tot ${+(parseFloat(detPlusProj.awayRuns)+parseFloat(detPlusProj.homeRuns)).toFixed(2)})`);
