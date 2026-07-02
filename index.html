@@ -4282,6 +4282,10 @@ async function loadLlmPage() {
 // ── LLM TRACKER ──────────────────────────────────────────────────────────────
 let llmBets = [];
 let llmSort = { col: 'created_at', dir: 'desc' };
+let llmFilter = { market: [], verdict: [], ev: [], conf: [], situation: [], from: '', to: '' };
+function llmFilterToggle(key, v) { const a=llmFilter[key]; const i=a.indexOf(v); if(i>=0)a.splice(i,1); else a.push(v); renderLlmTracker(); renderLlmStats(llmBets, document.getElementById('llmstats-content')); }
+function llmFilterClear(key) { llmFilter[key]=[]; renderLlmTracker(); renderLlmStats(llmBets, document.getElementById('llmstats-content')); }
+function llmFilterDate(key, val) { llmFilter[key]=val; renderLlmTracker(); renderLlmStats(llmBets, document.getElementById('llmstats-content')); }
 
 async function loadLlmTracker() {
   document.getElementById('llmtracker-subtitle').textContent = 'Loading…';
@@ -4312,20 +4316,68 @@ function renderLlmTracker() {
     sub.textContent = 'No bets';
     return;
   }
-  const settled = llmBets.filter(b => b.result && b.verdict !== 'SKIP');
+
+  function evBucket(ev) {
+    if (ev == null) return null;
+    const b = [
+      ['0\u20132.4%',0,2.5],['2.5\u20134.9%',2.5,5],['5\u20137.4%',5,7.5],['7.5\u20139.9%',7.5,10],
+      ['10\u201312.4%',10,12.5],['12.5\u201314.9%',12.5,15],['15\u201317.4%',15,17.5],['17.5\u201319.9%',17.5,20],
+      ['20\u201322.4%',20,22.5],['22.5\u201324.9%',22.5,25],['25%+',25,null]
+    ];
+    for (const [l,lo,hi] of b) { if (hi==null?ev>=lo:ev>=lo&&ev<hi) return l; }
+    return null;
+  }
+
+  const fb = (key,vals,labels,clearLabel) => '<div class="tracker-filters">'
+    + '<button class="filter-btn '+(llmFilter[key].length===0?'on':'')+'" onclick="llmFilterClear(\''+key+'\')">'+clearLabel+'</button>'
+    + vals.map((v,i)=>'<button class="filter-btn '+(llmFilter[key].includes(v)?'on':'')+'" onclick="llmFilterToggle(\''+key+'\',\''+v+'\')">'+labels[i]+'</button>').join('')
+    + '</div>';
+
+  const evLabels = ['0\u20132.4%','2.5\u20134.9%','5\u20137.4%','7.5\u20139.9%','10\u201312.4%','12.5\u201314.9%','15\u201317.4%','17.5\u201319.9%','20\u201322.4%','22.5\u201324.9%','25%+'];
+  const dateInp = (k) => '<input type="date" value="'+(llmFilter[k]||'')+'" onchange="llmFilterDate(\''+k+'\',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">';
+
+  const filterBar = fb('market',['ml','rl','total'],['ML','RL','Total'],'All mkts')
+    + fb('verdict',['BET','LEAN','SKIP'],['BET','LEAN','SKIP'],'All verdicts')
+    + fb('ev', evLabels, evLabels, 'Any EV')
+    + fb('conf',['HIGH','MEDIUM','LOW'],['High','Medium','Low'],'Any conf')
+    + fb('situation',['weather','fade','sharp','debut','series'],['Weather','Fade','Sharp','Debut','Series'],'Any situation')
+    + '<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>'+dateInp('from')+'<span style="font-size:11px;color:var(--text)">To</span>'+dateInp('to')+'</div>';
+
+  function passes(b) {
+    const f = llmFilter;
+    if (f.market.length && !f.market.includes((b.market||'').toLowerCase())) return false;
+    if (f.verdict.length) {
+      const v = b.verdict || 'SKIP';
+      const vType = v.startsWith('BET') ? 'BET' : v.startsWith('LEAN') ? 'LEAN' : 'SKIP';
+      if (!f.verdict.includes(vType)) return false;
+    }
+    if (f.ev.length) {
+      const ev = parseFloat(b.ev);
+      const bkt = evBucket(isNaN(ev)?null:ev);
+      if (!bkt || !f.ev.includes(bkt)) return false;
+    }
+    if (f.conf.length && !f.conf.includes((b.confidence||'').toUpperCase())) return false;
+    if (f.situation.length && !f.situation.some(s => (b.situations||[]).includes(s))) return false;
+    if (f.from && (b.game_date||'') < f.from) return false;
+    if (f.to && (b.game_date||'') > f.to) return false;
+    return true;
+  }
+
+  const filtered = llmBets.filter(passes);
+  const settled = filtered.filter(b => b.result && b.verdict !== 'SKIP');
   const wins = settled.filter(b => b.result === 'win').length;
   const losses = settled.filter(b => b.result === 'loss').length;
   const pushes = settled.filter(b => b.result === 'push').length;
   const pl = settled.reduce((s,b) => s + parseFloat(b.profit_loss||0), 0);
   const pct = settled.length ? Math.round(wins/settled.length*100) : 0;
-  sub.textContent = `${settled.length} settled · ${wins}-${losses}${pushes?'-'+pushes+' push':''} (${pct}%) · ${pl>=0?'+':''}${pl.toFixed(2)}u`;
+  sub.textContent = settled.length + ' settled · ' + wins + '-' + losses + (pushes?'-'+pushes+' push':'') + ' (' + pct + '%) · ' + (pl>=0?'+':'') + pl.toFixed(2) + 'u';
 
   const th = (col, label) => {
     const active = llmSort.col === col;
-    return `<th onclick="llmSetSort('${col}')" style="${active?'color:var(--green)':''}cursor:pointer;user-select:none">${label}${active?(llmSort.dir==='asc'?' ▲':' ▼'):''}</th>`;
+    return '<th onclick="llmSetSort(\''+col+'\')" style="'+(active?'color:var(--green)':'')+'cursor:pointer;user-select:none">'+label+(active?(llmSort.dir==='asc'?' ▲':' ▼'):'')+'</th>';
   };
 
-  const sorted = [...llmBets].sort((a,b) => {
+  const sorted = [...filtered].sort((a,b) => {
     let av = a[llmSort.col], bv = b[llmSort.col];
     if (av == null) av = ''; if (bv == null) bv = '';
     return llmSort.dir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
@@ -4335,7 +4387,7 @@ function renderLlmTracker() {
     const res = b.result;
     const resColor = res==='win'?'var(--green)':res==='loss'?'var(--red)':res==='push'?'var(--amber)':'var(--text)';
     const pl = b.profit_loss != null ? parseFloat(b.profit_loss) : null;
-    const plStr = pl != null ? `<span style="color:${pl>=0?'var(--green)':'var(--red)'}">${pl>=0?'+':''}${pl.toFixed(2)}u</span>` : '—';
+    const plStr = pl != null ? '<span style="color:'+(pl>=0?'var(--green)':'var(--red)')+'"> '+(pl>=0?'+':'')+pl.toFixed(2)+'u</span>' : '—';
     const verdict = b.verdict || 'SKIP';
     const vCls = verdict.startsWith('BET') ? 'mv-bet' : verdict.startsWith('LEAN') ? 'mv-lean' : 'mv-skip';
     const vAction = verdict.startsWith('BET') ? 'BET' : verdict.startsWith('LEAN') ? 'LEAN' : null;
@@ -4348,31 +4400,96 @@ function renderLlmTracker() {
     }
     const predA = b.proj_away_runs != null ? parseFloat(b.proj_away_runs).toFixed(1) : null;
     const predH = b.proj_home_runs != null ? parseFloat(b.proj_home_runs).toFixed(1) : null;
-    const predStr = predA && predH ? `${predA}-${predH}` : '—';
+    const predStr = predA && predH ? predA+'-'+predH : '—';
     const sc = b._scores;
-    const finalStr = sc ? `${sc.away_final}-${sc.home_final}` : '—';
-    return `<tr>
-      <td class="mono" style="font-size:11px">${b.game_date||'—'}</td>
-      <td style="font-size:12px">${b.away_team} @ ${b.home_team}</td>
-      <td class="mono" style="font-size:11px">${(b.market||'').toUpperCase()}</td>
-      <td style="font-size:12px" class="${vCls}">${displayV}</td>
-      <td class="mono" style="font-size:11px;color:var(--green)">${b.ev!=null?'+'+parseFloat(b.ev).toFixed(1)+'%':'—'}</td>
-      <td class="mono" style="font-size:11px">${b.odds||'—'}</td>
-      <td class="mono" style="font-size:11px">${predStr}</td>
-      <td class="mono" style="font-size:11px">${finalStr}</td>
-      <td class="mono" style="font-size:11px">${b.confidence||'—'}</td>
-      <td style="font-size:12px;color:${resColor};font-weight:500">${res||'pending'}</td>
-      <td>${plStr}</td>
-    </tr>`;
+    const finalStr = sc ? sc.away_final+'-'+sc.home_final : '—';
+    return '<tr>'
+      +'<td class="mono" style="font-size:11px">'+(b.game_date||'—')+'</td>'
+      +'<td style="font-size:12px">'+b.away_team+' @ '+b.home_team+'</td>'
+      +'<td class="mono" style="font-size:11px">'+((b.market||'').toUpperCase())+'</td>'
+      +'<td style="font-size:12px" class="'+vCls+'">'+displayV+'</td>'
+      +'<td class="mono" style="font-size:11px;color:var(--green)">'+(b.ev!=null?'+'+parseFloat(b.ev).toFixed(1)+'%':'—')+'</td>'
+      +'<td class="mono" style="font-size:11px">'+(b.odds||'—')+'</td>'
+      +'<td class="mono" style="font-size:11px">'+predStr+'</td>'
+      +'<td class="mono" style="font-size:11px">'+finalStr+'</td>'
+      +'<td class="mono" style="font-size:11px">'+(b.confidence||'—')+'</td>'
+      +'<td style="font-size:12px;color:'+resColor+';font-weight:500">'+(res||'pending')+'</td>'
+      +'<td>'+plStr+'</td>'
+      +'</tr>';
   }).join('');
 
-  el.innerHTML = `<table class="t-table"><thead><tr>${th('game_date','Date')}${th('away_team','Matchup')}${th('market','Mkt')}${th('verdict','Verdict')}${th('ev','EV')}${th('odds','Odds')}${th('proj_away_runs','Pred')}${'<th>Final</th>'}${th('confidence','Conf')}${th('result','Result')}${th('profit_loss','P/L')}</tr></thead><tbody>${rows||'<tr><td colspan="11" style="text-align:center;padding:18px;color:var(--text)">No bets</td></tr>'}</tbody></table>`;
+  el.innerHTML = filterBar + '<table class="t-table" style="margin-top:12px"><thead><tr>'+th('game_date','Date')+th('away_team','Matchup')+th('market','Mkt')+th('verdict','Verdict')+th('ev','EV')+th('odds','Odds')+th('proj_away_runs','Pred')+'<th>Final</th>'+th('confidence','Conf')+th('result','Result')+th('profit_loss','P/L')+'</tr></thead><tbody>'+(rows||'<tr><td colspan="11" style="text-align:center;padding:18px;color:var(--text)">No bets</td></tr>')+'</tbody></table>';
 }
 
 function llmSetSort(col) {
   if (llmSort.col === col) llmSort.dir = llmSort.dir === 'asc' ? 'desc' : 'asc';
   else { llmSort.col = col; llmSort.dir = 'desc'; }
   renderLlmTracker();
+}
+
+async function settleLlmBetsClient(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Settling…'; }
+  let settled = 0, errors = 0;
+  try {
+    // Fetch unsettled non-SKIP bets
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?result=is.null&verdict=not.eq.SKIP&select=*&limit=200`, {
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+    });
+    if (!res.ok) throw new Error('Fetch failed: ' + res.status);
+    const pending = await res.json();
+    if (!pending.length) { alert('No unsettled bets found.'); return; }
+
+    // Get unique dates and fetch scores
+    const dates = [...new Set(pending.map(b => b.game_date))];
+    const scoreMap = new Map();
+    for (const dt of dates) {
+      const gr = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${dt}&select=id,away_final,home_final,total,away_rl&away_final=not.is.null`, {
+        headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
+      });
+      if (gr.ok) { for (const g of await gr.json()) scoreMap.set(g.id, g); }
+    }
+
+    for (const bet of pending) {
+      const g = scoreMap.get(bet.game_id);
+      if (!g || g.away_final == null || g.home_final == null) continue;
+      const af = parseFloat(g.away_final), hf = parseFloat(g.home_final);
+      const tot = af + hf;
+      const v = bet.verdict || '';
+      let result = null;
+
+      if (bet.market === 'ml') {
+        if (v.includes('AWAY')) result = af > hf ? 'win' : af === hf ? 'push' : 'loss';
+        else if (v.includes('HOME')) result = hf > af ? 'win' : af === hf ? 'push' : 'loss';
+      } else if (bet.market === 'rl') {
+        const rlPt = parseFloat(g.away_rl || -1.5);
+        const margin = af - hf;
+        if (v.includes('AWAY')) result = margin > Math.abs(rlPt) ? 'win' : margin === -rlPt ? 'push' : 'loss';
+        else if (v.includes('HOME')) result = margin < rlPt ? 'win' : margin === -rlPt ? 'push' : 'loss';
+      } else if (bet.market === 'total') {
+        const line = parseFloat(g.total) || parseFloat(bet.proj_total);
+        if (!line) continue;
+        if (v.includes('OVER')) result = tot > line ? 'win' : tot === line ? 'push' : 'loss';
+        else if (v.includes('UNDER')) result = tot < line ? 'win' : tot === line ? 'push' : 'loss';
+      }
+
+      if (!result) continue;
+      const odds = parseFloat(bet.odds || -110);
+      const pl = result === 'win' ? (odds > 0 ? +(odds/100).toFixed(2) : +(100/Math.abs(odds)).toFixed(2)) : result === 'loss' ? -1 : 0;
+
+      const pr = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?id=eq.${bet.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, Prefer: 'return=minimal' },
+        body: JSON.stringify({ result, profit_loss: pl, settled_at: new Date().toISOString() })
+      });
+      if (pr.ok) settled++; else errors++;
+    }
+    alert(`Settled ${settled} bet${settled!==1?'s':''}${errors?` (${errors} errors)`:''}. Reloading…`);
+    await loadLlmTracker();
+  } catch(e) {
+    alert('Error: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Settle pending →'; }
+  }
 }
 
 function exportLlmCSV() {
@@ -4400,46 +4517,85 @@ async function loadLlmStats() {
 }
 
 function renderLlmStats(bets, el) {
-  const settled = bets.filter(b => b.result && b.result !== 'push');
-  if (!settled.length) { el.innerHTML = '<div class="empty-state"><div class="empty-title">No settled bets yet</div></div>'; return; }
+  if (!el) return;
 
-  const statBlock = (label, betsArr) => {
-    const w = betsArr.filter(b=>b.result==='win').length;
-    const l = betsArr.filter(b=>b.result==='loss').length;
-    const p = betsArr.filter(b=>b.result==='push').length;
-    const pl = betsArr.reduce((s,b)=>s+parseFloat(b.profit_loss||0),0);
+  function evBucket(ev) {
+    if (ev == null) return null;
+    const b = [
+      ['0\u20132.4%',0,2.5],['2.5\u20134.9%',2.5,5],['5\u20137.4%',5,7.5],['7.5\u20139.9%',7.5,10],
+      ['10\u201312.4%',10,12.5],['12.5\u201314.9%',12.5,15],['15\u201317.4%',15,17.5],['17.5\u201319.9%',17.5,20],
+      ['20\u201322.4%',20,22.5],['22.5\u201324.9%',22.5,25],['25%+',25,null]
+    ];
+    for (const [l,lo,hi] of b) { if (hi==null?ev>=lo:ev>=lo&&ev<hi) return l; }
+    return null;
+  }
+
+  // Apply same llmFilter
+  function passes(b) {
+    const f = llmFilter;
+    if (f.market.length && !f.market.includes((b.market||'').toLowerCase())) return false;
+    if (f.verdict.length) {
+      const v = b.verdict || 'SKIP';
+      const vType = v.startsWith('BET') ? 'BET' : v.startsWith('LEAN') ? 'LEAN' : 'SKIP';
+      if (!f.verdict.includes(vType)) return false;
+    }
+    if (f.ev.length) {
+      const ev = parseFloat(b.ev);
+      const bkt = evBucket(isNaN(ev)?null:ev);
+      if (!bkt || !f.ev.includes(bkt)) return false;
+    }
+    if (f.conf.length && !f.conf.includes((b.confidence||'').toUpperCase())) return false;
+    if (f.situation.length && !f.situation.some(s => (b.situations||[]).includes(s))) return false;
+    if (f.from && (b.game_date||'') < f.from) return false;
+    if (f.to && (b.game_date||'') > f.to) return false;
+    return true;
+  }
+
+  const filtered = bets.filter(passes);
+  const settled = filtered.filter(b => b.result && b.verdict !== 'SKIP');
+  if (!settled.length) { el.innerHTML = '<div class="empty-state"><div class="empty-title">No settled bets match filters</div></div>'; return; }
+
+  const statBlock = (label, arr) => {
+    const s = arr.filter(b => b.result && b.result !== 'push');
+    const w = s.filter(b=>b.result==='win').length;
+    const l = s.filter(b=>b.result==='loss').length;
+    const p = arr.filter(b=>b.result==='push').length;
+    const pl = arr.reduce((acc,b)=>acc+parseFloat(b.profit_loss||0),0);
     const pct = (w+l) ? Math.round(w/(w+l)*100) : 0;
     const plColor = pl>=0?'var(--green)':'var(--red)';
-    return `<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;min-width:160px">
-      <div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text);margin-bottom:6px">${label}</div>
-      <div style="font-size:14px;font-weight:600">${w}-${l}${p?'-'+p:''} <span style="font-size:12px;color:var(--text)">(${pct}%)</span></div>
-      <div style="font-size:13px;color:${plColor};font-family:DM Mono,monospace;margin-top:2px">${pl>=0?'+':''}${pl.toFixed(2)}u</div>
-    </div>`;
+    if (!s.length && !p) return '';
+    return '<div style="background:var(--s2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;min-width:140px">'
+      +'<div style="font-size:11px;font-family:DM Mono,monospace;color:var(--text);margin-bottom:6px">'+label+'</div>'
+      +'<div style="font-size:14px;font-weight:600">'+w+'-'+l+(p?'-'+p+' push':'')+'<span style="font-size:12px;color:var(--text)"> ('+pct+'%)</span></div>'
+      +'<div style="font-size:13px;color:'+plColor+';font-family:DM Mono,monospace;margin-top:2px">'+(pl>=0?'+':'')+pl.toFixed(2)+'u</div>'
+      +'</div>';
   };
 
-  const byMarket = ['ml','rl','total'].map(m => statBlock(m.toUpperCase(), settled.filter(b=>b.market===m)));
-  const byVerdict = ['BET','LEAN'].map(v => statBlock(v, settled.filter(b=>(b.verdict||'').startsWith(v))));
+  const section = (title, blocks) => {
+    const filtered2 = blocks.filter(Boolean);
+    if (!filtered2.length) return '';
+    return '<div style="margin-bottom:1.5rem">'
+      +'<div style="font-size:12px;font-family:DM Mono,monospace;color:var(--green);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px">'+title+'</div>'
+      +'<div style="display:flex;gap:10px;flex-wrap:wrap">'+filtered2.join('')+'</div>'
+      +'</div>';
+  };
+
+  const evLabels = ['0\u20132.4%','2.5\u20134.9%','5\u20137.4%','7.5\u20139.9%','10\u201312.4%','12.5\u201314.9%','15\u201317.4%','17.5\u201319.9%','20\u201322.4%','22.5\u201324.9%','25%+'];
+  const evRanges = [[0,2.5],[2.5,5],[5,7.5],[7.5,10],[10,12.5],[12.5,15],[15,17.5],[17.5,20],[20,22.5],[22.5,25],[25,null]];
+
+  const byMkt = ['ml','rl','total'].map(m => statBlock(m.toUpperCase(), settled.filter(b=>b.market===m)));
+  const byVerdict = ['BET','LEAN','SKIP'].map(v => statBlock(v, filtered.filter(b=>(b.verdict||'SKIP').startsWith(v))));
   const byConf = ['HIGH','MEDIUM','LOW'].map(c => statBlock(c, settled.filter(b=>b.confidence===c)));
-  const byEV = [
-    statBlock('6-9.9%', settled.filter(b=>parseFloat(b.ev||0)>=6&&parseFloat(b.ev||0)<10)),
-    statBlock('10-14.9%', settled.filter(b=>parseFloat(b.ev||0)>=10&&parseFloat(b.ev||0)<15)),
-    statBlock('15-19.9%', settled.filter(b=>parseFloat(b.ev||0)>=15&&parseFloat(b.ev||0)<20)),
-    statBlock('20%+', settled.filter(b=>parseFloat(b.ev||0)>=20)),
-  ];
+  const byEV = evLabels.map((l,i) => {
+    const [lo,hi] = evRanges[i];
+    return statBlock(l, settled.filter(b=>{ const e=parseFloat(b.ev||0); return hi==null?e>=lo:e>=lo&&e<hi; }));
+  });
 
-  const section = (title, blocks) => `
-    <div style="margin-bottom:1.5rem">
-      <div style="font-size:12px;font-family:DM Mono,monospace;color:var(--green);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px">${title}</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">${blocks.join('')}</div>
-    </div>`;
-
-  el.innerHTML = `
-    ${section('Overall', [statBlock('All plays', settled)])}
-    ${section('By Market', byMarket)}
-    ${section('By Verdict', byVerdict)}
-    ${section('By Confidence', byConf)}
-    ${section('By EV Bucket', byEV)}
-  `;
+  el.innerHTML = section('Overall',[statBlock('All plays',settled)])
+    + section('By Market', byMkt)
+    + section('By Verdict', byVerdict)
+    + section('By Confidence', byConf)
+    + section('By EV Bucket', byEV);
 }
 
 </script>
@@ -4504,7 +4660,10 @@ function renderLlmStats(bets, el) {
 <div class="container">
   <div class="topbar">
     <div class="topbar-left"><h2>LLM Tracker</h2><p id="llmtracker-subtitle">Auto-logged LLM plays</p></div>
-    <button class="btn" onclick="exportLlmCSV()">Export CSV</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn" onclick="settleLlmBetsClient(this)">Settle pending →</button>
+      <button class="btn" onclick="exportLlmCSV()">Export CSV</button>
+    </div>
   </div>
   <div class="t-table-wrap" id="llmtracker-table">
     <div class="empty-state"><div class="empty-title">Loading…</div></div>
