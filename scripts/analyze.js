@@ -1724,20 +1724,47 @@ async function main() {
       const detPlusVerdicts = (() => {
         const da = parseFloat(detPlusProj.awayRuns), dh = parseFloat(detPlusProj.homeRuns);
         if (isNaN(da) || isNaN(dh)) return {};
+
+        // Floor suppression — both teams at/near floor = coin flip, skip all markets
+        if (da <= 3.1 && dh <= 3.1) {
+          console.log(`  ⚠ Det+ floor hit both sides (${da}-${dh}) — skipping all markets`);
+          return { ml:'SKIP', mlEV:null, rl:'SKIP', rlEV:null, total:'SKIP', totalEV:null };
+        }
+
         const mu = da - dh, MSD = 4.0, TSD = 5.5;
         const ncdf = x => { const t=1/(1+0.2316419*Math.abs(x)),d2=0.3989423*Math.exp(-x*x/2),p=d2*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274)))); return x>0?1-p:p; };
         const pA=(1-ncdf((0.5-mu)/MSD)),pH=ncdf((-0.5-mu)/MSD),den=(pA+pH)||1;
         const paMl=pA/den, phMl=pH/den;
         const mlAway = evPct(paMl, lines.awayML), mlHome = evPct(phMl, lines.homeML);
-        const mlSide = pickSide([{ev:mlAway,label:'AWAY'},{ev:mlHome,label:'HOME'}]);
+        let mlSide = pickSide([{ev:mlAway,label:'AWAY'},{ev:mlHome,label:'HOME'}]);
         let aRL=parseFloat(lines.awayRL),hRL=parseFloat(lines.homeRL);
         if(isNaN(aRL))aRL=mu>0?-1.5:1.5; if(isNaN(hRL))hRL=mu>0?1.5:-1.5;
         const pArl=1-ncdf((-aRL-mu)/MSD), pHrl=ncdf((hRL-mu)/MSD);
         const rlAway=evPct(pArl,lines.awayRLOdds), rlHome=evPct(pHrl,lines.homeRLOdds);
-        const rlSide=pickSide([{ev:rlAway,label:'AWAY'},{ev:rlHome,label:'HOME'}]);
+        let rlSide=pickSide([{ev:rlAway,label:'AWAY'},{ev:rlHome,label:'HOME'}]);
+
+        // Extreme park + weather suppression on ML/RL
+        // High park factor (Coors-type) + weather dampening = too volatile for directional bet
+        const pf = parkFactors?.runFactor || 1.0;
+        const wxF = computeWeatherRunFactor(weather, parkFactors);
+        if (pf >= 1.12 && wxF < 1.0) {
+          console.log(`  ⚠ Det+ ML/RL suppressed: high park factor (${pf}) + weather dampening (wx ${wxF.toFixed(3)}) — volatile combination`);
+          mlSide = null; rlSide = null;
+        }
+
         const proj=da+dh, totalLine=parseFloat(lines.total)||NaN;
         let totSide=null;
-        if(!isNaN(totalLine)){const pO=1/(1+Math.exp(1.7*(totalLine-proj)/TSD));const ovEV=evPct(pO,lines.overOdds),unEV=evPct(1-pO,lines.underOdds);totSide=pickSide([{ev:ovEV,label:'OVER'},{ev:unEV,label:'UNDER'}]);}
+        if(!isNaN(totalLine)){
+          const pO=1/(1+Math.exp(1.7*(totalLine-proj)/TSD));
+          const ovEV=evPct(pO,lines.overOdds),unEV=evPct(1-pO,lines.underOdds);
+          totSide=pickSide([{ev:ovEV,label:'OVER'},{ev:unEV,label:'UNDER'}]);
+
+          // Extreme market gap suppression — proj total far below line signals the market has information we don't
+          if (totSide?.label === 'UNDER' && proj / totalLine < 0.65) {
+            console.log(`  ⚠ Det+ UNDER suppressed: proj ${proj.toFixed(1)} vs line ${totalLine} (${(proj/totalLine*100).toFixed(0)}% of line) — market gap too extreme`);
+            totSide = null;
+          }
+        }
         return {
           ml: mlSide?verdictFor(mlSide.ev,mlSide.label):'SKIP', mlEV: mlSide?mlSide.ev:null,
           rl: rlSide?verdictFor(rlSide.ev,rlSide.label):'SKIP', rlEV: rlSide?rlSide.ev:null,
