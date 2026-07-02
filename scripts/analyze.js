@@ -1900,10 +1900,19 @@ async function main() {
 
       // ── LLM BETS — auto-log qualifying plays into llm_bets table ─────────
       try {
+        // For SKIP plays, determine which side had positive EV (or was swept)
+        const sweepFadeSide = effectiveAnalysis.sweepFade
+          ? (effectiveAnalysis.sweepFade.includes('AWAY') ? 'AWAY' : 'HOME') : null;
+        const mlSkipSide = (effectiveAnalysis.ml||'')==='SKIP'
+          ? (sweepFadeSide ? `sweep:${sweepFadeSide}` : ((effectiveAnalysis.mlEV||0)>0 ? (parseFloat(lines.awayML)>parseFloat(lines.homeML)?'HOME':'AWAY') : null)) : null;
+        const rlSkipSide = (effectiveAnalysis.rl||'')==='SKIP'
+          ? (sweepFadeSide ? `sweep:${sweepFadeSide}` : ((effectiveAnalysis.rlEV||0)>0 ? (parseFloat(lines.awayRL)<0?'AWAY':'HOME') : null)) : null;
+        const totSkipSide = (effectiveAnalysis.total||'')==='SKIP'
+          ? ((effectiveAnalysis.totalEV||0)>0 ? 'OVER' : null) : null;
         const llmMarkets = [
-          { market: 'ml', verdict: effectiveAnalysis.ml, ev: effectiveAnalysis.mlEV, odds: (effectiveAnalysis.ml||'').includes('AWAY') ? lines.awayML : lines.homeML, rl_line: null, total_line: null, skipped_side: (effectiveAnalysis.ml||'')==='SKIP' ? ((effectiveAnalysis.mlEV||0)>0 ? (parseFloat(lines.awayML)<parseFloat(lines.homeML)?'HOME':'AWAY') : null) : null },
-          { market: 'rl', verdict: effectiveAnalysis.rl, ev: effectiveAnalysis.rlEV, odds: (effectiveAnalysis.rl||'').includes('AWAY') ? lines.awayRLOdds : lines.homeRLOdds, rl_line: (effectiveAnalysis.rl||'').includes('AWAY') ? String(lines.awayRL||'') : String(lines.homeRL||''), total_line: null, skipped_side: (effectiveAnalysis.rl||'')==='SKIP' ? ((effectiveAnalysis.rlEV||0)>0 ? (parseFloat(lines.awayRL)<0?'AWAY':'HOME') : null) : null },
-          { market: 'total', verdict: effectiveAnalysis.total, ev: effectiveAnalysis.totalEV, odds: (effectiveAnalysis.total||'').includes('OVER') ? lines.overOdds : lines.underOdds, rl_line: null, total_line: String(lines.total||''), skipped_side: (effectiveAnalysis.total||'')==='SKIP' ? ((effectiveAnalysis.totalEV||0)>0 ? 'OVER' : null) : null },
+          { market: 'ml', verdict: effectiveAnalysis.ml, ev: effectiveAnalysis.mlEV, odds: (effectiveAnalysis.ml||'').includes('AWAY') ? lines.awayML : lines.homeML, rl_line: null, total_line: null, skipped_side: mlSkipSide },
+          { market: 'rl', verdict: effectiveAnalysis.rl, ev: effectiveAnalysis.rlEV, odds: (effectiveAnalysis.rl||'').includes('AWAY') ? lines.awayRLOdds : lines.homeRLOdds, rl_line: (effectiveAnalysis.rl||'').includes('AWAY') ? String(lines.awayRL||'') : String(lines.homeRL||''), total_line: null, skipped_side: rlSkipSide },
+          { market: 'total', verdict: effectiveAnalysis.total, ev: effectiveAnalysis.totalEV, odds: (effectiveAnalysis.total||'').includes('OVER') ? lines.overOdds : lines.underOdds, rl_line: null, total_line: String(lines.total||''), skipped_side: totSkipSide },
         ];
         for (const m of llmMarkets) {
           const ev = parseFloat(m.ev || 0);
