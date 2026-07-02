@@ -80,10 +80,82 @@ function pitchingToRates(s) {
   return { rates: ev, pa: bf };
 }
 
-async function fetchBatterRates(playerId, season = SEASON_DEFAULT) {
-  const data = await getJSON(`${MLB}/people/${playerId}/stats?stats=season&group=hitting&season=${season}&sportId=1&gameType=R`);
-  const conv = hittingToRates(data?.stats?.[0]?.splits?.[0]?.stat || {});
-  return conv ? { ...regressVector(conv.rates, conv.pa), pa: conv.pa } : { ...LEAGUE, pa: 0 };
+async function fetchBatterRates(playerId, pitcherHand = null, season = SEASON_DEFAULT) {
+  // Fetch season stats, platoon split, and last 30 days in parallel
+  const today = new Date();
+  const thirtyDaysAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const fmt = (d) => d.toISOString().split('T')[0];
+  const splitCode = pitcherHand === 'L' ? 'vl' : pitcherHand === 'R' ? 'vr' : null;
+
+  const [seasonData, splitData, recentData] = await Promise.all([
+    getJSON(`${MLB}/people/${playerId}/stats?stats=season&group=hitting&season=${season}&sportId=1&gameType=R`),
+    splitCode ? getJSON(`${MLB}/people/${playerId}/stats?stats=statSplits&group=hitting&season=${season}&sitCodes=${splitCode}&sportId=1&gameType=R`) : Promise.resolve(null),
+    getJSON(`${MLB}/people/${playerId}/stats?stats=byDateRange&group=hitting&season=${season}&startDate=${fmt(thirtyDaysAgo)}&endDate=${fmt(today)}&sportId=1&gameType=R`),
+  ]);
+
+  const seasonStat = seasonData?.stats?.[0]?.splits?.[0]?.stat || {};
+  const splitStat = splitData?.stats?.[0]?.splits?.[0]?.stat || null;
+  const recentStat = recentData?.stats?.[0]?.splits?.[0]?.stat || null;
+
+  const seasonConv = hittingToRates(seasonStat);
+  const splitConv = splitStat ? hittingToRates(splitStat) : null;
+  const recentConv = recentStat ? hittingToRates(recentStat) : null;
+
+  if (!seasonConv) return { ...LEAGUE, pa: 0 };
+
+  // Regress each component separately then blend
+  const seasonReg = { ...regressVector(seasonConv.rates, seasonConv.pa), pa: seasonConv.pa };
+
+  // Blend weights: season 55%, platoon split 30%, last 30 days 15%
+  // Adjust weights down for platoon/recent if sample is tiny
+  const splitWeight = (splitConv && splitConv.pa >= 30) ? 0.30 : 0;
+  const recentWeight = (recentConv && recentConv.pa >= 20) ? 0.15 : 0;
+  const seasonWeight = 1 - splitWeight - recentWeight;
+
+  if (splitWeight === 0 && recentWeight === 0) return seasonReg;
+
+  const splitReg = splitConv ? { ...regressVector(splitConv.rates, splitConv.pa) } : null;
+  const recentReg = recentConv ? { ...regressVector(recentConv.rates, recentConv.pa) } : null;
+
+  // Weighted blend of rates
+  const blended = {};
+  for (const e of EVENTS) {
+    blended[e] = seasonReg[e] * seasonWeight
+      + (splitReg ? splitReg[e] * splitWeight : 0)
+      + (recentReg ? recentReg[e] * recentWeight : 0);
+  }
+  // Renormalize
+  const sum = EVENTS.reduce((a, e) => a + (blended[e] || 0), 0);
+  for (const e of EVENTS) blended[e] = (blended[e] || 0) / sum;
+
+  return { ...blended, pa: seasonConv.pa };
+}
+
+// Fetch typical lineup batters from active roster when lineup not posted
+async function fetchRosterBatterRates(teamId, season = SEASON_DEFAULT) {
+  try {
+    const data = await getJSON(`${MLB}/teams/${teamId}/roster?rosterType=active&season=${season}`);
+    if (!data?.roster) return null;
+    // Get position players (not pitchers)
+    const batters = data.roster
+      .filter(p => p.position?.code !== '1' && p.position?.type !== 'Pitcher')
+      .slice(0, 12);
+    if (batters.length < 5) return null;
+    const stats = await Promise.all(
+      batters.map(p => getJSON(`${MLB}/people/${p.person.id}/stats?stats=season&group=hitting&season=${season}&sportId=1&gameType=R`))
+    );
+    const rates = [];
+    for (const s of stats) {
+      const stat = s?.stats?.[0]?.splits?.[0]?.stat || {};
+      const conv = hittingToRates(stat);
+      if (conv && conv.pa >= 30) {
+        rates.push({ ...regressVector(conv.rates, conv.pa), pa: conv.pa });
+      }
+    }
+    if (rates.length < 5) return null;
+    // Return top 9 by PA (most playing time = likely starters)
+    return rates.sort((a, b) => b.pa - a.pa).slice(0, 9);
+  } catch(e) { return null; }
 }
 
 // IMPROVEMENT 1: ERA blend for pitcher rates
@@ -336,6 +408,47 @@ function applyParkFactor(rates, parkRunFactor) {
   return adjusted;
 }
 
+// Apply batter Statcast data — hard hit rate, exit velocity, whiff rate affect base rates
+function applyBatterStatcast(batterRates, batterStatcast) {
+  if (!batterStatcast) return batterRates;
+  const adjusted = { ...batterRates };
+
+  // Hard hit rate — above 45% = elite contact, below 30% = weak contact
+  if (batterStatcast.hardHitRate != null) {
+    const hh = parseFloat(batterStatcast.hardHitRate);
+    if (!isNaN(hh) && hh > 0) {
+      const hhMult = Math.min(Math.max(hh / 38.0, 0.82), 1.20);
+      // Hard hit affects extra base hits more than singles
+      adjusted.d = (adjusted.d || 0) * hhMult;
+      adjusted.hr = (adjusted.hr || 0) * hhMult;
+      adjusted.s = (adjusted.s || 0) * Math.min(Math.max(hh / 38.0, 0.90), 1.10); // singles less affected
+    }
+  }
+
+  // Exit velocity — above 90mph avg is elite, below 85mph is weak
+  if (batterStatcast.avgExitVelo != null) {
+    const ev = parseFloat(batterStatcast.avgExitVelo);
+    if (!isNaN(ev) && ev > 0) {
+      const evMult = Math.min(Math.max((ev - 88) * 0.012 + 1.0, 0.88), 1.15);
+      adjusted.d  = (adjusted.d  || 0) * evMult;
+      adjusted.hr = (adjusted.hr || 0) * evMult;
+    }
+  }
+
+  // Chase rate / whiff rate — high whiff = more strikeouts
+  if (batterStatcast.whiffRate != null) {
+    const w = parseFloat(batterStatcast.whiffRate);
+    if (!isNaN(w) && w > 0) {
+      const kMult = Math.min(Math.max(w / 25.0, 0.80), 1.30);
+      adjusted.k = (adjusted.k || 0) * kMult;
+    }
+  }
+
+  const sum = EVENTS.reduce((a, e) => a + (adjusted[e] || 0), 0);
+  for (const e of EVENTS) adjusted[e] = (adjusted[e] || 0) / sum;
+  return adjusted;
+}
+
 // IMPROVEMENT 5: Arsenal matchup adjustments (from sim+)
 const applyArsenalToBatter = (baterRates, pitcherArsenal, batterStatcast) => {
   if (!pitcherArsenal?.arsenal || !batterStatcast?.pitchTypeStats) return baterRates;
@@ -395,7 +508,31 @@ async function buildMatchup({
   const parkHR = parkFactors?.hrFactor ?? parkRunFactor;
   const wxHR = weather?.wxHR ?? 1.0;
   const umpRunFactor = umpire?.runFactor ?? 1.0;
-  const baseCtx = { ...ctx, parkHR, wxHR, umpRunFactor };
+
+  // Compute wxOff — wind/temp effect on ALL offensive outcomes (singles, doubles, triples, HRs)
+  // Separate from wxHR which only affected home runs
+  const wxOff = (() => {
+    if (!weather || weather.dome) return 1.0;
+    const wxHRVal = weather?.wxHR ?? 1.0;
+    // wxHR already captures temp + HR wind. Extract base temp factor and wind-direction-on-hits
+    // Temp effect on all hits (hot = more hard contact, cold = less)
+    const temp = weather.temp ?? 72;
+    let mult = 1.0;
+    if (temp >= 90) mult *= 1.04;
+    else if (temp >= 82) mult *= 1.02;
+    else if (temp <= 45) mult *= 0.93;
+    else if (temp <= 55) mult *= 0.96;
+    // Wind direction effect on all hits (out = more runs, in = fewer)
+    const effWind = weather.effWind ?? 0;
+    const flags = weather.flags ?? [];
+    if (flags.some(f => (f||'').includes('OUT to CF') || (f||'').includes('SIGNIFICANT OVER')))
+      mult *= 1 + Math.min(effWind * 0.006, 0.12);
+    else if (flags.some(f => (f||'').includes('IN from CF') || (f||'').includes('SIGNIFICANT UNDER')))
+      mult *= 1 - Math.min(effWind * 0.006, 0.10);
+    return +mult.toFixed(4);
+  })();
+
+  const baseCtx = { ...ctx, parkHR, wxHR, wxOff, umpRunFactor };
 
   // IMPROVEMENT 1: Home/away OPS split adjustments
   // Teams play differently at home vs away — use split OPS to scale batter rates
@@ -460,12 +597,12 @@ async function buildMatchup({
   const homeCloserAdj = bullpenCloserAdj(homeBullpenObj);
 
   const [awayBats, homeBats, awaySP, homeSP, awayPen, homePen] = await Promise.all([
-    Promise.all(awayLineupIds.slice(0, 9).map(id => fetchBatterRates(id, season))),
-    Promise.all(homeLineupIds.slice(0, 9).map(id => fetchBatterRates(id, season))),
+    Promise.all(awayLineupIds.slice(0, 9).map(id => fetchBatterRates(id, homeStarterHand, season))),
+    Promise.all(homeLineupIds.slice(0, 9).map(id => fetchBatterRates(id, awayStarterHand, season))),
     fetchPitcherRates(awayStarterId, season, false, awayPitcherDetail),
     fetchPitcherRates(homeStarterId, season, true,  homePitcherDetail),
-    fetchBullpenRates(awayTeamId, season, awayBullpenObj),   // IMPROVEMENT 2
-    fetchBullpenRates(homeTeamId, season, homeBullpenObj),   // IMPROVEMENT 2
+    fetchBullpenRates(awayTeamId, season, awayBullpenObj),
+    fetchBullpenRates(homeTeamId, season, homeBullpenObj),
   ]);
 
   let awaySPAdj = applyStatcastToPitcher(awaySP, awayStarterStatcast);
@@ -501,10 +638,12 @@ async function buildMatchup({
     return ip;
   }
 
-  // Apply platoon + arsenal to batters
-  const awayBatsAdj = applyPlatoonToLineup(awayBats, awayLineupHandedness, homeStarterHand)
+  // Apply Statcast + arsenal to batters — platoon already baked into split rates from API
+  const awayBatsAdj = awayBats
+    .map((b, i) => applyBatterStatcast(b, awayBatterStatcast?.[i]))
     .map((b, i) => applyArsenalToBatter(b, homeArsenal, awayBatterStatcast?.[i]));
-  const homeBatsAdj = applyPlatoonToLineup(homeBats, homeLineupHandedness, awayStarterHand)
+  const homeBatsAdj = homeBats
+    .map((b, i) => applyBatterStatcast(b, homeBatterStatcast?.[i]))
     .map((b, i) => applyArsenalToBatter(b, awayArsenal, homeBatterStatcast?.[i]));
 
   // IMPROVEMENT 2: Lineup matchup quality vs this specific pitcher
@@ -581,11 +720,25 @@ async function buildMatchup({
     away: { lineup: awayBatsFinal, starter: awaySPAdj, pen: awayPenFinal, starterInnings: homeIP },
     home: { lineup: homeBatsFinal, starter: homeSPAdj, pen: homePenFinal, starterInnings: awayIP },
     ctx: baseCtx, totalLine, f5Line,
+    // Store everything for nightly backtesting — never throw away inputs
+    storedRates: {
+      awayBatterRates: awayBatsFinal.map(b => ({ bb: +b.bb.toFixed(5), k: +b.k.toFixed(5), s: +b.s.toFixed(5), d: +b.d.toFixed(5), t: +b.t.toFixed(5), hr: +b.hr.toFixed(5), out: +b.out.toFixed(5) })),
+      homeBatterRates: homeBatsFinal.map(b => ({ bb: +b.bb.toFixed(5), k: +b.k.toFixed(5), s: +b.s.toFixed(5), d: +b.d.toFixed(5), t: +b.t.toFixed(5), hr: +b.hr.toFixed(5), out: +b.out.toFixed(5) })),
+      awaySPRates: { bb: +awaySPAdj.bb.toFixed(5), k: +awaySPAdj.k.toFixed(5), s: +awaySPAdj.s.toFixed(5), d: +awaySPAdj.d.toFixed(5), t: +awaySPAdj.t.toFixed(5), hr: +awaySPAdj.hr.toFixed(5), out: +awaySPAdj.out.toFixed(5) },
+      homeSPRates: { bb: +homeSPAdj.bb.toFixed(5), k: +homeSPAdj.k.toFixed(5), s: +homeSPAdj.s.toFixed(5), d: +homeSPAdj.d.toFixed(5), t: +homeSPAdj.t.toFixed(5), hr: +homeSPAdj.hr.toFixed(5), out: +homeSPAdj.out.toFixed(5) },
+      awayPenRates: { bb: +awayPenFinal.bb.toFixed(5), k: +awayPenFinal.k.toFixed(5), s: +awayPenFinal.s.toFixed(5), d: +awayPenFinal.d.toFixed(5), t: +awayPenFinal.t.toFixed(5), hr: +awayPenFinal.hr.toFixed(5), out: +awayPenFinal.out.toFixed(5) },
+      homePenRates: { bb: +homePenFinal.bb.toFixed(5), k: +homePenFinal.k.toFixed(5), s: +homePenFinal.s.toFixed(5), d: +homePenFinal.d.toFixed(5), t: +homePenFinal.t.toFixed(5), hr: +homePenFinal.hr.toFixed(5), out: +homePenFinal.out.toFixed(5) },
+      awayStarterInnings: homeIP, homeStarterInnings: awayIP,
+      ctx: baseCtx,
+    },
   };
 }
 
 async function simulateGame(args, N = 20000) {
-  return simulate(await buildMatchup(args), N);
+  const matchup = await buildMatchup(args);
+  const result = simulate(matchup, N);
+  result.storedRates = matchup.storedRates;
+  return result;
 }
 
-module.exports = { fetchBatterRates, fetchPitcherRates, fetchBullpenRates, buildMatchup, simulateGame };
+module.exports = { fetchBatterRates, fetchRosterBatterRates, fetchPitcherRates, fetchBullpenRates, buildMatchup, simulateGame };
