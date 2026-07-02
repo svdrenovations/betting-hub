@@ -1303,6 +1303,8 @@ async function upsertGame(game, lines, analysis, anData, f5Lines, weather, awayP
       proj_home_runs: analysis.projHomeRuns != null ? Math.max(3.0, parseFloat(analysis.projHomeRuns)).toFixed(1) : null,
       sim_away_runs: analysis.simAwayRuns ?? null, sim_home_runs: analysis.simHomeRuns ?? null,
       sim_inputs: analysis.simInputs ? JSON.stringify(analysis.simInputs) : null,
+      sim_batter_rates: analysis.simBatterRates ? JSON.stringify(analysis.simBatterRates) : null,
+      sim_pitcher_rates: analysis.simPitcherRates ? JSON.stringify(analysis.simPitcherRates) : null,
       det_proj_away: detProj?.awayRuns ?? null, det_proj_home: detProj?.homeRuns ?? null,
       det_inputs: JSON.stringify({ away: detProj?.awayDebug || null, home: detProj?.homeDebug || null }),
       det_ml_verdict: detVerdicts?.ml ?? null, det_ml_ev: detVerdicts?.mlEV ?? null,
@@ -1812,10 +1814,28 @@ async function main() {
             weatherFlags: weather?.flags || [],
             simMeanAway: simProbs.meanAway, simMeanHome: simProbs.meanHome,
             pAwayML: simProbs.pAwayML, pHomeML: simProbs.pHomeML,
-            pOver: simProbs.pOver, pUnder: simProbs.pUnder
+            pOver: simProbs.pOver, pUnder: simProbs.pUnder,
+            pAwayBy2: simProbs.pAwayBy2, pHomeBy2: simProbs.pHomeBy2,
+            pF5Over: simProbs.pF5Over, pF5Under: simProbs.pF5Under,
           };
+          // Store full batter and pitcher rate vectors for nightly backtesting
+          analysis.simBatterRates = simProbs.storedRates ? {
+            awayBatterRates: simProbs.storedRates.awayBatterRates,
+            homeBatterRates: simProbs.storedRates.homeBatterRates,
+          } : null;
+          analysis.simPitcherRates = simProbs.storedRates ? {
+            awaySPRates: simProbs.storedRates.awaySPRates,
+            homeSPRates: simProbs.storedRates.homeSPRates,
+            awayPenRates: simProbs.storedRates.awayPenRates,
+            homePenRates: simProbs.storedRates.homePenRates,
+            awayStarterInnings: simProbs.storedRates.awayStarterInnings,
+            homeStarterInnings: simProbs.storedRates.homeStarterInnings,
+            ctx: simProbs.storedRates.ctx,
+          } : null;
+          const SIM_MIN_EV = 0.1;
+          function simVerdictFor(ev, label) { if (ev == null || isNaN(ev) || ev < SIM_MIN_EV) return 'SKIP'; return `${ev >= VERDICT_BET ? 'BET' : 'LEAN'} ${label}`; }
           const simMl = pickSide([{ ev: evPct(simProbs.pAwayML, lines.awayML), label: 'AWAY' }, { ev: evPct(simProbs.pHomeML, lines.homeML), label: 'HOME' }]);
-          analysis.simMl = simMl ? verdictFor(simMl.ev, simMl.label) : 'SKIP';
+          analysis.simMl = simMl ? simVerdictFor(simMl.ev, simMl.label) : 'SKIP';
           analysis.simMlEV = simMl ? simMl.ev : null;
           const aRLpt = parseFloat(lines.awayRL);
           const awayIsFav = !isNaN(aRLpt) ? aRLpt < 0 : (parseFloat(lines.awayML) < parseFloat(lines.homeML));
@@ -1823,10 +1843,10 @@ async function main() {
           if (simProbs.pAwayBy2 != null && simProbs.pHomeBy2 != null) { simPAwayRL = awayIsFav ? simProbs.pAwayBy2 : (1 - simProbs.pHomeBy2); simPHomeRL = awayIsFav ? (1 - simProbs.pAwayBy2) : simProbs.pHomeBy2; }
           else { simPAwayRL = simProbs.pAwayRL; simPHomeRL = simProbs.pHomeRL; }
           const simRl = pickSide([{ ev: evPct(simPAwayRL, lines.awayRLOdds), label: 'AWAY' }, { ev: evPct(simPHomeRL, lines.homeRLOdds), label: 'HOME' }]);
-          analysis.simRl = simRl ? verdictFor(simRl.ev, simRl.label) : 'SKIP';
+          analysis.simRl = simRl ? simVerdictFor(simRl.ev, simRl.label) : 'SKIP';
           analysis.simRlEV = simRl ? simRl.ev : null;
           const simTot = pickSide([{ ev: evPct(simProbs.pOver, lines.overOdds), label: 'OVER' }, { ev: evPct(simProbs.pUnder, lines.underOdds), label: 'UNDER' }]);
-          analysis.simTotal = simTot ? verdictFor(simTot.ev, simTot.label) : 'SKIP';
+          analysis.simTotal = simTot ? simVerdictFor(simTot.ev, simTot.label) : 'SKIP';
           analysis.simTotalEV = simTot ? simTot.ev : null;
           console.log(`  SIM ${game.away_team} ${analysis.simAwayRuns} - ${analysis.simHomeRuns} ${game.home_team} | ML:${analysis.simMl} RL:${analysis.simRl} TOT:${analysis.simTotal}`);
         }
