@@ -4244,7 +4244,11 @@ async function loadLlmPage() {
       else if (v.includes('UNDER')) side = 'UNDER';
       const displayVerdict = action && side ? `${action} ${side}` : v;
       // For SKIP cells, show which side the EV belongs to
-      const skipSideHtml = (v === 'SKIP' && bet.skipped_side) ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--amber);margin-top:1px">${bet.skipped_side==='AWAY'?teamAbbr(awayTeam):bet.skipped_side==='HOME'?teamAbbr(homeTeam):bet.skipped_side} side</div>` : '';
+      const isSweepFade = bet.skipped_side && bet.skipped_side.startsWith('sweep:');
+      const skipSideName = isSweepFade ? bet.skipped_side.replace('sweep:','') : bet.skipped_side;
+      const skipSideHtml = (v === 'SKIP' && bet.skipped_side)
+        ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--amber);margin-top:1px">${isSweepFade?'🔄 SWEEP FADE':(skipSideName==='AWAY'?teamAbbr(awayTeam):skipSideName==='HOME'?teamAbbr(homeTeam):skipSideName)+' side'}</div>`
+        : '';
       const lineStr = bet.rl_line ? `${bet.rl_line} ` : bet.total_line ? `o/u ${bet.total_line} ` : '';
       const oddsHtml = (lineStr || bet.odds) ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);margin-top:1px">${lineStr}${bet.odds||''}</div>` : '';
       return `<div class="market-cell"><div class="market-label">${label}</div><div class="market-val ${cls}">${displayVerdict}</div>${skipSideHtml}${oddsHtml}${evHtml}${resHtml}</div>`;
