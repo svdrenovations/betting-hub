@@ -1718,7 +1718,8 @@ async function main() {
       // Away offense vs home pitcher arsenal; home offense vs away pitcher arsenal
       const awayRunProjPlus = projectRunsPlus({ offenseStats: awayStats, offenseMatchups: awayMatchups, offenseHandedness: awayMatchups?.handedness, isOffenseHome: false, defPitcher: homePitcherInfo, defStatcast: homeStatcast, defPitcherHand: homePitcherInfo?.throwHand, isPitcherHome: true, defBullpen: homeBullpen, parkFactors, weather, batterStatcastList: awayBatStatcast, pitcherArsenal: homePitcherArsenal });
       const homeRunProjPlus = projectRunsPlus({ offenseStats: homeStats, offenseMatchups: homeMatchups, offenseHandedness: homeMatchups?.handedness, isOffenseHome: true, defPitcher: awayPitcherInfo, defStatcast: awayStatcast, defPitcherHand: awayPitcherInfo?.throwHand, isPitcherHome: false, defBullpen: awayBullpen, parkFactors, weather, batterStatcastList: homeBatStatcast, pitcherArsenal: awayPitcherArsenal });
-      const detPlusProj = { awayRuns: awayRunProjPlus.runs, homeRuns: homeRunProjPlus.runs };
+      const detPlusProj = { awayRuns: awayRunProjPlus.runs, homeRuns: homeRunProjPlus.runs,
+        awayDebug: awayRunProjPlus._debug || {}, homeDebug: homeRunProjPlus._debug || {} };
       const detPlusInputs = { away: awayRunProjPlus._debug || null, home: homeRunProjPlus._debug || null };
       console.log(`  DET+ ${game.away_team} ${detPlusProj.awayRuns} - ${game.home_team} ${detPlusProj.homeRuns} (tot ${+(parseFloat(detPlusProj.awayRuns)+parseFloat(detPlusProj.homeRuns)).toFixed(2)})`);
       // Derive det+ verdicts using same ncdf math as client scoreboard
@@ -1760,7 +1761,35 @@ async function main() {
           const ovEV=evPct(pO,lines.overOdds),unEV=evPct(1-pO,lines.underOdds);
           totSide=pickSide([{ev:ovEV,label:'OVER'},{ev:unEV,label:'UNDER'}]);
 
-          // Extreme market gap suppression — proj total far below line signals the market has information we don't
+          // Rule 4: Both teams near floor (≤3.15) → suppress ML direction (too uncertain)
+        if (da <= 3.15 && dh <= 3.15 && mlSide) {
+          console.log(`  ⚠ Det+ both near floor (${da}-${dh}) — suppressing ML`);
+          mlSide = null;
+        }
+
+        // Rule 5: Away team at floor (≤3.2) AND home modestly ahead (0-2 run gap) → suppress ML/RL
+        if (da <= 3.2 && (dh - da) > 0 && (dh - da) < 2.0) {
+          console.log(`  ⚠ Det+ away floor (${da}) + small gap (${(dh-da).toFixed(2)}) — suppressing ML/RL`);
+          mlSide = null; rlSide = null;
+        }
+
+        // Rule 6: Both teams weather boosting runs (wx>1.04) AND projection close to line (>85%) → suppress UNDER
+        const awayWx = parseFloat(detPlusProj.awayDebug?.wx || 1.0);
+        const homeWx = parseFloat(detPlusProj.homeDebug?.wx || 1.0);
+        if (totSide?.label === 'UNDER' && awayWx > 1.04 && homeWx > 1.04 && proj / (totalLine || 9) > 0.85) {
+          console.log(`  ⚠ Det+ under suppressed: wx ${awayWx}/${homeWx} both boosting + proj/line ${(proj/totalLine).toFixed(2)} > 0.85`);
+          totSide = null;
+        }
+
+        // Rule 7: Away capped at ceiling + combinedAdj signal lost + market has away as big dog → suppress ML/RL AWAY
+        const awayCapped = parseFloat(detPlusProj.awayDebug?.cappedAdj || 0);
+        const awayCombined = parseFloat(detPlusProj.awayDebug?.combinedAdj || 0);
+        const awayMLOdds = parseFloat(lines.awayML || 0);
+        if (mlSide?.label === 'AWAY' && awayCapped >= 1.149 && awayCombined > 1.25 && awayMLOdds > 150) {
+          console.log(`  ⚠ Det+ ML/RL AWAY suppressed: away at ceiling (${awayCombined.toFixed(3)}) + market dog (${awayMLOdds})`);
+          mlSide = null;
+          if (rlSide?.label === 'AWAY') rlSide = null;
+        }
           if (totSide?.label === 'UNDER' && proj / totalLine < 0.65) {
             console.log(`  ⚠ Det+ UNDER suppressed: proj ${proj.toFixed(1)} vs line ${totalLine} (${(proj/totalLine*100).toFixed(0)}% of line) — market gap too extreme`);
             totSide = null;
