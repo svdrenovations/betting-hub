@@ -4374,7 +4374,8 @@ function renderLlmTracker() {
   const pushes = settled.filter(b => b.result === 'push').length;
   const pl = settled.reduce((s,b) => s + parseFloat(b.profit_loss||0), 0);
   const pct = settled.length ? Math.round(wins/settled.length*100) : 0;
-  sub.textContent = settled.length + ' settled · ' + wins + '-' + losses + (pushes?'-'+pushes+' push':'') + ' (' + pct + '%) · ' + (pl>=0?'+':'') + pl.toFixed(2) + 'u';
+  const pending = filtered.filter(b => !b.result && b.verdict !== 'SKIP').length;
+  sub.textContent = settled.length + ' settled · ' + wins + '-' + losses + (pushes?'-'+pushes+' push':'') + ' (' + pct + '%) · ' + (pl>=0?'+':'') + pl.toFixed(2) + 'u' + (pending ? ' · ' + pending + ' pending' : '');
 
   const th = (col, label) => {
     const active = llmSort.col === col;
