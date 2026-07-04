@@ -1811,6 +1811,13 @@ async function main() {
             totSide = null;
           }
         }
+
+        // Rule 8: Projection too close to line on UNDER — edge is too thin when ratio > 0.90
+        if (totSide?.label === 'UNDER' && !isNaN(totalLine) && proj / totalLine > 0.90) {
+          console.log(`  ⚠ Det+ under suppressed: proj/line ${(proj/totalLine).toFixed(2)} > 0.90 — margin too thin`);
+          totSide = null;
+        }
+
         return {
           ml: mlSide?verdictFor(mlSide.ev,mlSide.label):'SKIP', mlEV: mlSide?mlSide.ev:null,
           rl: rlSide?verdictFor(rlSide.ev,rlSide.label):'SKIP', rlEV: rlSide?rlSide.ev:null,
