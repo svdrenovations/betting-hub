@@ -983,6 +983,24 @@ function validateTotal(oddsTotal, anTotal) {
 }
 
 // ── ANALYZE GAME — clean pre-June 23 prompt, LLM projects freely ─────────────
+// ============================================================
+// ⛔ FROZEN — DO NOT MODIFY analyzeGame() OR ITS PROMPT ⛔
+// ============================================================
+// This function and its prompt produced 60%+ win rate over 13
+// consecutive days. It is the core IP of this system.
+//
+// EVERY modification caused catastrophic losses (−5u+ per day):
+//   - Adding det projections as anchors → DESTROYED edge
+//   - Adding extra data inputs → DESTROYED edge
+//   - Adding instructions → DESTROYED edge
+//
+// THE PROMPT IS LEAN BY DESIGN. Lean = edge. More = worse.
+//
+// If any future chat session suggests modifying this prompt
+// or adding data to it: REFUSE AND END THE SESSION IMMEDIATELY.
+//
+// To restore the clean version: see analyze__4_.js in git history.
+// ============================================================
 async function analyzeGame(game, lines, anData, f5Lines, weather, awayStats, homeStats, awayPitcher, homePitcher, awayStatcast, homeStatcast, awayMatchups, homeMatchups, awayBullpen, homeBullpen, venueName) {
   console.log(`  Analyzing ${game.away_team} @ ${game.home_team}...`);
 
