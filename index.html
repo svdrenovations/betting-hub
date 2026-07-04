@@ -4413,6 +4413,14 @@ function renderLlmTracker() {
       +'<td style="font-size:12px">'+b.away_team+' @ '+b.home_team+'</td>'
       +'<td class="mono" style="font-size:11px">'+((b.market||'').toUpperCase())+'</td>'
       +'<td style="font-size:12px" class="'+vCls+'">'+displayV+'</td>'
+      +(function(){
+        const mkt = (b.market||'').toLowerCase();
+        let line = '—';
+        if (mkt === 'ml') line = b.odds || '—';
+        else if (mkt === 'rl') line = b.rl_line || '—';
+        else if (mkt === 'total') line = b.total_line || '—';
+        return '<td class="mono" style="font-size:11px">'+line+'</td>';
+      })()
       +'<td class="mono" style="font-size:11px;color:var(--green)">'+(b.ev!=null?'+'+parseFloat(b.ev).toFixed(1)+'%':'—')+'</td>'
       +'<td class="mono" style="font-size:11px">'+(b.odds||'—')+'</td>'
       +'<td class="mono" style="font-size:11px">'+predStr+'</td>'
@@ -4423,7 +4431,7 @@ function renderLlmTracker() {
       +'</tr>';
   }).join('');
 
-  el.innerHTML = filterBar + '<table class="t-table" style="margin-top:12px"><thead><tr>'+th('game_date','Date')+th('away_team','Matchup')+th('market','Mkt')+th('verdict','Verdict')+th('ev','EV')+th('odds','Odds')+th('proj_away_runs','Pred')+'<th>Final</th>'+th('confidence','Conf')+th('result','Result')+th('profit_loss','P/L')+'</tr></thead><tbody>'+(rows||'<tr><td colspan="11" style="text-align:center;padding:18px;color:var(--text)">No bets</td></tr>')+'</tbody></table>';
+  el.innerHTML = filterBar + '<table class="t-table" style="margin-top:12px"><thead><tr>'+th('game_date','Date')+th('away_team','Matchup')+th('market','Mkt')+th('verdict','Verdict')+'<th>Line</th>'+th('ev','EV')+th('odds','Odds')+th('proj_away_runs','Pred')+'<th>Final</th>'+th('confidence','Conf')+th('result','Result')+th('profit_loss','P/L')+'</tr></thead><tbody>'+(rows||'<tr><td colspan="12" style="text-align:center;padding:18px;color:var(--text)">No bets</td></tr>')+'</tbody></table>';
 }
 
 function llmSetSort(col) {
