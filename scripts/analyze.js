@@ -1763,13 +1763,11 @@ async function main() {
         const rlAway=evPct(pArl,lines.awayRLOdds), rlHome=evPct(pHrl,lines.homeRLOdds);
         let rlSide=pickSide([{ev:rlAway,label:'AWAY'},{ev:rlHome,label:'HOME'}]);
 
-        // Extreme park + weather suppression on ML/RL
-        // High park factor (Coors-type) + weather dampening = too volatile for directional bet
+        // Extreme park suppression — Coors and similar hitter parks are too volatile for any market
         const pf = parkFactors?.runFactor || 1.0;
-        const wxF = computeWeatherRunFactor(weather, parkFactors);
-        if (pf >= 1.12 && wxF < 1.0) {
-          console.log(`  ⚠ Det+ ML/RL suppressed: high park factor (${pf}) + weather dampening (wx ${wxF.toFixed(3)}) — volatile combination`);
-          mlSide = null; rlSide = null;
+        if (pf >= 1.12) {
+          console.log(`  ⚠ Det+ Coors suppression (park ${pf}) — skipping all markets`);
+          return { ml:'SKIP', mlEV:null, rl:'SKIP', rlEV:null, total:'SKIP', totalEV:null };
         }
 
         const proj=da+dh, totalLine=parseFloat(lines.total)||NaN;
