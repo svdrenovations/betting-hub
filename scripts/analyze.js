@@ -1409,8 +1409,14 @@ async function settleLlmBets() {
         } else if (bet.market === 'rl') {
           const rlPt = parseFloat(g.away_rl || -1.5);
           const margin = af - hf;
-          if (v.includes('AWAY')) result = margin > Math.abs(rlPt) ? 'win' : margin === -rlPt ? 'push' : 'loss';
-          else if (v.includes('HOME')) result = margin < rlPt ? 'win' : margin === -rlPt ? 'push' : 'loss';
+          if (v.includes('AWAY')) {
+            const awayCovers = rlPt < 0 ? margin > Math.abs(rlPt) : margin + rlPt > 0;
+            result = awayCovers ? 'win' : (margin + rlPt === 0 ? 'push' : 'loss');
+          } else if (v.includes('HOME')) {
+            const hRL = parseFloat(g.home_rl || 1.5);
+            const homeCovers = hRL < 0 ? (hf - af) > Math.abs(hRL) : (hf - af) + hRL > 0;
+            result = homeCovers ? 'win' : ((hf - af) + hRL === 0 ? 'push' : 'loss');
+          }
         } else if (bet.market === 'total') {
           const line = parseFloat(bet.proj_total) || null;
           const actualLine = parseFloat(g.total) || line;
