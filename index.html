@@ -4191,6 +4191,17 @@ async function renderPlus(){
   const table=`<div class="t-table-wrap"><table class="t-table"><thead><tr>${th('date','Date')}${th('matchup','Matchup')}${th('source','Source')}${th('market','Mkt')}${th('side','Side')}${th('line','Line')}${th('ev','EV')}${th('result','Res')}${th('units','Units')}<th></th></tr></thead><tbody>${rows||`<tr><td colspan="10" style="color:var(--text);padding:18px;text-align:center">No plays match.</td></tr>`}</tbody></table></div>`;
   el.innerHTML=fBar+stats+table;
 }
+// ── LLM MARKET KEY ────────────────────────────────────────────────────────────
+function llmMarketKey(b) {
+  const mkt = (b.market||'').toLowerCase();
+  const odds = parseFloat(b.odds||'0');
+  const rl = b.rl_line||'';
+  if (mkt === 'ml') return odds < 0 ? 'ml-fav' : 'ml-dog';
+  if (mkt === 'rl') return rl.includes('-') ? 'rl-minus' : 'rl-plus';
+  if (mkt === 'total') return (b.verdict||'').includes('OVER') ? 'over' : 'under';
+  return mkt;
+}
+
 // ── LLM PAGE ─────────────────────────────────────────────────────────────────
 let llmDate = null;
 
@@ -4340,7 +4351,7 @@ function renderLlmTracker() {
   const evLabels = ['0\u20132.4%','2.5\u20134.9%','5\u20137.4%','7.5\u20139.9%','10\u201312.4%','12.5\u201314.9%','15\u201317.4%','17.5\u201319.9%','20\u201322.4%','22.5\u201324.9%','25%+'];
   const dateInp = (k) => '<input type="date" value="'+(llmFilter[k]||'')+'" onchange="llmFilterDate(\''+k+'\',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">';
 
-  const filterBar = fb('market',['ml','rl','total'],['ML','RL','Total'],'All mkts')
+  const filterBar = fb('market',['ml-fav','ml-dog','rl-minus','rl-plus','over','under'],['ML Fav','ML Dog','RL -1.5','RL +1.5','Over','Under'],'All mkts')
     + fb('verdict',['BET','LEAN','SKIP'],['BET','LEAN','SKIP'],'All verdicts')
     + fb('ev', evLabels, evLabels, 'Any EV')
     + fb('conf',['HIGH','MEDIUM','LOW'],['High','Medium','Low'],'Any conf')
@@ -4349,7 +4360,7 @@ function renderLlmTracker() {
 
   function passes(b) {
     const f = llmFilter;
-    if (f.market.length && !f.market.includes((b.market||'').toLowerCase())) return false;
+    if (f.market.length && !f.market.includes(llmMarketKey(b))) return false;
     if (f.verdict.length) {
       const v = b.verdict || 'SKIP';
       const vType = v.startsWith('BET') ? 'BET' : v.startsWith('LEAN') ? 'LEAN' : 'SKIP';
@@ -4476,8 +4487,16 @@ async function settleLlmBetsClient(btn) {
       } else if (bet.market === 'rl') {
         const rlPt = parseFloat(g.away_rl || -1.5);
         const margin = af - hf;
-        if (v.includes('AWAY')) result = margin > Math.abs(rlPt) ? 'win' : margin === -rlPt ? 'push' : 'loss';
-        else if (v.includes('HOME')) result = margin < rlPt ? 'win' : margin === -rlPt ? 'push' : 'loss';
+        if (v.includes('AWAY')) {
+          // rlPt < 0 means away is fav (e.g. -1.5), needs to win by more than 1.5
+          // rlPt > 0 means away is dog (e.g. +1.5), covers if they lose by less than 1.5 or win
+          const awayCovers = rlPt < 0 ? margin > Math.abs(rlPt) : margin + rlPt > 0;
+          result = awayCovers ? 'win' : (margin + rlPt === 0 ? 'push' : 'loss');
+        } else if (v.includes('HOME')) {
+          const hRL = parseFloat(g.home_rl || 1.5);
+          const homeCovers = hRL < 0 ? (hf - af) > Math.abs(hRL) : (hf - af) + hRL > 0;
+          result = homeCovers ? 'win' : ((hf - af) + hRL === 0 ? 'push' : 'loss');
+        }
       } else if (bet.market === 'total') {
         const line = parseFloat(g.total) || parseFloat(bet.proj_total);
         if (!line) continue;
@@ -4546,7 +4565,7 @@ function renderLlmStats(bets, el) {
   // Apply same llmFilter
   function passes(b) {
     const f = llmFilter;
-    if (f.market.length && !f.market.includes((b.market||'').toLowerCase())) return false;
+    if (f.market.length && !f.market.includes(llmMarketKey(b))) return false;
     if (f.verdict.length) {
       const v = b.verdict || 'SKIP';
       const vType = v.startsWith('BET') ? 'BET' : v.startsWith('LEAN') ? 'LEAN' : 'SKIP';
