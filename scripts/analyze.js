@@ -1391,7 +1391,7 @@ async function settleLlmBets() {
     for (const bet of bets) {
       try {
         if (!gameCache.has(bet.game_date)) {
-          const gr = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=id,away_team,home_team,away_final,home_final,total,away_rl`, {
+          const gr = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${bet.game_date}&select=id,away_team,home_team,away_final,home_final,total,away_rl,home_rl`, {
             headers: { 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` }
           });
           gameCache.set(bet.game_date, gr.ok ? await gr.json() : []);
