@@ -239,7 +239,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
     <a class="nav-tab" href="?page=scoreboard" onclick="goPage('scoreboard',this);return false;">Scoreboard</a>
     <a class="nav-tab" href="?page=plus" onclick="goPage('plus',this);return false;">Plus</a>
     <a class="nav-tab" href="?page=test" onclick="goPage('test',this);return false;">Test</a>
-    <a class="nav-tab" href="?page=llm" onclick="goPage('llm',this);return false;" style="color:var(--green)">LLM</a>
+    <a class="nav-tab" href="?page=llm" onclick="goPage('llm',this);return false;" style="color:var(--green)">Add'l Models</a>
     <a class="nav-tab" href="?page=llmtracker" onclick="goPage('llmtracker',this);return false;" style="color:var(--green)">LLM Tracker</a>
     <a class="nav-tab" href="?page=llmstats" onclick="goPage('llmstats',this);return false;" style="color:var(--green)">LLM Stats</a>
   </div>
@@ -2926,10 +2926,9 @@ async function loadGames(forceRefresh=false){
 
 function getTopEdge(g){
   if(!g.analyzed)return'none';
-  const detML=deriveDetVerdict('ML',g),detRL=deriveDetVerdict('RL',g),detTot=deriveDetVerdict('TOTAL',g);
-  const dets=[detML,detRL,detTot];
-  if(dets.some(d=>d&&d.verdict&&d.verdict.startsWith('BET')))return'high';
-  if(dets.some(d=>d&&d.verdict&&d.verdict.startsWith('LEAN')))return'med';
+  const llmVerdicts=[g.ml_verdict,g.rl_verdict,g.total_verdict];
+  if(llmVerdicts.some(v=>v&&v.startsWith('BET')))return'high';
+  if(llmVerdicts.some(v=>v&&v.startsWith('LEAN')))return'med';
   return'skip';
 }
 
@@ -3172,15 +3171,14 @@ function gameCardHTML(g){
   const isExpanded=expanded[g.id];
   const logged=loggedMarketsForGame(g);
 
+  const llmMlV=displayVerdict(g.ml_verdict,g),llmRlV=displayVerdict(g.rl_verdict,g),llmTotV=displayVerdict(g.total_verdict,g);
   const marketsHTML=g.analyzed
-    ?`${(()=>{const dml=deriveDetVerdict('ML',g),drl=deriveDetVerdict('RL',g),dtot=deriveDetVerdict('TOTAL',g);const hasDetProj=g.det_proj_away!=null&&g.det_proj_home!=null;if(!hasDetProj)return '';const mlSuppressed=dml.verdict&&dml.verdict!=='SKIP'&&parseFloat(dml.ev)>=15&&parseFloat(dml.ev)<20;return playRowLabel('DET',false,projInline(g.det_proj_away,g.det_proj_home,false))+'<div class="markets">'+simMarketCell('ML',dml.verdict,dml.ev,null,g.id,'DET',logged['ML'],g)+simMarketCell('RL',drl.verdict,drl.ev,null,g.id,'DET',logged['RL'],g,mlSuppressed)+simMarketCell('TOTAL',dtot.verdict,dtot.ev,null,g.id,'DET',logged['TOTAL'],g)+'</div>';})()}
-      ${playRowLabel('SIM',true,projInline(g.sim_away_runs,g.sim_home_runs,true))}
+    ?`${projInline(g.proj_away_runs,g.proj_home_runs,false)}
       <div class="markets">
-        ${simMarketCell('ML',g.sim_ml_verdict,g.sim_ml_ev,simMaxJuice('ML',g.sim_ml_verdict,g.sim_ml_ev,g),g.id,'SIM',logged['ML'],g)}
-        ${simMarketCell('RL',g.sim_rl_verdict,g.sim_rl_ev,simMaxJuice('RL',g.sim_rl_verdict,g.sim_rl_ev,g),g.id,'SIM',logged['RL'],g)}
-        ${simMarketCell('TOTAL',g.sim_total_verdict,g.sim_total_ev,simMaxJuice('TOTAL',g.sim_total_verdict,g.sim_total_ev,g),g.id,'SIM',logged['TOTAL'],g)}
+        ${marketCell('ML',llmMlV,g.ml_ev,g.best_market==='ml',g.total,null,g.ml_breakeven,g.id,logged['ML'],false)}
+        ${marketCell('RL',llmRlV,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged['RL'],false)}
+        ${marketCell('TOTAL',llmTotV,g.total_ev,g.best_market==='total',g.total,g.proj_total,g.total_breakeven,g.id,logged['TOTAL'],false)}
       </div>
-      ${(()=>{const dpml=deriveDetPlusVerdict('ML',g),dprl=deriveDetPlusVerdict('RL',g),dptot=deriveDetPlusVerdict('TOTAL',g);const hasDetPlus=g.det_plus_proj_away!=null&&g.det_plus_proj_home!=null;if(!hasDetPlus)return '';return playRowLabel('DET+',true,projInline(g.det_plus_proj_away,g.det_plus_proj_home,true))+'<div class="markets">'+simMarketCell('ML',dpml.verdict,dpml.ev,null,g.id,'DET+',logged['ML'],g)+simMarketCell('RL',dprl.verdict,dprl.ev,null,g.id,'DET+',logged['RL'],g)+simMarketCell('TOTAL',dptot.verdict,dptot.ev,null,g.id,'DET+',logged['TOTAL'],g)+'</div>';})()}
       ${kalshiPanelHTML(g,bets)}`
     :`<div class="markets" style="opacity:.4">${['ML','RL','TOTAL'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
 
@@ -4211,82 +4209,56 @@ async function loadLlmPage() {
   const grid = document.getElementById('llm-grid');
   grid.innerHTML = '<div class="empty-state"><div class="empty-title">Loading…</div></div>';
 
-  // Build date nav
   const dateNav = document.getElementById('llm-date-nav');
   const days = [-2,-1,0,1,2].map(offset => { const dt = new Date(currentDate); dt.setDate(dt.getDate()+offset); return isoDate(dt); });
   dateNav.innerHTML = days.map(d => `<button class="date-btn ${d===llmDate?'on':''}" onclick="llmDate='${d}';loadLlmPage()">${d}</button>`).join('');
 
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_date=eq.${llmDate}&select=*&order=commence_time.asc`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${llmDate}&select=*&order=commence_time.asc`, {
       headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
     });
-    const bets = res.ok ? await res.json() : [];
-
-    if (!bets.length) {
-      grid.innerHTML = '<div class="empty-state"><div class="empty-title">No LLM plays for this date</div></div>';
-      document.getElementById('llm-subtitle').textContent = 'No plays';
+    const games = res.ok ? await res.json() : [];
+    const analyzed = games.filter(g => g.analyzed && (g.det_proj_away != null || g.sim_away_runs != null || g.det_plus_proj_away != null));
+    document.getElementById('llm-subtitle').textContent = `${analyzed.length} games`;
+    if (!analyzed.length) {
+      grid.innerHTML = '<div class="empty-state"><div class="empty-title">No model data for this date</div></div>';
       return;
     }
-
-    // Group bets by game
-    const gameMap = new Map();
-    for (const b of bets) {
-      const key = b.game_id;
-      if (!gameMap.has(key)) gameMap.set(key, { game_id: b.game_id, away_team: b.away_team, home_team: b.home_team, commence_time: b.commence_time, bets: [] });
-      gameMap.get(key).bets.push(b);
-    }
-    const games = [...gameMap.values()];
-    document.getElementById('llm-subtitle').textContent = `${games.length} games · ${bets.length} plays`;
-
-    const mkCell = (label, bet, awayTeam, homeTeam) => {
-      if (!bet) return `<div class="market-cell"><div class="market-label">${label}</div><div class="market-val mv-skip">SKIP</div></div>`;
-      const v = bet.verdict || 'SKIP';
-      const cls = v.startsWith('BET') ? 'mv-bet' : v.startsWith('LEAN') ? 'mv-lean' : 'mv-skip';
-      const ev = bet.ev != null ? parseFloat(bet.ev) : null;
-      const evHtml = ev != null ? `<div class="ev-val ev-pos">+${ev.toFixed(1)}%</div>` : '';
-      const res = bet.result;
-      const resHtml = res ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:${res==='win'?'var(--green)':res==='loss'?'var(--red)':'var(--amber)'};margin-top:2px">${res}</div>` : '';
-      // Replace AWAY/HOME with team abbreviation
-      const action = v.startsWith('BET') ? 'BET' : v.startsWith('LEAN') ? 'LEAN' : null;
-      let side = '';
-      if (v.includes('AWAY')) side = teamAbbr(awayTeam);
-      else if (v.includes('HOME')) side = teamAbbr(homeTeam);
-      else if (v.includes('OVER')) side = 'OVER';
-      else if (v.includes('UNDER')) side = 'UNDER';
-      const displayVerdict = action && side ? `${action} ${side}` : v;
-      // For SKIP cells, show which side the EV belongs to
-      const isSweepFade = bet.skipped_side && bet.skipped_side.startsWith('sweep:');
-      const skipSideName = isSweepFade ? bet.skipped_side.replace('sweep:','') : bet.skipped_side;
-      const skipSideHtml = (v === 'SKIP' && bet.skipped_side)
-        ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--amber);margin-top:1px">${isSweepFade?'🔄 SWEEP FADE':(skipSideName==='AWAY'?teamAbbr(awayTeam):skipSideName==='HOME'?teamAbbr(homeTeam):skipSideName)+' side'}</div>`
-        : '';
-      const lineStr = bet.rl_line ? `${bet.rl_line} ` : bet.total_line ? `o/u ${bet.total_line} ` : '';
-      const oddsHtml = (lineStr || bet.odds) ? `<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--text);margin-top:1px">${lineStr}${bet.odds||''}</div>` : '';
-      return `<div class="market-cell"><div class="market-label">${label}</div><div class="market-val ${cls}">${displayVerdict}</div>${skipSideHtml}${oddsHtml}${evHtml}${resHtml}</div>`;
-    };
-
-    grid.innerHTML = games.map(g => {
-      const ml = g.bets.find(b=>b.market==='ml');
-      const rl = g.bets.find(b=>b.market==='rl');
-      const tot = g.bets.find(b=>b.market==='total');
-      const anyBet = ml || rl || tot;
-      const conf = anyBet?.confidence;
-      const sits = (anyBet?.situations||[]).filter(s=>s);
-      const sitHtml = sits.length ? sits.map(s=>`<span class="sit-flag sf-${s}">${s}</span>`).join('') : '';
-      const proj = (anyBet?.proj_away_runs!=null) ? `Proj: ${parseFloat(anyBet.proj_away_runs).toFixed(1)}-${parseFloat(anyBet.proj_home_runs).toFixed(1)} (tot ${parseFloat(anyBet.proj_total||0).toFixed(1)})` : '';
+    grid.innerHTML = analyzed.map(g => {
       const time = g.commence_time ? new Date(g.commence_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/New_York'})+' ET' : '';
-      return `<div class="game-card">
+      const final = (g.away_final!=null&&g.home_final!=null) ? `<span style="font-size:11px;color:var(--text);font-family:DM Mono,monospace">Final: ${g.away_final}-${g.home_final}</span>` : '';
+      // Det row
+      const dml=deriveDetVerdict('ML',g),drl=deriveDetVerdict('RL',g),dtot=deriveDetVerdict('TOTAL',g);
+      const detRow = g.det_proj_away!=null ? `
+        ${playRowLabel('DET',false,projInline(g.det_proj_away,g.det_proj_home,false))}
+        <div class="markets">
+          ${simMarketCell('ML',dml.verdict,dml.ev,null,g.id,'DET',{},g)}
+          ${simMarketCell('RL',drl.verdict,drl.ev,null,g.id,'DET',{},g)}
+          ${simMarketCell('TOTAL',dtot.verdict,dtot.ev,null,g.id,'DET',{},g)}
+        </div>` : '';
+      // Sim row
+      const simRow = g.sim_away_runs!=null ? `
+        ${playRowLabel('SIM',true,projInline(g.sim_away_runs,g.sim_home_runs,true))}
+        <div class="markets">
+          ${simMarketCell('ML',g.sim_ml_verdict,g.sim_ml_ev,null,g.id,'SIM',{},g)}
+          ${simMarketCell('RL',g.sim_rl_verdict,g.sim_rl_ev,null,g.id,'SIM',{},g)}
+          ${simMarketCell('TOTAL',g.sim_total_verdict,g.sim_total_ev,null,g.id,'SIM',{},g)}
+        </div>` : '';
+      // Det+ row
+      const dpml=deriveDetPlusVerdict('ML',g),dprl=deriveDetPlusVerdict('RL',g),dptot=deriveDetPlusVerdict('TOTAL',g);
+      const detPlusRow = g.det_plus_proj_away!=null ? `
+        ${playRowLabel('DET+',true,projInline(g.det_plus_proj_away,g.det_plus_proj_home,true))}
+        <div class="markets">
+          ${simMarketCell('ML',dpml.verdict,dpml.ev,null,g.id,'DET+',{},g)}
+          ${simMarketCell('RL',dprl.verdict,dprl.ev,null,g.id,'DET+',{},g)}
+          ${simMarketCell('TOTAL',dptot.verdict,dptot.ev,null,g.id,'DET+',{},g)}
+        </div>` : '';
+      return `<div class="game-card" id="addl-card-${g.id}">
         <div class="card-header">
-          <div><div class="card-matchup">${g.away_team} @ ${g.home_team}</div><div class="card-meta">${proj}</div></div>
-          <div style="text-align:right"><div class="card-time">${time}</div></div>
+          <div><div class="card-matchup">${g.away_team} @ ${g.home_team}</div></div>
+          <div style="text-align:right"><div class="card-time">${time}</div>${final}</div>
         </div>
-        <div class="card-body">
-          ${sitHtml?`<div class="sit-flags">${sitHtml}</div>`:''}
-          <div class="markets">
-            ${mkCell('ML',ml,g.away_team,g.home_team)}${mkCell('RL',rl,g.away_team,g.home_team)}${mkCell('Total',tot,g.away_team,g.home_team)}
-          </div>
-          ${conf?`<div style="margin-top:6px"><span class="edge-badge ${conf==='HIGH'?'eb-high':conf==='MEDIUM'?'eb-med':'eb-skip'}">${conf}</span></div>`:''}
-        </div>
+        <div class="card-body">${detRow}${simRow}${detPlusRow}</div>
       </div>`;
     }).join('');
   } catch(e) {
@@ -4677,7 +4649,7 @@ function renderLlmStats(bets, el) {
 <div class="page" id="page-llm">
 <div class="container">
   <div class="topbar">
-    <div class="topbar-left"><h2><span class="pulse"></span>LLM Analysis</h2><p id="llm-subtitle">LLM-driven game cards</p></div>
+    <div class="topbar-left"><h2><span class="pulse"></span>Add'l Models</h2><p id="llm-subtitle">Det / Sim / Det+ per game</p></div>
     <div style="display:flex;gap:8px">
       <button class="btn" onclick="loadLlmPage()">↻ Reload</button>
     </div>
