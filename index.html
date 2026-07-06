@@ -2894,10 +2894,44 @@ async function loadGames(forceRefresh=false){
   document.getElementById('games-subtitle').textContent='Loading...';
   document.getElementById('games-container').innerHTML=`<div class="loading-wrap"><div class="loading-dots"><span></span><span></span><span></span></div><p style="color:var(--text);font-size:13px;margin-top:1rem">Fetching analysis for ${fmtDateShort(currentDate)}...</p></div>`;
   try{
-    const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${dateStr}&order=commence_time.asc`,{headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}});
-    if(!res.ok)throw new Error(`Supabase error: ${res.status}`);
-    const data=await res.json();
-    games=data;
+    const [gamesRes, betsRes] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${dateStr}&order=commence_time.asc`,{headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}}),
+      fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_date=eq.${dateStr}&select=*`,{headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}})
+    ]);
+    if(!gamesRes.ok)throw new Error(`Supabase error: ${gamesRes.status}`);
+    const data=await gamesRes.json();
+    const llmBetsData = betsRes.ok ? await betsRes.json() : [];
+
+    // Build llm_bets lookup by game_id and market
+    const llmByGame = {};
+    for (const b of llmBetsData) {
+      if (!llmByGame[b.game_id]) llmByGame[b.game_id] = {};
+      llmByGame[b.game_id][b.market] = b;
+    }
+
+    // Overlay llm_bets onto each game
+    games = data.map(g => {
+      const lb = llmByGame[g.id];
+      if (!lb) return g;
+      const ml = lb['ml'], rl = lb['rl'], tot = lb['total'];
+      return {
+        ...g,
+        ml_verdict: ml?.verdict ?? g.ml_verdict,
+        ml_ev: ml?.ev ?? g.ml_ev,
+        rl_verdict: rl?.verdict ?? g.rl_verdict,
+        rl_ev: rl?.ev ?? g.rl_ev,
+        total_verdict: tot?.verdict ?? g.total_verdict,
+        total_ev: tot?.ev ?? g.total_ev,
+        proj_away_runs: ml?.proj_away_runs ?? g.proj_away_runs,
+        proj_home_runs: ml?.proj_home_runs ?? g.proj_home_runs,
+        proj_total: ml?.proj_total ?? g.proj_total,
+        confidence: ml?.confidence ?? rl?.confidence ?? tot?.confidence ?? g.confidence,
+        situations: (ml?.situations || rl?.situations || tot?.situations || g.situations),
+        // mark as LLM-sourced for EV display
+        _llmOverlay: true,
+      };
+    });
+
     if(!games.length){
       document.getElementById('games-container').innerHTML=`<div class="empty-state"><div class="empty-icon">⚾</div><div class="empty-title">No games found for ${fmtDateShort(currentDate)}</div><div class="empty-sub">Analysis runs automatically at 12pm and 5:30pm ET.</div></div>`;
       document.getElementById('games-subtitle').textContent=`No games for ${fmtDateShort(currentDate)}`;
