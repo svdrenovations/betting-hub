@@ -3176,7 +3176,7 @@ function gameCardHTML(g){
   const marketsHTML=g.analyzed
     ?`${projInline(g.proj_away_runs,g.proj_home_runs,false)}
       <div class="markets">
-        ${marketCell('ML',llmMlV,g.ml_ev,g.best_market==='ml',g.total,null,g.ml_breakeven,g.id,logged['ML'],false)}
+        ${marketCell('ML',llmMlV,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged['ML'],false)}
         ${marketCell('RL',llmRlV,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged['RL'],false)}
         ${marketCell('TOTAL',llmTotV,g.total_ev,g.best_market==='total',g.total,g.proj_total,g.total_breakeven,g.id,logged['TOTAL'],false)}
       </div>
