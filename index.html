@@ -1177,13 +1177,14 @@ function kalshiPanelHTML(g, bets) {
   // Only show panel if at least one market has 6%+ EV
   const plays = [];
   const gid = g.id;
-  const _eng = kalshiEngine[gid] || 'det';
+  const _eng = kalshiEngine[gid] || 'llm';
   const _v = (mk) => {
     if (_eng === 'sim') return { verdict: g['sim_'+mk+'_verdict'], ev: g['sim_'+mk+'_ev'] };
     if (_eng === 'det') {
       const dv = deriveDetVerdict(mk.toUpperCase(), g);
       return { verdict: dv.verdict === 'SKIP' ? 'SKIP' : dv.verdict, ev: dv.ev };
     }
+    // Default: LLM
     return { verdict: g[mk+'_verdict'], ev: g[mk+'_ev'] };
   };
   const mkts = [
