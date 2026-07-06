@@ -3399,6 +3399,7 @@ function quickLog(gameId,market,verdict,line,breakeven,storedEV){
   else if(market==='RL'){const odds=v.includes('AWAY')?g.away_rl_odds:g.home_rl_odds;if(odds)document.getElementById('log-odds').value=odds;}
   else if(market==='TOTAL'){const odds=v.includes('OVER')?g.over_odds:g.under_odds;if(odds)document.getElementById('log-odds').value=odds;}
   document.getElementById('log-sit').value=(g.situations||[]).join(', ')||'none';
+  document.getElementById('log-book').value='DraftKings';
   document.getElementById('log-modal').classList.add('show');
   if(storedEV!=null&&!isNaN(storedEV)){
     pendingLogEV=storedEV;
