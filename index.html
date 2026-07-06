@@ -221,7 +221,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 }
 </style>
 <script>
-(function(){var p=new URLSearchParams(location.search).get('page');var valid=['games','tracker','kalshi','stats','msd','scoreboard','plus','llm','llmtracker','llmstats'];if(p&&valid.includes(p)&&p!=='games'){document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.page').forEach(function(el){el.classList.remove('on');});var el=document.getElementById('page-'+p);if(el)el.classList.add('on');});}})();
+(function(){var p=new URLSearchParams(location.search).get('page');var valid=['games','tracker','stats','msd','scoreboard','plus','llm','llmtracker','llmstats'];if(p&&valid.includes(p)&&p!=='games'){document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.page').forEach(function(el){el.classList.remove('on');});var el=document.getElementById('page-'+p);if(el)el.classList.add('on');});}})();
 </script>
 </head>
 <body>
@@ -231,7 +231,6 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
   <div class="nav-tabs">
     <a class="nav-tab on" href="?page=games" onclick="goPage('games',this);return false;">Games</a>
     <a class="nav-tab" href="?page=tracker" onclick="goPage('tracker',this);return false;">Tracker</a>
-    <a class="nav-tab" href="?page=kalshi" onclick="goPage('kalshi',this);return false;">Kalshi</a>
     <a class="nav-tab" href="?page=stats" onclick="goPage('stats',this);return false;">Stats</a>
     <a class="nav-tab" href="?page=msd" onclick="goPage('msd',this);return false;">Models</a>
     <a class="nav-tab" href="?page=data" onclick="goPage('data',this);return false;">Data</a>
@@ -1667,7 +1666,7 @@ async function showLiveLines(gameId,awayTeam,homeTeam){
 // ── SUPABASE BETS ─────────────────────────────────────────────────────────────
 async function loadBetsFromSupabase(){
   try{
-    const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?order=id.desc&limit=500`,{headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}});
+    const res=await fetch(`${SUPABASE_URL}/rest/v1/mlb_bets?tracked=eq.true&order=id.desc&limit=500`,{headers:{'apikey':SUPABASE_KEY,'Authorization':`Bearer ${SUPABASE_KEY}`}});
     if(!res.ok)return;
     const data=await res.json();
     bets=data.map(b=>({id:b.id,date:b.game_date,matchup:b.matchup,awayPitcher:b.away_pitcher,homePitcher:b.home_pitcher,type:b.bet_type,odds:b.odds,betLine:b.bet_line,maxJuice:b.max_juice,book:b.book,units:b.units,notes:b.notes,ev:b.ev,situations:b.situations,confidence:b.confidence,result:b.result,awayScore:b.away_score,homeScore:b.home_score,closingOdds:b.closing_odds,closingLine:b.closing_line,clv:b.clv}));
@@ -2853,7 +2852,6 @@ function goPage(name,btn){
   if(name==='tracker')renderTracker();
   if(name==='stats')renderStats();
   if(name==='msd'){sbGames=null;renderScoreboard();}
-  if(name==='kalshi'){loadKalshiBets().then(()=>renderKalshi());}
   if(name==='scoreboard'){loadLiveScoreboard();}
   if(name==='plus'){plusGames=null;renderPlus();}
   if(name==='data'){dataGames=null;renderData();}
