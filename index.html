@@ -2949,7 +2949,7 @@ function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged,
   const lineHtml=line!=null&&projTotal!=null&&v!=='SKIP'?`<div style="font-size:9px;color:var(--text);font-family:DM Mono,monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>`:'';
   const breakHtml=breakeven&&v!=='SKIP'?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>`:'';
   const flagHtml=noMLConfirm?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:2px">⚠️ no ML confirmation</div>`:'';
-  const clickable=v!=='SKIP'&&ev>0?`style="cursor:pointer" onclick="quickLog('${gId}','${label}','${v}','${line||''}','${breakeven||''}')"` :'';
+  const clickable=v!=='SKIP'&&ev>0?`style="cursor:pointer" onclick="quickLogLLM('${gId}','${label}','${v}',${ev||0},'${line||''}','${breakeven||''}')"` :'';
   const check=logged?` <span style="color:var(--green);font-weight:700" title="Logged: ${String(logged).replace(/"/g,'&quot;')}">✓</span>`:'';
   return`<div class="market-cell${isBest?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}${flagHtml}</div>`;
 }
@@ -3339,6 +3339,17 @@ function exportKalshiCSV(){
 }
 
 // ── LOG BET MODAL ─────────────────────────────────────────────────────────────
+function quickLogLLM(gameId, market, verdict, storedEV, line, breakeven) {
+  if (!requireUnlocked()) return;
+  const g = games.find(x => x.id === gameId); if (!g) return;
+  // Convert team abbr verdict back to AWAY/HOME/OVER/UNDER
+  let canonical = verdict;
+  const awayAbbr = teamAbbr(g.away_team), homeAbbr = teamAbbr(g.home_team);
+  if (verdict.includes(awayAbbr)) canonical = verdict.replace(awayAbbr, 'AWAY');
+  else if (verdict.includes(homeAbbr)) canonical = verdict.replace(homeAbbr, 'HOME');
+  quickLog(gameId, market, canonical, line, breakeven, storedEV || null);
+}
+
 function quickLog(gameId,market,verdict,line,breakeven,storedEV){
   if(!requireUnlocked()) return;
   const g=games.find(x=>x.id===gameId);if(!g)return;
