@@ -583,7 +583,7 @@ async function fetchProbablePitchers(gameDate) {
         const homeP = homePitcher ? { id: homePitcher.id, name: homePitcher.fullName, note: homePitcher.note || null, vs: awayId, gamePk: game.gamePk, venue: venueName } : null;
         if (awayP) pitcherMap[`away_${awayId}`] = awayP;
         if (homeP) pitcherMap[`home_${homeId}`] = homeP;
-        scheduleGames.push({ gamePk: game.gamePk, awayId, homeId, gameDate: game.gameDate, venue: venueName, venueId: game.venue?.id || null, awayPitcher: awayP, homePitcher: homeP, seriesGameNumber: game.seriesGameNumber, gamesInSeries: game.gamesInSeries });
+        scheduleGames.push({ gamePk: game.gamePk, awayId, homeId, gameDate: game.gameDate, venue: venueName, venueId: game.venue?.id || null, awayPitcher: awayP, homePitcher: homeP, seriesGameNumber: game.seriesGameNumber, gamesInSeries: game.gamesInSeries, doubleHeader: game.doubleHeader, gameNumber: game.gameNumber, status: game.status?.abstractGameState });
       }
     }
     console.log(`Probable pitchers found: ${Object.keys(pitcherMap).length}`);
@@ -1681,6 +1681,20 @@ async function main() {
       // GATE 2 — both lineups must be confirmed
       const lineupsReady = (awayMatchups?.lineup?.length >= 9) && (homeMatchups?.lineup?.length >= 9);
       if (!lineupsReady) { console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — lineups not posted yet; skipping`); continue; }
+
+      // GATE 2b — doubleheader game 2: skip if game 1 still live OR more than 60 min before start
+      if (sg?.doubleHeader === 'Y' && sg?.gameNumber === 2) {
+        const minsToStart = (new Date(game.commence_time) - Date.now()) / 60000;
+        if (minsToStart > 60) {
+          console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — DH game 2, ${Math.round(minsToStart)}m until start; skipping`);
+          continue;
+        }
+        const game1 = scheduleGames.find(s => s.awayId === awayTeamId && s.homeId === homeTeamId && s.gameNumber === 1);
+        if (game1 && game1.status === 'Live') {
+          console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — DH game 2, game 1 still live; skipping`);
+          continue;
+        }
+      }
       if (homeStatcast) console.log(`  Statcast ${homePitcherInfo.name}: velo ${homeStatcast.avgVelo} (${homeStatcast.veloTrend}), whiff ${homeStatcast.whiffRate}%, barrel ${homeStatcast.barrelRate}%`);
       if (awayMatchups?.avgOPS != null) console.log(`  Away lineup vs ${homePitcherInfo?.name}: OPS ${awayMatchups.avgOPS}, K% ${awayMatchups.kRate}`);
       else if (awayMatchups) console.log(`  Away lineup vs ${homePitcherInfo?.name}: no batter-vs-pitcher sample`);
