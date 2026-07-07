@@ -1646,6 +1646,28 @@ async function main() {
         else { pitcherStatus = 'mismatch'; console.log(`  ⚠ PITCHER MATCHUP UNVERIFIED for ${game.away_team} @ ${game.home_team}`); }
       } else if (awayPitcherInfo || homePitcherInfo) { pitcherStatus = 'partial'; }
       if (pitcherStatus === 'confirmed') console.log(`  ✓ Pitchers confirmed: ${awayPitcherInfo.name} @ ${homePitcherInfo.name} (gamePk ${awayPitcherInfo.gamePk})`);
+
+      // ── MINIMAL UPSERT — ensures a card exists for every game regardless of lineup status ──
+      try {
+        const _gd = new Date(game.commence_time).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+        const minimalRow = {
+          id: game.id, game_date: _gd, away_team: game.away_team, home_team: game.home_team,
+          commence_time: game.commence_time,
+          away_ml: lines.awayML, home_ml: lines.homeML,
+          away_rl: lines.awayRL, home_rl: lines.homeRL,
+          away_rl_odds: lines.awayRLOdds, home_rl_odds: lines.homeRLOdds,
+          over_odds: lines.overOdds, under_odds: lines.underOdds, total: lines.total,
+          away_pitcher: awayPitcherInfo ? `${awayPitcherInfo.name} (${awayPitcherInfo.throwHand||'?'}HP)` : null,
+          home_pitcher: homePitcherInfo ? `${homePitcherInfo.name} (${homePitcherInfo.throwHand||'?'}HP)` : null,
+          pitcher_status: pitcherStatus,
+        };
+        await fetch(`${SUPABASE_URL}/rest/v1/mlb_games`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify(minimalRow)
+        });
+      } catch(e) { console.log(`  minimal upsert error: ${e.message}`); }
+
       if (pitcherStatus !== 'confirmed') { console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — pitchers not confirmed (${pitcherStatus}); skipping`); continue; }
 
       const [awayDebut, homeDebut] = await Promise.all([awayPitcherInfo ? checkMLBDebut(awayPitcherInfo.id) : Promise.resolve(false), homePitcherInfo ? checkMLBDebut(homePitcherInfo.id) : Promise.resolve(false)]);
