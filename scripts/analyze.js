@@ -159,9 +159,9 @@ function buildJuiceTable(proj, direction, steps) { steps = steps || 5; const hal
 function pickSide(opts) { let best = null; for (const o of opts) { if (o.ev == null || isNaN(o.ev)) continue; if (!best || o.ev > best.ev) best = o; } return best; }
 function verdictFor(ev, sideLabel) { if (ev == null || isNaN(ev) || ev < VERDICT_LEAN) return 'SKIP'; return `${ev >= VERDICT_BET ? 'BET' : 'LEAN'} ${sideLabel}`; }
 
-function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LEAN) {
+function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LEAN, betEV = VERDICT_BET) {
   if (!a) return a;
-  const vFor = (ev, label) => { if (ev == null || isNaN(ev) || ev < minEV) return 'SKIP'; return `${ev >= VERDICT_BET ? 'BET' : 'LEAN'} ${label}`; };
+  const vFor = (ev, label) => { if (ev == null || isNaN(ev) || ev < minEV) return 'SKIP'; return `${ev >= betEV ? 'BET' : 'LEAN'} ${label}`; };
   const pAway = (a.mlAwayProb != null ? a.mlAwayProb : (a.awayWinPct != null ? a.awayWinPct : 50)) / 100;
   const pHome = (a.mlHomeProb != null ? a.mlHomeProb : (a.homeWinPct != null ? a.homeWinPct : 50)) / 100;
   { const side = pickSide([{ ev: evPct(pAway, lines.awayML), label: 'AWAY', p: pAway }, { ev: evPct(pHome, lines.homeML), label: 'HOME', p: pHome }]); if (side) { a.mlEV = side.ev; a.mlBreakeven = breakevenOdds(side.p); a.ml = vFor(side.ev, side.label); } else { a.ml = 'SKIP'; } }
@@ -1990,7 +1990,7 @@ async function main() {
       };
 
       deriveRunModel(effectiveAnalysis, lines);
-      deriveNumbers(effectiveAnalysis, lines, f5Lines, sweepSide, _gd, 6.0);
+      deriveNumbers(effectiveAnalysis, lines, f5Lines, sweepSide, _gd, 10.0, 17.5);
 
       // ── LLM BETS — auto-log qualifying plays into llm_bets table ─────────
       try {
