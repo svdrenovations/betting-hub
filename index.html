@@ -50,6 +50,7 @@ nav{background:var(--s1);border-bottom:1px solid var(--border);padding:0 1.5rem;
 .game-card:hover{border-color:var(--border2)}
 .game-card.edge-high{border-color:var(--green);box-shadow:0 0 0 1px var(--green-bg)}
 .game-card.edge-med{border-color:var(--amber)}
+.game-card.edge-skip{border-color:var(--red);box-shadow:0 0 0 1px rgba(239,68,68,0.1)}
 .dl-highlight{animation:dlflash 1.3s ease-out 2}
 @keyframes dlflash{0%,100%{box-shadow:0 0 0 2px var(--green)}50%{box-shadow:0 0 0 2px transparent}}
 .card-header{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start}
@@ -2964,7 +2965,6 @@ function getTopEdge(g){
   if(llmVerdicts.some(v=>v&&v.startsWith('LEAN')))return'med';
   return'skip';
 }
-
 function sitFlagHTML(sits,fadeReason){
   if(!sits||sits.length===0)return'<span class="sit-flag sf-none">no situation flags</span>';
   const map={revenge:['sf-revenge','revenge spot'],travel:['sf-travel','travel fatigue'],sharp:['sf-sharp','sharp action'],weather:['sf-weather','weather factor'],rest:['sf-rest','rest edge'],series:['sf-series','series opener'],fade:['sf-fade','fade spot'],mustwin:['sf-revenge','must-win'],debut:['sf-rest','pitcher debut'],weather_concern:['sf-weather','weather'],pitcher_uncertainty:['sf-rest','pitcher TBD'],limited_data:['sf-none','limited data'],high_total:['sf-fade','high total'],tbd_pitchers:['sf-rest','pitchers TBD'],extreme_line:['sf-sharp','extreme line'],line_movement:['sf-sharp','line move'],hot_team:['sf-series','hot team'],cold_team:['sf-fade','cold team']};
@@ -3199,7 +3199,7 @@ function loggedMarketsForGame(g){
 
 function gameCardHTML(g){
   const edge=getTopEdge(g);
-  const edgeCls=edge==='high'?'edge-high':edge==='med'?'edge-med':'';
+  const edgeCls=edge==='high'?'edge-high':edge==='med'?'edge-med':edge==='skip'&&g.analyzed?'edge-skip':'';
   const time=g.commence_time?new Date(g.commence_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',timeZone:'America/New_York'})+' ET':'TBD';
   const isExpanded=expanded[g.id];
   const logged=loggedMarketsForGame(g);
