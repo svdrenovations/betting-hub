@@ -1588,7 +1588,7 @@ async function main() {
 
   const doneSet = new Set();
   try {
-    const dRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&select=id,game_pk,away_team,home_team,pitcher_status,lineup_status`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }});
+    const dRes = await fetch(`${SUPABASE_URL}/rest/v1/mlb_games?game_date=eq.${today}&analyzed=eq.true&select=id,game_pk,away_team,home_team,pitcher_status,lineup_status`, { headers:{ 'apikey':SUPABASE_SERVICE_KEY, 'Authorization':`Bearer ${SUPABASE_SERVICE_KEY}` }});
     if (dRes.ok) for (const r of await dRes.json()) { if (r.pitcher_status === 'confirmed' && r.lineup_status === 'confirmed') { if (r.id) doneSet.add(String(r.id)); if (r.game_pk) doneSet.add(`gp:${r.game_pk}`); doneSet.add(`nm:${r.away_team}@${r.home_team}`); } }
     if (doneSet.size) console.log(`Already analyzed: ${doneSet.size} — will skip.`);
   } catch(e) { /* not fatal */ }
