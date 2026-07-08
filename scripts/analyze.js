@@ -1956,6 +1956,15 @@ async function main() {
           } : null;
           const SIM_MIN_EV = 0.1;
           function simVerdictFor(ev, label) { if (ev == null || isNaN(ev) || ev < SIM_MIN_EV) return 'SKIP'; return `${ev >= VERDICT_BET ? 'BET' : 'LEAN'} ${label}`; }
+
+          // Coors suppression — park too volatile for sim direction calls
+          const simParkFactor = getParkFactors(game.home_team, venueName)?.runFactor || 1.0;
+          if (simParkFactor >= 1.12) {
+            analysis.simMl = 'SKIP'; analysis.simMlEV = null;
+            analysis.simRl = 'SKIP'; analysis.simRlEV = null;
+            analysis.simTotal = 'SKIP'; analysis.simTotalEV = null;
+            console.log(`  SIM Coors suppression (park ${simParkFactor}) — all SKIP`);
+          } else {
           const simMl = pickSide([{ ev: evPct(simProbs.pAwayML, lines.awayML), label: 'AWAY' }, { ev: evPct(simProbs.pHomeML, lines.homeML), label: 'HOME' }]);
           analysis.simMl = simMl ? simVerdictFor(simMl.ev, simMl.label) : 'SKIP';
           analysis.simMlEV = simMl ? simMl.ev : null;
@@ -1971,6 +1980,7 @@ async function main() {
           analysis.simTotal = simTot ? simVerdictFor(simTot.ev, simTot.label) : 'SKIP';
           analysis.simTotalEV = simTot ? simTot.ev : null;
           console.log(`  SIM ${game.away_team} ${analysis.simAwayRuns} - ${analysis.simHomeRuns} ${game.home_team} | ML:${analysis.simMl} RL:${analysis.simRl} TOT:${analysis.simTotal}`);
+          }
         }
       } catch (e) { console.log(`  sim shadow error: ${e.message}`); }
 
