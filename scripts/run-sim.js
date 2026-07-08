@@ -134,8 +134,8 @@ function simGame(matchup, rng) {
     buildPAModel(b, away.penPitcher, home.ctx)
   );
 
-  const awayModels = (inn) => inn <= home.starterInnings ? awayVsStarter : awayVsPen;
-  const homeModels = (inn) => inn <= away.starterInnings ? homeVsStarter : homeVsPen;
+  const awayModels = (inn) => inn <= away.starterInnings ? awayVsStarter : awayVsPen;
+  const homeModels = (inn) => inn <= home.starterInnings ? homeVsStarter : homeVsPen;
 
   let aR = 0, hR = 0, aF5 = 0, hF5 = 0, aPtr = 0, hPtr = 0;
 
