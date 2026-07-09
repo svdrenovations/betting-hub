@@ -1018,6 +1018,42 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
       } catch(e) {}
     }
 
+    // Fallback: if ticker-based search failed, search by team pair on this date
+    if (results.awayML_cents == null && results.homeML_cents == null && gameDate) {
+      try {
+        const yy = String(new Date(gameDate).getFullYear()).slice(2);
+        const mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][new Date(gameDate).getMonth()];
+        const dd = String(new Date(gameDate).getDate()).padStart(2,'0');
+        const datePrefix = `KXMLBGAME-${yy}${mon}${dd}`;
+        const searchPath = `/markets%3Fseries_ticker%3DKXMLBGAME%26limit%3D100%26status%3Dopen`;
+        const res = await fetch(`${KALSHI_PROXY}?path=${searchPath}`, {
+          headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const dayMkts = (data.markets || []).filter(m => {
+            const tk = (m.ticker || '').toUpperCase();
+            return tk.startsWith(datePrefix) && tk.includes(teamPair);
+          });
+          for (const mkt of dayMkts) {
+            const tk = (mkt.ticker || '').toUpperCase();
+            if (tk.endsWith('-' + awayCode)) {
+              results.awayML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+              results.awayML_cents_no = parseFloat(mkt.no_ask_dollars || 0) * 100;
+              results.awayML_ticker = mkt.ticker;
+              results.awayML_size = Math.round(parseFloat(mkt.yes_ask_size_fp || 0));
+            }
+            if (tk.endsWith('-' + homeCode)) {
+              results.homeML_cents = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+              results.homeML_cents_no = parseFloat(mkt.no_ask_dollars || 0) * 100;
+              results.homeML_ticker = mkt.ticker;
+              results.homeML_size = Math.round(parseFloat(mkt.yes_ask_size_fp || 0));
+            }
+          }
+        }
+      } catch(e) {}
+    }
+
 
     // Try each RL candidate until we get results
     for (const ticker of candidateRL) {
