@@ -161,13 +161,23 @@ function verdictFor(ev, sideLabel) { if (ev == null || isNaN(ev) || ev < VERDICT
 
 function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LEAN, betEV = VERDICT_BET) {
   if (!a) return a;
-  const vFor = (ev, label) => { if (ev == null || isNaN(ev) || ev < minEV) return 'SKIP'; return `${ev >= betEV ? 'BET' : 'LEAN'} ${label}`; };
+  const DEAD_ZONE_LO = 14.8, DEAD_ZONE_HI = 17.4;
+  const inDeadZone = (ev) => ev != null && !isNaN(ev) && ev >= DEAD_ZONE_LO && ev <= DEAD_ZONE_HI;
+  const vFor = (ev, label) => {
+    if (ev == null || isNaN(ev) || ev < minEV) return 'SKIP';
+    if (inDeadZone(ev)) return 'SKIP';
+    return `${ev >= betEV ? 'BET' : 'LEAN'} ${label}`;
+  };
   const pAway = (a.mlAwayProb != null ? a.mlAwayProb : (a.awayWinPct != null ? a.awayWinPct : 50)) / 100;
   const pHome = (a.mlHomeProb != null ? a.mlHomeProb : (a.homeWinPct != null ? a.homeWinPct : 50)) / 100;
   { const side = pickSide([{ ev: evPct(pAway, lines.awayML), label: 'AWAY', p: pAway }, { ev: evPct(pHome, lines.homeML), label: 'HOME', p: pHome }]); if (side) { a.mlEV = side.ev; a.mlBreakeven = breakevenOdds(side.p); a.ml = vFor(side.ev, side.label); } else { a.ml = 'SKIP'; } }
   const pAwayRL = a.rlAwayProb != null ? a.rlAwayProb / 100 : Math.max(0.02, pAway - 0.08);
   const pHomeRL = a.rlHomeProb != null ? a.rlHomeProb / 100 : Math.min(0.98, pHome + 0.08);
   { const side = pickSide([{ ev: evPct(pAwayRL, lines.awayRLOdds), label: 'AWAY', p: pAwayRL }, { ev: evPct(pHomeRL, lines.homeRLOdds), label: 'HOME', p: pHomeRL }]); if (side) { a.rlEV = side.ev; a.rlBreakeven = breakevenOdds(side.p); a.rl = vFor(side.ev, side.label); } else { a.rl = 'SKIP'; } }
+  // If ML is suppressed (dead zone or below threshold), suppress RL too
+  if (a.ml === 'SKIP' && (inDeadZone(a.mlEV) || (a.mlEV != null && a.mlEV >= minEV))) {
+    a.rl = 'SKIP';
+  }
   if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
     const faded = [];
     for (const mkt of ['ml', 'rl']) { const v = a[mkt]; if (typeof v === 'string' && v !== 'SKIP' && v.endsWith(` ${sweepSide}`)) { faded.push(`${mkt.toUpperCase()} ${v}`); a[mkt] = 'SKIP'; } }
