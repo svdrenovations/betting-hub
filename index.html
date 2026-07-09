@@ -1078,7 +1078,34 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
       } catch(e) {}
     }
 
-    // ── TOTAL: Search KXMLBTOTAL series by team pair and date ──
+    // If RL was found but ML wasn't, extract the event time from RL ticker and retry ML
+    if ((results.awayML_cents == null && results.homeML_cents == null) &&
+        (results.rl_ticker_away || results.rl_ticker_home)) {
+      try {
+        const rlTicker = (results.rl_ticker_away || results.rl_ticker_home || '').toUpperCase();
+        // RL ticker: KXMLBSPREAD-26JUL091835CHCBAL-BAL2 → event is KXMLBGAME-26JUL091835CHCBAL
+        const match = rlTicker.match(/KXMLBSPREAD-(\d{2}[A-Z]{3}\d{2}\d{4}[A-Z]+)/);
+        if (match) {
+          const mlEventTicker = `KXMLBGAME-${match[1]}`;
+          const mkts = await tryFetchML(mlEventTicker);
+          for (const mkt of mkts) {
+            const tk = (mkt.ticker || '').toUpperCase();
+            if (tk.endsWith('-' + awayCode)) {
+              results.awayML_cents    = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+              results.awayML_cents_no = parseFloat(mkt.no_ask_dollars || 0) * 100;
+              results.awayML_ticker   = mkt.ticker;
+              results.awayML_size     = Math.round(parseFloat(mkt.yes_ask_size_fp || 0));
+            }
+            if (tk.endsWith('-' + homeCode)) {
+              results.homeML_cents    = parseFloat(mkt.yes_ask_dollars || mkt.last_price_dollars || 0) * 100;
+              results.homeML_cents_no = parseFloat(mkt.no_ask_dollars || 0) * 100;
+              results.homeML_ticker   = mkt.ticker;
+              results.homeML_size     = Math.round(parseFloat(mkt.yes_ask_size_fp || 0));
+            }
+          }
+        }
+      } catch(e) {}
+    }
     if (total) {
       const totLine = parseFloat(total);
       const td = new Date(commenceTime || (gameDate + 'T12:00:00'));
