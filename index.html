@@ -898,7 +898,11 @@ function kalshiTeamCode(fullName) {
 
 async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, commenceTime, totalVerdict) {
   const cacheKey = gameId;
-  if (kalshiCache[cacheKey]) return kalshiCache[cacheKey].data; // fetch once, refresh on demand
+  if (kalshiCache[cacheKey]) {
+    // If ML was not found previously, allow re-fetch to try fallback
+    const cached = kalshiCache[cacheKey].data;
+    if (cached.awayML_cents != null || cached.homeML_cents != null) return cached;
+  }
   try {
     const awayCode = kalshiTeamCode(awayTeam);
     const homeCode = kalshiTeamCode(homeTeam);
@@ -1025,7 +1029,7 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
         const mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][new Date(gameDate).getMonth()];
         const dd = String(new Date(gameDate).getDate()).padStart(2,'0');
         const datePrefix = `KXMLBGAME-${yy}${mon}${dd}`;
-        const searchPath = `/markets%3Fseries_ticker%3DKXMLBGAME%26limit%3D100%26status%3Dopen`;
+        const searchPath = `/markets%3Fseries_ticker%3DKXMLBGAME%26limit%3D200`;
         const res = await fetch(`${KALSHI_PROXY}?path=${searchPath}`, {
           headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
         });
