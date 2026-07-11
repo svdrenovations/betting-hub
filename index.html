@@ -1037,7 +1037,16 @@ async function fetchKalshiPrices(gameId, awayTeam, homeTeam, gameDate, total, co
           const data = await res.json();
           const dayMkts = (data.markets || []).filter(m => {
             const tk = (m.ticker || '').toUpperCase();
+            const status = (m.status || '').toLowerCase();
+            // Only active/open markets — skip settled/resolved
+            if (status === 'finalized' || status === 'resolved') return false;
             return tk.startsWith(datePrefix) && tk.includes(teamPair);
+          });
+          // Sort by price closest to 50¢ (most liquid/active market)
+          dayMkts.sort((a, b) => {
+            const pa = parseFloat(a.yes_ask_dollars || 0) * 100;
+            const pb = parseFloat(b.yes_ask_dollars || 0) * 100;
+            return Math.abs(pa - 50) - Math.abs(pb - 50);
           });
           for (const mkt of dayMkts) {
             const tk = (mkt.ticker || '').toUpperCase();
@@ -3048,7 +3057,7 @@ function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged,
   const lineHtml=line!=null&&projTotal!=null&&v!=='SKIP'?`<div style="font-size:9px;color:var(--text);font-family:DM Mono,monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>`:'';
   const breakHtml=breakeven&&v!=='SKIP'?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>`:'';
   const flagHtml=noMLConfirm?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:2px">⚠️ no ML confirmation</div>`:'';
-  const clickable=v!=='SKIP'&&ev>0?`style="cursor:pointer" onclick="quickLogLLM('${gId}','${label}','${v}',${ev||0},'${line||''}','${breakeven||''}')"` :'';
+  const clickable=`style="cursor:pointer" onclick="quickLogLLM('${gId}','${label}','${v}',${ev||0},'${line||''}','${breakeven||''}')"` ;
   const check=logged?` <span style="color:var(--green);font-weight:700" title="Logged: ${String(logged).replace(/"/g,'&quot;')}">✓</span>`:'';
   return`<div class="market-cell${isBest?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}${flagHtml}</div>`;
 }
