@@ -174,10 +174,8 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
   const pAwayRL = a.rlAwayProb != null ? a.rlAwayProb / 100 : Math.max(0.02, pAway - 0.08);
   const pHomeRL = a.rlHomeProb != null ? a.rlHomeProb / 100 : Math.min(0.98, pHome + 0.08);
   { const side = pickSide([{ ev: evPct(pAwayRL, lines.awayRLOdds), label: 'AWAY', p: pAwayRL }, { ev: evPct(pHomeRL, lines.homeRLOdds), label: 'HOME', p: pHomeRL }]); if (side) { a.rlEV = side.ev; a.rlBreakeven = breakevenOdds(side.p); a.rl = vFor(side.ev, side.label); } else { a.rl = 'SKIP'; } }
-  // If ML is suppressed (dead zone or below threshold), suppress RL too
-  if (a.ml === 'SKIP' && (inDeadZone(a.mlEV) || (a.mlEV != null && a.mlEV >= minEV))) {
-    a.rl = 'SKIP';
-  }
+  // If ML is SKIP, suppress RL too
+  if (a.ml === 'SKIP') { a.rl = 'SKIP'; }
   if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
     const faded = [];
     for (const mkt of ['ml', 'rl']) { const v = a[mkt]; if (typeof v === 'string' && v !== 'SKIP' && v.endsWith(` ${sweepSide}`)) { faded.push(`${mkt.toUpperCase()} ${v}`); a[mkt] = 'SKIP'; } }
