@@ -3004,6 +3004,9 @@ async function loadGames(forceRefresh=false){
         proj_total: ml?.proj_total ?? g.proj_total,
         confidence: ml?.confidence ?? rl?.confidence ?? tot?.confidence ?? g.confidence,
         situations: (ml?.situations || rl?.situations || tot?.situations || g.situations),
+        ml_skipped_side: ml?.skipped_side ?? null,
+        rl_skipped_side: rl?.skipped_side ?? null,
+        tot_skipped_side: tot?.skipped_side ?? null,
         // mark as LLM-sourced for EV display
         _llmOverlay: true,
       };
@@ -3050,16 +3053,17 @@ function sitFlagHTML(sits,fadeReason){
   return validFlags.map(f=>{const key=f.toLowerCase().replace(/[^a-z_]/g,'');const info=map[key]||['sf-none',f.toLowerCase().replace(/_/g,' ').substring(0,20)];let label=info[1];if(key==='fade'&&fr)label+=' · '+fr.replace(/,/g,', ');return`<span class="sit-flag ${info[0]}">${label}</span>`;}).join('');
 }
 
-function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged,noMLConfirm){
+function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged,noMLConfirm,skippedSide){
   const v=verdict||'SKIP';
   const cls=v.startsWith('BET')?'mv-bet':v.includes('LEAN')?'mv-lean':v.includes('OVER')?'mv-over':v.includes('UNDER')?'mv-under':'mv-skip';
   const evHtml=ev!=null&&ev!==0?`<div class="ev-val ${ev>=0?'ev-pos':'ev-neg'}">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV</div>`:'';
   const lineHtml=line!=null&&projTotal!=null&&v!=='SKIP'?`<div style="font-size:9px;color:var(--text);font-family:DM Mono,monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>`:'';
   const breakHtml=breakeven&&v!=='SKIP'?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>`:'';
   const flagHtml=noMLConfirm?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:2px">⚠️ no ML confirmation</div>`:'';
-  const clickable=`style="cursor:pointer" onclick="quickLogLLM('${gId}','${label}','${v}',${ev||0},'${line||''}','${breakeven||''}')"` ;
+  const skipSideHtml=v==='SKIP'&&skippedSide?`<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--amber);margin-top:1px">${skippedSide}</div>`:'';
+  const clickable=`style="cursor:pointer" onclick="quickLogLLM('${gId}','${label}','${v}',${ev||0},'${line||''}','${breakeven||''}')"`;
   const check=logged?` <span style="color:var(--green);font-weight:700" title="Logged: ${String(logged).replace(/"/g,'&quot;')}">✓</span>`:'';
-  return`<div class="market-cell${isBest?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${lineHtml}${breakHtml}${flagHtml}</div>`;
+  return`<div class="market-cell${isBest?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${skipSideHtml}${lineHtml}${breakHtml}${flagHtml}</div>`;
 }
 function projInline(a,h,isSim){
   if(a==null||h==null)return`<span style="margin-left:auto;color:var(--text);font-size:10px;font-family:DM Mono,monospace">${isSim?'sim pending':''}</span>`;
@@ -3284,9 +3288,9 @@ function gameCardHTML(g){
   const marketsHTML=g.analyzed
     ?`${projInline(g.proj_away_runs,g.proj_home_runs,false)}
       <div class="markets">
-        ${marketCell('ML',llmMlV,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged['ML'],false)}
-        ${marketCell('RL',llmRlV,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged['RL'],false)}
-        ${marketCell('TOTAL',llmTotV,g.total_ev,g.best_market==='total',g.total,g.proj_total,g.total_breakeven,g.id,logged['TOTAL'],false)}
+        ${marketCell('ML',llmMlV,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged['ML'],false,g.ml_skipped_side)}
+        ${marketCell('RL',llmRlV,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged['RL'],false,g.rl_skipped_side)}
+        ${marketCell('TOTAL',llmTotV,g.total_ev,g.best_market==='total',g.total,g.proj_total,g.total_breakeven,g.id,logged['TOTAL'],false,g.tot_skipped_side)}
       </div>
       ${kalshiPanelHTML(g,bets)}`
     :`<div class="markets" style="opacity:.4">${['ML','RL','TOTAL'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
