@@ -176,6 +176,12 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
   { const side = pickSide([{ ev: evPct(pAwayRL, lines.awayRLOdds), label: 'AWAY', p: pAwayRL }, { ev: evPct(pHomeRL, lines.homeRLOdds), label: 'HOME', p: pHomeRL }]); if (side) { a.rlEV = side.ev; a.rlBreakeven = breakevenOdds(side.p); a.rl = vFor(side.ev, side.label); } else { a.rl = 'SKIP'; } }
   // If ML is SKIP, suppress RL too
   if (a.ml === 'SKIP') { a.rl = 'SKIP'; }
+  // If ML and RL are on different sides, suppress RL
+  else if (a.rl !== 'SKIP') {
+    const mlSide = a.ml.includes('AWAY') ? 'AWAY' : 'HOME';
+    const rlSide = a.rl.includes('AWAY') ? 'AWAY' : 'HOME';
+    if (mlSide !== rlSide) { a.rl = 'SKIP'; }
+  }
   if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
     const faded = [];
     for (const mkt of ['ml', 'rl']) { const v = a[mkt]; if (typeof v === 'string' && v !== 'SKIP' && v.endsWith(` ${sweepSide}`)) { faded.push(`${mkt.toUpperCase()} ${v}`); a[mkt] = 'SKIP'; } }
@@ -1720,9 +1726,26 @@ async function main() {
           continue;
         }
         const game1 = scheduleGames.find(s => s.awayId === awayTeamId && s.homeId === homeTeamId && s.gameNumber === 1);
-        if (game1 && game1.status === 'Live') {
-          console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — DH game 2, game 1 still live; skipping`);
-          continue;
+        if (game1) {
+          // Re-fetch game 1 status in real-time — schedule cache may be stale
+          try {
+            const g1Res = await fetch(`https://statsapi.mlb.com/api/v1/game/${game1.gamePk}/linescore`);
+            if (g1Res.ok) {
+              const g1Data = await g1Res.json();
+              const g1State = g1Data.currentInningOrdinal ? 'Live' : 'Preview';
+              const isComplete = g1Data.isComplete === true;
+              if (!isComplete && (game1.status === 'Live' || g1State === 'Live')) {
+                console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — DH game 2, game 1 still live; skipping`);
+                continue;
+              }
+            }
+          } catch(e) {
+            // Fallback to cached status
+            if (game1.status === 'Live') {
+              console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — DH game 2, game 1 still live (cached); skipping`);
+              continue;
+            }
+          }
         }
       }
       if (homeStatcast) console.log(`  Statcast ${homePitcherInfo.name}: velo ${homeStatcast.avgVelo} (${homeStatcast.veloTrend}), whiff ${homeStatcast.whiffRate}%, barrel ${homeStatcast.barrelRate}%`);
