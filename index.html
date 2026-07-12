@@ -4403,7 +4403,7 @@ async function loadLlmTracker() {
   document.getElementById('llmtracker-subtitle').textContent = 'Loading…';
   try {
     const [betsRes, gamesRes] = await Promise.all([
-      fetch(`${SUPABASE_URL}/rest/v1/llm_bets?select=*&order=created_at.desc&limit=500`, {
+      fetch(`${SUPABASE_URL}/rest/v1/llm_bets?ev=gt.0&select=*&order=created_at.desc&limit=500`, {
         headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
       }),
       fetch(`${SUPABASE_URL}/rest/v1/mlb_games?select=id,away_final,home_final,actual_total&away_final=not.is.null`, {
@@ -4516,19 +4516,27 @@ function renderLlmTracker() {
     const predStr = predA && predH ? predA+'-'+predH : '—';
     const sc = b._scores;
     const finalStr = sc ? sc.away_final+'-'+sc.home_final : '—';
+    // Line column — show specific play details
+    const mktL = (b.market||'').toLowerCase();
+    const verdictDir = v === 'SKIP' ? (b.skipped_side||'').replace(/^sweep:/,'') : v;
+    let lineDisplay = '—';
+    if (mktL === 'ml') {
+      const tn = verdictDir.includes('AWAY') ? teamAbbr(b.away_team) : verdictDir.includes('HOME') ? teamAbbr(b.home_team) : '—';
+      lineDisplay = tn + (b.odds ? ' ' + b.odds : '');
+    } else if (mktL === 'rl') {
+      const tn = verdictDir.includes('AWAY') ? teamAbbr(b.away_team) : verdictDir.includes('HOME') ? teamAbbr(b.home_team) : '—';
+      lineDisplay = tn + ' ' + (b.rl_line || '—');
+    } else if (mktL === 'total') {
+      const dir = verdictDir.includes('OVER') ? 'Over' : verdictDir.includes('UNDER') ? 'Under' : '—';
+      lineDisplay = dir + (b.total_line ? ' ' + b.total_line : '');
+    }
     return '<tr>'
       +'<td class="mono" style="font-size:11px">'+(b.game_date||'—')+'</td>'
       +'<td style="font-size:12px">'+b.away_team+' @ '+b.home_team+'</td>'
       +'<td class="mono" style="font-size:11px">'+((b.market||'').toUpperCase())+'</td>'
       +'<td style="font-size:12px" class="'+vCls+'">'+displayV+'</td>'
-      +(function(){
-        const mkt = (b.market||'').toLowerCase();
-        let line = '—';
-        if (mkt === 'ml') line = b.odds || '—';
-        else if (mkt === 'rl') line = b.rl_line || '—';
-        else if (mkt === 'total') line = b.total_line || '—';
-        return '<td class="mono" style="font-size:11px">'+line+'</td>';
-      })()
+      +'<td class="mono" style="font-size:11px">'+lineDisplay+'</td>'
+      +(v==='SKIP'&&b.result?'<td style="font-size:11px;font-weight:600;color:'+(b.result==='win'?'var(--green)':'var(--red)')+'">'+(b.result==='win'?'WIN':'LOSS')+'</td>':'<td style="font-size:11px;color:var(--text)">—</td>')
       +'<td class="mono" style="font-size:11px;color:var(--green)">'+(b.ev!=null?'+'+parseFloat(b.ev).toFixed(1)+'%':'—')+'</td>'
       +'<td class="mono" style="font-size:11px">'+(b.odds||'—')+'</td>'
       +'<td class="mono" style="font-size:11px">'+predStr+'</td>'
@@ -4539,7 +4547,7 @@ function renderLlmTracker() {
       +'</tr>';
   }).join('');
 
-  el.innerHTML = filterBar + '<table class="t-table" style="margin-top:12px"><thead><tr>'+th('game_date','Date')+th('away_team','Matchup')+th('market','Mkt')+th('verdict','Verdict')+'<th>Line</th>'+th('ev','EV')+th('odds','Odds')+th('proj_away_runs','Pred')+'<th>Final</th>'+th('confidence','Conf')+th('result','Result')+th('profit_loss','P/L')+'</tr></thead><tbody>'+(rows||'<tr><td colspan="12" style="text-align:center;padding:18px;color:var(--text)">No bets</td></tr>')+'</tbody></table>';
+  el.innerHTML = filterBar + '<table class="t-table" style="margin-top:12px"><thead><tr>'+th('game_date','Date')+th('away_team','Matchup')+th('market','Mkt')+th('verdict','Verdict')+'<th>Line</th>'+'<th>Skip result</th>'+th('ev','EV')+th('odds','Odds')+th('proj_away_runs','Pred')+'<th>Final</th>'+th('confidence','Conf')+th('result','Result')+th('profit_loss','P/L')+'</tr></thead><tbody>'+(rows||'<tr><td colspan="13" style="text-align:center;padding:18px;color:var(--text)">No bets</td></tr>')+'</tbody></table>';
 }
 
 function llmSetSort(col) {
@@ -4553,7 +4561,7 @@ async function settleLlmBetsClient(btn) {
   let settled = 0, errors = 0;
   try {
     // Fetch unsettled non-SKIP bets
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?result=is.null&verdict=not.eq.SKIP&select=*&limit=200`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?result=is.null&ev=gt.0&select=*&limit=200`, {
       headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
     });
     if (!res.ok) throw new Error('Fetch failed: ' + res.status);
@@ -4575,7 +4583,7 @@ async function settleLlmBetsClient(btn) {
       if (!g || g.away_final == null || g.home_final == null) continue;
       const af = parseFloat(g.away_final), hf = parseFloat(g.home_final);
       const tot = af + hf;
-      const v = bet.verdict || '';
+      const v = (bet.verdict === 'SKIP' ? (bet.skipped_side||'').replace(/^sweep:/,'') : bet.verdict) || '';
       let result = null;
 
       if (bet.market === 'ml') {
@@ -4595,15 +4603,16 @@ async function settleLlmBetsClient(btn) {
           result = homeCovers ? 'win' : ((hf - af) + hRL === 0 ? 'push' : 'loss');
         }
       } else if (bet.market === 'total') {
-        const line = parseFloat(g.total) || parseFloat(bet.proj_total);
+        const line = parseFloat(bet.total_line) || parseFloat(g.total) || parseFloat(bet.proj_total);
         if (!line) continue;
         if (v.includes('OVER')) result = tot > line ? 'win' : tot === line ? 'push' : 'loss';
         else if (v.includes('UNDER')) result = tot < line ? 'win' : tot === line ? 'push' : 'loss';
       }
 
       if (!result) continue;
+      const isSkip = bet.verdict === 'SKIP';
       const odds = parseFloat(bet.odds || -110);
-      const pl = result === 'win' ? (odds > 0 ? +(odds/100).toFixed(2) : +(100/Math.abs(odds)).toFixed(2)) : result === 'loss' ? -1 : 0;
+      const pl = isSkip ? null : (result === 'win' ? (odds > 0 ? +(odds/100).toFixed(2) : +(100/Math.abs(odds)).toFixed(2)) : result === 'loss' ? -1 : 0);
 
       const pr = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?id=eq.${bet.id}`, {
         method: 'PATCH',
