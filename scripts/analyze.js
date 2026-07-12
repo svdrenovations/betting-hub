@@ -1444,17 +1444,15 @@ async function settleLlmBets() {
         if (!result) continue;
         const odds = parseFloat(bet.odds || -110);
         let pl = 0;
+        if (result === 'win') pl = odds > 0 ? +(odds / 100).toFixed(2) : +(100 / Math.abs(odds)).toFixed(2);
+        else if (result === 'loss') pl = -1;
         const isSkip = bet.verdict === 'SKIP';
-        if (!isSkip) {
-          if (result === 'win') pl = odds > 0 ? +(odds / 100).toFixed(2) : +(100 / Math.abs(odds)).toFixed(2);
-          else if (result === 'loss') pl = -1;
-        }
         await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?id=eq.${bet.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'Prefer': 'return=minimal' },
-          body: JSON.stringify({ result, profit_loss: isSkip ? null : pl, settled_at: new Date().toISOString() })
+          body: JSON.stringify({ result, profit_loss: pl, settled_at: new Date().toISOString() })
         });
-        console.log(`  ✓ LLM ${isSkip?'[SKIP]':''} settled: ${bet.away_team} @ ${bet.home_team} ${bet.market.toUpperCase()} ${bet.verdict} → ${result}${isSkip?'':' ('+( pl >= 0 ? '+' : '')+pl+'u)'}`);
+        console.log(`  ✓ LLM ${isSkip?'[SKIP]':''} settled: ${bet.away_team} @ ${bet.home_team} ${bet.market.toUpperCase()} ${bet.verdict} → ${result} (${pl >= 0 ? '+' : ''}${pl}u)`);
 
       } catch(e) { console.log(`  LLM settle error for bet ${bet.id}: ${e.message}`); }
     }
