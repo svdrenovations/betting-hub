@@ -4518,7 +4518,7 @@ function renderLlmTracker() {
     const finalStr = sc ? sc.away_final+'-'+sc.home_final : '—';
     // Line column — show specific play details
     const mktL = (b.market||'').toLowerCase();
-    const verdictDir = v === 'SKIP' ? (b.skipped_side||'').replace(/^sweep:/,'') : v;
+    const verdictDir = verdict === 'SKIP' ? (b.skipped_side||'').replace(/^sweep:/,'') : verdict;
     let lineDisplay = '—';
     if (mktL === 'ml') {
       const tn = verdictDir.includes('AWAY') ? teamAbbr(b.away_team) : verdictDir.includes('HOME') ? teamAbbr(b.home_team) : '—';
@@ -4536,7 +4536,7 @@ function renderLlmTracker() {
       +'<td class="mono" style="font-size:11px">'+((b.market||'').toUpperCase())+'</td>'
       +'<td style="font-size:12px" class="'+vCls+'">'+displayV+'</td>'
       +'<td class="mono" style="font-size:11px">'+lineDisplay+'</td>'
-      +(v==='SKIP'&&b.result?'<td style="font-size:11px;font-weight:600;color:'+(b.result==='win'?'var(--green)':'var(--red)')+'">'+(b.result==='win'?'WIN':'LOSS')+'</td>':'<td style="font-size:11px;color:var(--text)">—</td>')
+      +(verdict==='SKIP'&&b.result?'<td style="font-size:11px;font-weight:600;color:'+(b.result==='win'?'var(--green)':'var(--red)')+'">'+(b.result==='win'?'WIN':'LOSS')+'</td>':'<td style="font-size:11px;color:var(--text)">—</td>')
       +'<td class="mono" style="font-size:11px;color:var(--green)">'+(b.ev!=null?'+'+parseFloat(b.ev).toFixed(1)+'%':'—')+'</td>'
       +'<td class="mono" style="font-size:11px">'+(b.odds||'—')+'</td>'
       +'<td class="mono" style="font-size:11px">'+predStr+'</td>'
