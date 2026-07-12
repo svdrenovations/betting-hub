@@ -4477,13 +4477,13 @@ function renderLlmTracker() {
 
   const filtered = llmBets.filter(passes);
   const isSkipFilter = llmFilter.verdict.length === 1 && llmFilter.verdict[0] === 'skip';
-  const settled = filtered.filter(b => b.result && (isSkipFilter ? b.verdict === 'SKIP' : b.verdict !== 'SKIP'));
+  const settled = filtered.filter(b => b.result);
   const wins = settled.filter(b => b.result === 'win').length;
   const losses = settled.filter(b => b.result === 'loss').length;
   const pushes = settled.filter(b => b.result === 'push').length;
   const pl = settled.reduce((s,b) => s + parseFloat(b.profit_loss||0), 0);
   const pct = settled.length ? Math.round(wins/settled.length*100) : 0;
-  const pending = filtered.filter(b => !b.result && (isSkipFilter ? b.verdict === 'SKIP' : b.verdict !== 'SKIP')).length;
+  const pending = filtered.filter(b => !b.result).length;
   const skipLabel = isSkipFilter ? ' [skip reference]' : '';
   sub.textContent = settled.length + ' settled · ' + wins + '-' + losses + (pushes?'-'+pushes+' push':'') + ' (' + pct + '%) · ' + (pl>=0?'+':'') + pl.toFixed(2) + 'u' + skipLabel + (pending ? ' · ' + pending + ' pending' : '');
 
