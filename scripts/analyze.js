@@ -179,14 +179,25 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
   const pAwayRL = a.rlAwayProb != null ? a.rlAwayProb / 100 : Math.max(0.02, pAway - 0.08);
   const pHomeRL = a.rlHomeProb != null ? a.rlHomeProb / 100 : Math.min(0.98, pHome + 0.08);
   { const side = pickSide([{ ev: evPct(pAwayRL, lines.awayRLOdds), label: 'AWAY', p: pAwayRL }, { ev: evPct(pHomeRL, lines.homeRLOdds), label: 'HOME', p: pHomeRL }]); if (side) { a.rlEV = side.ev; a.rlBreakeven = breakevenOdds(side.p); a.rl = vFor(side.ev, side.label, 'rl', null); } else { a.rl = 'SKIP'; } }
+  // If ML is SKIP, suppress RL too
+  if (a.ml === 'SKIP') { a.rl = 'SKIP'; }
   // If ML and RL are on different sides, suppress both
-  if (a.ml !== 'SKIP' && a.rl !== 'SKIP') {
+  else if (a.ml !== 'SKIP' && a.rl !== 'SKIP') {
     const mlSide = a.ml.includes('AWAY') ? 'AWAY' : 'HOME';
     const rlSide = a.rl.includes('AWAY') ? 'AWAY' : 'HOME';
     if (mlSide !== rlSide) { a.ml = 'SKIP'; a.rl = 'SKIP'; }
   }
-  // If ML is SKIP, suppress RL too
-  else if (a.ml === 'SKIP') { a.rl = 'SKIP'; }  if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
+  // If RL is SKIP but has positive EV on opposite side from ML, suppress ML
+  if (a.ml !== 'SKIP' && a.rl === 'SKIP' && (a.rlEV||0) > 0) {
+    // Determine which side has the RL EV (the fav side has negative RL point)
+    const rlEvSide = (a.rlAwayProb != null && a.rlHomeProb != null)
+      ? (a.rlAwayProb > a.rlHomeProb ? 'AWAY' : 'HOME')
+      : null;
+    if (rlEvSide) {
+      const mlSide = a.ml.includes('AWAY') ? 'AWAY' : 'HOME';
+      if (mlSide !== rlEvSide) { a.ml = 'SKIP'; }
+    }
+  }  if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
     const faded = [];
     for (const mkt of ['ml', 'rl']) { const v = a[mkt]; if (typeof v === 'string' && v !== 'SKIP' && v.endsWith(` ${sweepSide}`)) { faded.push(`${mkt.toUpperCase()} ${v}`); a[mkt] = 'SKIP'; } }
     if (faded.length) a.sweepFade = `sweep fade (${sweepSide} in position to sweep) — stood down: ${faded.join(', ')}`;
