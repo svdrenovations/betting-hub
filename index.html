@@ -4714,11 +4714,39 @@ function exportLlmCSV() {
     const gd = b.game_date||'';
     if (f.from && gd < f.from) return false;
     if (f.to && gd > f.to) return false;
+    if (f.evFrom !== '' && f.evFrom != null) { if (parseFloat(b.ev||0) < parseFloat(f.evFrom)) return false; }
+    if (f.evTo !== '' && f.evTo != null) { if (parseFloat(b.ev||0) > parseFloat(f.evTo)) return false; }
     return true;
   });
   if (!toExport.length) return;
-  const cols = ['game_date','away_team','home_team','market','verdict','ev','odds','proj_away_runs','proj_home_runs','proj_total','confidence','result','profit_loss','units','created_at'];
-  const rows = [cols.join(','), ...toExport.map(b => cols.map(c => JSON.stringify(b[c]??'')).join(','))];
+  function getLine(b) {
+    const mkt = (b.market||'').toLowerCase();
+    const v = b.verdict||'SKIP';
+    const dir = v==='SKIP' ? (b.skipped_side||'').replace(/^sweep:/,'') : v;
+    const tn = dir.includes('AWAY') ? teamAbbr(b.away_team) : dir.includes('HOME') ? teamAbbr(b.home_team) : '—';
+    if (mkt==='ml') return tn+(b.odds?' '+b.odds:'');
+    if (mkt==='rl') return tn+' '+(b.rl_line||'—');
+    if (mkt==='total') { const d=dir.includes('OVER')?'Over':dir.includes('UNDER')?'Under':'—'; return d+(b.total_line?' '+b.total_line:''); }
+    return '—';
+  }
+  const esc = v => '"'+String(v==null?'':v).replace(/"/g,'""')+'"';
+  const headers = ['game_date','matchup','market','verdict','line','ev','odds','confidence','proj','result','profit_loss'];
+  const rows = [
+    headers.join(','),
+    ...toExport.map(b => [
+      esc(b.game_date||''),
+      esc((b.away_team||'')+'@'+(b.home_team||'')),
+      esc(b.market||''),
+      esc(b.verdict||''),
+      esc(getLine(b)),
+      esc(b.ev||''),
+      esc(b.odds||''),
+      esc(b.confidence||''),
+      esc((b.proj_away_runs||'')+(b.proj_home_runs?'-'+b.proj_home_runs:'')),
+      esc(b.result||''),
+      esc(b.profit_loss||''),
+    ].join(','))
+  ];
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(rows.join('\n'));
   a.download = 'llm_bets_filtered.csv'; a.click();
