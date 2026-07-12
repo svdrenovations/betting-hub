@@ -4634,11 +4634,28 @@ async function settleLlmBetsClient(btn) {
 
 function exportLlmCSV() {
   if (!llmBets.length) return;
+  const f = llmFilter;
+  const toExport = llmBets.filter(b => {
+    if (f.market.length && !f.market.includes(llmMarketKey(b))) return false;
+    if (f.verdict.length && !f.verdict.includes((b.verdict||'').toLowerCase().split(' ')[0])) return false;
+    if (f.ev.length) {
+      const ev = parseFloat(b.ev||0);
+      const inRange = f.ev.some(r => { const [lo,hi] = r.split('-').map(Number); return ev>=lo && (hi?ev<hi:true); });
+      if (!inRange) return false;
+    }
+    if (f.conf.length && !f.conf.includes((b.confidence||'').toLowerCase())) return false;
+    if (f.situation.length && !f.situation.some(s => (b.situations||[]).map(x=>(x||'').toLowerCase()).includes(s))) return false;
+    const gd = b.game_date||'';
+    if (f.from && gd < f.from) return false;
+    if (f.to && gd > f.to) return false;
+    return true;
+  });
+  if (!toExport.length) return;
   const cols = ['game_date','away_team','home_team','market','verdict','ev','odds','proj_away_runs','proj_home_runs','proj_total','confidence','result','profit_loss','units','created_at'];
-  const rows = [cols.join(','), ...llmBets.map(b => cols.map(c => JSON.stringify(b[c]??'')).join(','))];
+  const rows = [cols.join(','), ...toExport.map(b => cols.map(c => JSON.stringify(b[c]??'')).join(','))];
   const a = document.createElement('a');
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(rows.join('\n'));
-  a.download = 'llm_bets.csv'; a.click();
+  a.download = 'llm_bets_filtered.csv'; a.click();
 }
 
 // ── LLM STATS ────────────────────────────────────────────────────────────────
