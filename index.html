@@ -4394,7 +4394,7 @@ async function loadLlmPage() {
 // ── LLM TRACKER ──────────────────────────────────────────────────────────────
 let llmBets = [];
 let llmSort = { col: 'created_at', dir: 'desc' };
-let llmFilter = { market: [], verdict: [], ev: [], conf: [], situation: [], from: '', to: '' };
+let llmFilter = { market: [], verdict: [], ev: [], conf: [], situation: [], from: '', to: '', evFrom: '', evTo: '' };
 function llmFilterToggle(key, v) { const a=llmFilter[key]; const i=a.indexOf(v); if(i>=0)a.splice(i,1); else a.push(v); renderLlmTracker(); renderLlmStats(llmBets, document.getElementById('llmstats-content')); }
 function llmFilterClear(key) { llmFilter[key]=[]; renderLlmTracker(); renderLlmStats(llmBets, document.getElementById('llmstats-content')); }
 function llmFilterDate(key, val) { llmFilter[key]=val; renderLlmTracker(); renderLlmStats(llmBets, document.getElementById('llmstats-content')); }
@@ -4418,6 +4418,41 @@ async function loadLlmTracker() {
   } catch(e) {
     document.getElementById('llmtracker-table').innerHTML = `<div class="empty-state"><div class="empty-title">Error: ${e.message}</div></div>`;
   }
+}
+
+let llmCalMonth = null; // {year, month} currently displayed
+function llmCalendarHTML(bets) {
+  const now = new Date();
+  if (!llmCalMonth) llmCalMonth = { year: now.getFullYear(), month: now.getMonth() };
+  const { year, month } = llmCalMonth;
+  const dayNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthName = new Date(year, month).toLocaleString('default', { month: 'long', year: 'numeric' });
+  // Build set of dates with plays
+  const datesWithPlays = new Set((bets||[]).map(b => b.game_date||''));
+  let cells = '';
+  for (let i = 0; i < firstDay; i++) cells += '<td></td>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const hasPlays = datesWithPlays.has(dateStr);
+    const isSelected = llmFilter.from === dateStr && llmFilter.to === dateStr;
+    const style = `cursor:${hasPlays?'pointer':'default'};padding:4px;text-align:center;border-radius:4px;font-size:11px;font-family:DM Mono,monospace;`
+      + (isSelected ? 'background:var(--green);color:#000;font-weight:700;' : hasPlays ? 'color:var(--green);' : 'color:var(--text);opacity:0.4;');
+    const click = hasPlays ? `onclick="llmFilter.from='${dateStr}';llmFilter.to='${dateStr}';renderLlmTracker()"` : '';
+    cells += `<td ${click} style="${style}">${d}</td>`;
+    if ((firstDay + d) % 7 === 0 && d !== daysInMonth) cells += '</tr><tr>';
+  }
+  return `<div style="margin-top:8px;background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:10px;display:inline-block;min-width:200px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <button class="filter-btn" style="padding:2px 8px" onclick="llmCalMonth.month--;if(llmCalMonth.month<0){llmCalMonth.month=11;llmCalMonth.year--;}renderLlmTracker()">‹</button>
+      <span style="font-size:12px;font-family:DM Mono,monospace;color:var(--text-primary)">${monthName}</span>
+      <button class="filter-btn" style="padding:2px 8px" onclick="llmCalMonth.month++;if(llmCalMonth.month>11){llmCalMonth.month=0;llmCalMonth.year++;}renderLlmTracker()">›</button>
+    </div>
+    <table style="border-collapse:collapse"><thead><tr>${dayNames.map(d=>`<th style="font-size:10px;color:var(--text);padding:2px 4px;text-align:center">${d}</th>`).join('')}</tr></thead>
+    <tbody><tr>${cells}</tr></tbody></table>
+    ${llmFilter.from?`<div style="text-align:center;margin-top:4px"><button class="filter-btn" style="font-size:10px;padding:2px 6px" onclick="llmFilter.from='';llmFilter.to='';renderLlmTracker()">Clear date</button></div>`:''}
+  </div>`;
 }
 
 function renderLlmTracker() {
@@ -4448,12 +4483,16 @@ function renderLlmTracker() {
   const evLabels = ['0\u20132.4%','2.5\u20134.9%','5\u20137.4%','7.5\u20139.9%','10\u201312.4%','12.5\u201314.9%','15\u201317.4%','17.5\u201319.9%','20\u201322.4%','22.5\u201324.9%','25%+'];
   const dateInp = (k) => '<input type="date" value="'+(llmFilter[k]||'')+'" onchange="llmFilterDate(\''+k+'\',this.value)" style="background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px;font-family:DM Mono,monospace">';
 
+  const evInp = (k,ph) => '<input type="number" step="0.1" min="0" max="100" placeholder="'+ph+'" value="'+(llmFilter[k]||'')+'" onchange="llmFilter[\''+k+'\']=this.value;renderLlmTracker()" style="width:60px;background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 6px;font-size:12px;font-family:DM Mono,monospace">';
+
   const filterBar = fb('market',['ml-fav','ml-dog','rl-minus','rl-plus','over','under'],['ML Fav','ML Dog','RL -1.5','RL +1.5','Over','Under'],'All mkts')
     + fb('verdict',['BET','LEAN','SKIP'],['BET','LEAN','SKIP'],'All verdicts')
     + fb('ev', evLabels, evLabels, 'Any EV')
+    + '<div class="tracker-filters" style="align-items:center;gap:6px"><span style="font-size:11px;color:var(--text);font-family:DM Mono,monospace">EV%</span>'+evInp('evFrom','min')+' <span style="color:var(--text)">–</span> '+evInp('evTo','max')+'<button class="filter-btn" onclick="llmFilter.evFrom=\'\';llmFilter.evTo=\'\';renderLlmTracker()">✕</button></div>'
     + fb('conf',['HIGH','MEDIUM','LOW'],['High','Medium','Low'],'Any conf')
     + fb('situation',['weather','fade','sharp','debut','series'],['Weather','Fade','Sharp','Debut','Series'],'Any situation')
-    + '<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>'+dateInp('from')+'<span style="font-size:11px;color:var(--text)">To</span>'+dateInp('to')+'</div>';
+    + '<div class="tracker-filters" style="align-items:center;gap:8px"><span style="font-size:11px;color:var(--text)">From</span>'+dateInp('from')+'<span style="font-size:11px;color:var(--text)">To</span>'+dateInp('to')+'</div>'
+    + llmCalendarHTML(llmBets);
 
   function passes(b) {
     const f = llmFilter;
@@ -4472,6 +4511,8 @@ function renderLlmTracker() {
     if (f.situation.length && !f.situation.some(s => (b.situations||[]).includes(s))) return false;
     if (f.from && (b.game_date||'') < f.from) return false;
     if (f.to && (b.game_date||'') > f.to) return false;
+    if (f.evFrom !== '' && f.evFrom != null && f.evFrom !== undefined) { if (parseFloat(b.ev||0) < parseFloat(f.evFrom)) return false; }
+    if (f.evTo !== '' && f.evTo != null && f.evTo !== undefined) { if (parseFloat(b.ev||0) > parseFloat(f.evTo)) return false; }
     return true;
   }
 
