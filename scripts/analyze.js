@@ -159,7 +159,7 @@ function buildJuiceTable(proj, direction, steps) { steps = steps || 5; const hal
 function pickSide(opts) { let best = null; for (const o of opts) { if (o.ev == null || isNaN(o.ev)) continue; if (!best || o.ev > best.ev) best = o; } return best; }
 function verdictFor(ev, sideLabel) { if (ev == null || isNaN(ev) || ev < VERDICT_LEAN) return 'SKIP'; return `${ev >= VERDICT_BET ? 'BET' : 'LEAN'} ${sideLabel}`; }
 
-function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LEAN, betEV = VERDICT_BET) {
+function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LEAN, betEV = VERDICT_BET, eraGap = null) {
   if (!a) return a;
   const DEAD_ZONE_LO = 14.8, DEAD_ZONE_HI = 17.4;
   const inDeadZone = (ev, market, odds) => {
@@ -196,6 +196,20 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
     if (rlEvSide) {
       const mlSide = a.ml.includes('AWAY') ? 'AWAY' : 'HOME';
       if (mlSide !== rlEvSide) { a.ml = 'SKIP'; }
+    }
+  }
+  // LOW confidence ML suppression rules (data-driven)
+  if (a.ml !== 'SKIP') {
+    const isLowConf = eraGap == null || eraGap < 1.0;
+    if (isLowConf) {
+      const mlSide2 = a.ml.includes('AWAY') ? 'AWAY' : 'HOME';
+      const mlOdds2 = parseFloat(mlSide2 === 'AWAY' ? lines.awayML : lines.homeML);
+      if (!isNaN(mlOdds2)) {
+        // LOW ML Fav: only keep -121 to -140
+        if (mlOdds2 < 0 && !(mlOdds2 >= -140 && mlOdds2 <= -121)) { a.ml = 'SKIP'; }
+        // LOW ML Dog: suppress +161 and higher
+        if (mlOdds2 > 0 && mlOdds2 >= 161) { a.ml = 'SKIP'; }
+      }
     }
   }  if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
     const faded = [];
@@ -2088,7 +2102,10 @@ async function main() {
       };
 
       deriveRunModel(effectiveAnalysis, lines);
-      deriveNumbers(effectiveAnalysis, lines, f5Lines, sweepSide, _gd, 8.0, 17.5);
+      const _awayBlended = awayPitcherInfo?.era ? (0.5*(awayPitcherInfo.fip||awayPitcherInfo.era)+0.3*awayPitcherInfo.era+0.2*(awayPitcherInfo.recentERA||awayPitcherInfo.era)) : null;
+      const _homeBlended = homePitcherInfo?.era ? (0.5*(homePitcherInfo.fip||homePitcherInfo.era)+0.3*homePitcherInfo.era+0.2*(homePitcherInfo.recentERA||homePitcherInfo.era)) : null;
+      const _eraGap = (_awayBlended && _homeBlended) ? Math.abs(_awayBlended - _homeBlended) : null;
+      deriveNumbers(effectiveAnalysis, lines, f5Lines, sweepSide, _gd, 8.0, 17.5, _eraGap);
 
       // ── LLM BETS — auto-log qualifying plays into llm_bets table ─────────
       try {
