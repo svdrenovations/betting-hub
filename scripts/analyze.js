@@ -162,18 +162,23 @@ function verdictFor(ev, sideLabel) { if (ev == null || isNaN(ev) || ev < VERDICT
 function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LEAN, betEV = VERDICT_BET) {
   if (!a) return a;
   const DEAD_ZONE_LO = 14.8, DEAD_ZONE_HI = 17.4;
-  const inDeadZone = (ev) => ev != null && !isNaN(ev) && ev >= DEAD_ZONE_LO && ev <= DEAD_ZONE_HI;
-  const vFor = (ev, label) => {
+  const inDeadZone = (ev, market, odds) => {
+    if (ev == null || isNaN(ev) || ev < DEAD_ZONE_LO || ev > DEAD_ZONE_HI) return false;
+    // Exception: ML favorites (negative odds) are exempt from dead zone
+    if (market === 'ml' && parseFloat(odds || 0) < 0) return false;
+    return true;
+  };
+  const vFor = (ev, label, market, odds) => {
     if (ev == null || isNaN(ev) || ev < minEV) return 'SKIP';
-    if (inDeadZone(ev)) return 'SKIP';
+    if (inDeadZone(ev, market, odds)) return 'SKIP';
     return `${ev >= betEV ? 'BET' : 'LEAN'} ${label}`;
   };
   const pAway = (a.mlAwayProb != null ? a.mlAwayProb : (a.awayWinPct != null ? a.awayWinPct : 50)) / 100;
   const pHome = (a.mlHomeProb != null ? a.mlHomeProb : (a.homeWinPct != null ? a.homeWinPct : 50)) / 100;
-  { const side = pickSide([{ ev: evPct(pAway, lines.awayML), label: 'AWAY', p: pAway }, { ev: evPct(pHome, lines.homeML), label: 'HOME', p: pHome }]); if (side) { a.mlEV = side.ev; a.mlBreakeven = breakevenOdds(side.p); a.ml = vFor(side.ev, side.label); } else { a.ml = 'SKIP'; } }
+  { const side = pickSide([{ ev: evPct(pAway, lines.awayML), label: 'AWAY', p: pAway }, { ev: evPct(pHome, lines.homeML), label: 'HOME', p: pHome }]); if (side) { a.mlEV = side.ev; a.mlBreakeven = breakevenOdds(side.p); const mlOdds = side.label === 'AWAY' ? lines.awayML : lines.homeML; a.ml = vFor(side.ev, side.label, 'ml', mlOdds); } else { a.ml = 'SKIP'; } }
   const pAwayRL = a.rlAwayProb != null ? a.rlAwayProb / 100 : Math.max(0.02, pAway - 0.08);
   const pHomeRL = a.rlHomeProb != null ? a.rlHomeProb / 100 : Math.min(0.98, pHome + 0.08);
-  { const side = pickSide([{ ev: evPct(pAwayRL, lines.awayRLOdds), label: 'AWAY', p: pAwayRL }, { ev: evPct(pHomeRL, lines.homeRLOdds), label: 'HOME', p: pHomeRL }]); if (side) { a.rlEV = side.ev; a.rlBreakeven = breakevenOdds(side.p); a.rl = vFor(side.ev, side.label); } else { a.rl = 'SKIP'; } }
+  { const side = pickSide([{ ev: evPct(pAwayRL, lines.awayRLOdds), label: 'AWAY', p: pAwayRL }, { ev: evPct(pHomeRL, lines.homeRLOdds), label: 'HOME', p: pHomeRL }]); if (side) { a.rlEV = side.ev; a.rlBreakeven = breakevenOdds(side.p); a.rl = vFor(side.ev, side.label, 'rl', null); } else { a.rl = 'SKIP'; } }
   // If ML is SKIP, suppress RL too
   if (a.ml === 'SKIP') { a.rl = 'SKIP'; }
   // If ML and RL are on different sides, suppress RL
@@ -181,8 +186,7 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
     const mlSide = a.ml.includes('AWAY') ? 'AWAY' : 'HOME';
     const rlSide = a.rl.includes('AWAY') ? 'AWAY' : 'HOME';
     if (mlSide !== rlSide) { a.rl = 'SKIP'; }
-  }
-  if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
+  }  if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
     const faded = [];
     for (const mkt of ['ml', 'rl']) { const v = a[mkt]; if (typeof v === 'string' && v !== 'SKIP' && v.endsWith(` ${sweepSide}`)) { faded.push(`${mkt.toUpperCase()} ${v}`); a[mkt] = 'SKIP'; } }
     if (faded.length) a.sweepFade = `sweep fade (${sweepSide} in position to sweep) — stood down: ${faded.join(', ')}`;
@@ -193,12 +197,12 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
     a.totalLine = postedTotal;
     const pOver = totalsProbOver(postedTotal, proj);
     const side = pickSide([{ ev: evPct(pOver, lines.overOdds), label: 'OVER', p: pOver, dir: 'Over' }, { ev: evPct(1 - pOver, lines.underOdds), label: 'UNDER', p: 1 - pOver, dir: 'Under' }]);
-    if (side) { a.totalEV = side.ev; const be = breakevenOdds(side.p); a.totalBreakeven = be ? `${side.dir} ${postedTotal} @ ${be}` : null; a.totalJuiceSensitivity = buildJuiceTable(proj, side.dir); a.total = vFor(side.ev, side.label); }
+    if (side) { a.totalEV = side.ev; const be = breakevenOdds(side.p); a.totalBreakeven = be ? `${side.dir} ${postedTotal} @ ${be}` : null; a.totalJuiceSensitivity = buildJuiceTable(proj, side.dir); a.total = vFor(side.ev, side.label, 'total', null); }
     else { a.total = 'SKIP'; }
   } else { a.total = 'SKIP'; }
   const f5proj = parseFloat(a.f5ProjTotal);
   const f5line = parseFloat(a.f5Line != null ? a.f5Line : (f5Lines && f5Lines.f5Total));
-  { const opts = []; if (f5proj > 0 && !isNaN(f5line)) { const pO = totalsProbOver(f5line, f5proj); opts.push({ ev: evPct(pO, f5Lines && f5Lines.f5OverOdds), label: 'OVER', p: pO, dir: 'Over' }); opts.push({ ev: evPct(1 - pO, f5Lines && f5Lines.f5UnderOdds), label: 'UNDER', p: 1 - pO, dir: 'Under' }); } opts.push({ ev: evPct(pAway, f5Lines && f5Lines.f5AwayML), label: 'AWAY' }); opts.push({ ev: evPct(pHome, f5Lines && f5Lines.f5HomeML), label: 'HOME' }); const side = pickSide(opts); if (side) { a.f5EV = side.ev; if (side.dir) { const be = breakevenOdds(side.p); a.f5Breakeven = be ? `${side.dir} ${f5line} @ ${be}` : null; a.f5JuiceSensitivity = buildJuiceTable(f5proj, side.dir, 3); } a.f5 = vFor(side.ev, side.label); } else { a.f5 = 'SKIP'; } }
+  { const opts = []; if (f5proj > 0 && !isNaN(f5line)) { const pO = totalsProbOver(f5line, f5proj); opts.push({ ev: evPct(pO, f5Lines && f5Lines.f5OverOdds), label: 'OVER', p: pO, dir: 'Over' }); opts.push({ ev: evPct(1 - pO, f5Lines && f5Lines.f5UnderOdds), label: 'UNDER', p: 1 - pO, dir: 'Under' }); } opts.push({ ev: evPct(pAway, f5Lines && f5Lines.f5AwayML), label: 'AWAY' }); opts.push({ ev: evPct(pHome, f5Lines && f5Lines.f5HomeML), label: 'HOME' }); const side = pickSide(opts); if (side) { a.f5EV = side.ev; if (side.dir) { const be = breakevenOdds(side.p); a.f5Breakeven = be ? `${side.dir} ${f5line} @ ${be}` : null; a.f5JuiceSensitivity = buildJuiceTable(f5proj, side.dir, 3); } a.f5 = vFor(side.ev, side.label, 'f5', null); } else { a.f5 = 'SKIP'; } }
   const evByMarket = { ml: a.mlEV, rl: a.rlEV, total: a.totalEV, f5: a.f5EV };
   let bestMkt = null, bestEv = -Infinity;
   for (const k of ['ml','rl','total','f5']) { if (a[k] === 'SKIP') continue; const e = evByMarket[k]; if (e != null && !isNaN(e) && e > bestEv) { bestEv = e; bestMkt = k; } }
@@ -982,7 +986,16 @@ function parseOddsData(game, opts = {}) {
   }
   const aProb = americanToProb(awayML), hProb = americanToProb(homeML);
   const aRLpt = parseFloat(awayRL), hRLpt = parseFloat(homeRL);
-  if (aProb != null && hProb != null && aProb !== hProb && !isNaN(aRLpt) && !isNaN(hRLpt) && (aRLpt < 0) !== (hRLpt < 0)) { const awayIsFav = aProb > hProb; if (awayIsFav !== (aRLpt < 0)) { [awayRL, homeRL] = [homeRL, awayRL]; [awayRLOdds, homeRLOdds] = [homeRLOdds, awayRLOdds]; } }
+  // Only apply RL invariant correction when ML favorite is significant (>57% implied prob)
+  // Near-even games can legitimately have the slight ML underdog as RL favorite
+  if (aProb != null && hProb != null && aProb !== hProb && !isNaN(aRLpt) && !isNaN(hRLpt) && (aRLpt < 0) !== (hRLpt < 0)) {
+    const awayIsFav = aProb > hProb;
+    const favProb = Math.max(aProb, hProb);
+    if (favProb > 0.57 && awayIsFav !== (aRLpt < 0)) {
+      [awayRL, homeRL] = [homeRL, awayRL];
+      [awayRLOdds, homeRLOdds] = [homeRLOdds, awayRLOdds];
+    }
+  }
   const lineAgeMin = lastUpdate ? Math.round((now - new Date(lastUpdate)) / 60000) : null;
   const stale = lineAgeMin != null && lineAgeMin > STALE_MIN;
   return {awayML,homeML,total,overOdds,underOdds,awayRL,homeRL,awayRLOdds,homeRLOdds,bookUsed,lastUpdate,lineAgeMin,stale,inPlaySkipped};
@@ -1381,7 +1394,7 @@ const _fmtAm = (p) => (p == null ? null : (p > 0 ? `+${p}` : `${p}`));
 const BOOK_ALIASES = { dk:'draftkings', fd:'fanduel', mgm:'betmgm', czr:'caesars', wh:'williamhill_us', williamhill:'williamhill_us', caesars:'williamhill_us', br:'betrivers', pb:'pointsbetus', pointsbet:'pointsbetus', espn:'espnbet', hardrock:'hardrockbet' };
 function normalizeBook(s){ return (s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
 function resolveBookKey(userBook, closingLines){ if(!userBook || !closingLines) return null; const n = normalizeBook(userBook), alias = BOOK_ALIASES[n] || n; for (const k of Object.keys(closingLines)){ const nk = normalizeBook(k), nt = normalizeBook(closingLines[k]?.title); if (nk === n || nk === alias || nt === n || nt === alias) return k; } return null; }
-function rlInvariant(rec){ const aProb = americanToProb(rec.away_ml), hProb = americanToProb(rec.home_ml); const aRLpt = parseFloat(rec.away_rl), hRLpt = parseFloat(rec.home_rl); if (aProb != null && hProb != null && aProb !== hProb && !isNaN(aRLpt) && !isNaN(hRLpt) && (aRLpt < 0) !== (hRLpt < 0)) { if ((aProb > hProb) !== (aRLpt < 0)) { [rec.away_rl, rec.home_rl] = [rec.home_rl, rec.away_rl]; [rec.away_rl_odds, rec.home_rl_odds] = [rec.home_rl_odds, rec.away_rl_odds]; } } }
+function rlInvariant(rec){ const aProb = americanToProb(rec.away_ml), hProb = americanToProb(rec.home_ml); const aRLpt = parseFloat(rec.away_rl), hRLpt = parseFloat(rec.home_rl); if (aProb != null && hProb != null && aProb !== hProb && !isNaN(aRLpt) && !isNaN(hRLpt) && (aRLpt < 0) !== (hRLpt < 0)) { const awayIsFav = aProb > hProb; const favProb = Math.max(aProb, hProb); if (favProb > 0.57 && (awayIsFav) !== (aRLpt < 0)) { [rec.away_rl, rec.home_rl] = [rec.home_rl, rec.away_rl]; [rec.away_rl_odds, rec.home_rl_odds] = [rec.home_rl_odds, rec.away_rl_odds]; } } }
 
 function buildClosingLines(game, f5game, commence){ const out = {}; const commenceT = commence ? new Date(commence) : null; const inPlay = (bm) => { const lu = bm.last_update ? new Date(bm.last_update) : null; return commenceT && lu && lu.getTime() > commenceT.getTime(); }; const rec = (bm) => out[bm.key] || (out[bm.key] = { title: bm.title || bm.key, last_update: bm.last_update || null }); for (const bm of (game.bookmakers||[])) { if (inPlay(bm)) continue; const r = rec(bm); for (const mkt of (bm.markets||[])) { if (mkt.key==='h2h') for (const o of mkt.outcomes){ if(o.name===game.away_team) r.away_ml=_fmtAm(o.price); if(o.name===game.home_team) r.home_ml=_fmtAm(o.price); } else if (mkt.key==='totals'){ const ov=mkt.outcomes.find(o=>o.name==='Over'), un=mkt.outcomes.find(o=>o.name==='Under'); if(ov && parseFloat(ov.point)>=6.5 && parseFloat(ov.point)<=13.5){ r.total=String(ov.point); r.over_odds=_fmtAm(ov.price); r.under_odds=un?_fmtAm(un.price):null; } } else if (mkt.key==='spreads') for (const o of mkt.outcomes){ if(o.name===game.away_team){ r.away_rl=_fmtAm(o.point); r.away_rl_odds=_fmtAm(o.price);} if(o.name===game.home_team){ r.home_rl=_fmtAm(o.point); r.home_rl_odds=_fmtAm(o.price);} } } } if (f5game) for (const bm of (f5game.bookmakers||[])) { if (inPlay(bm)) continue; const r = rec(bm); for (const mkt of (bm.markets||[])) { if (mkt.key==='h2h_h1') for (const o of mkt.outcomes){ if(o.name===f5game.away_team) r.f5_away_ml=_fmtAm(o.price); if(o.name===f5game.home_team) r.f5_home_ml=_fmtAm(o.price); } else if (mkt.key==='totals_h1'){ const ov=mkt.outcomes.find(o=>o.name==='Over'), un=mkt.outcomes.find(o=>o.name==='Under'); if(ov){ r.f5_total=String(ov.point); r.f5_over_odds=_fmtAm(ov.price); r.f5_under_odds=un?_fmtAm(un.price):null; } } } } for (const k in out) rlInvariant(out[k]); return out; }
 
@@ -2035,7 +2048,7 @@ async function main() {
       };
 
       deriveRunModel(effectiveAnalysis, lines);
-      deriveNumbers(effectiveAnalysis, lines, f5Lines, sweepSide, _gd, 10.0, 17.5);
+      deriveNumbers(effectiveAnalysis, lines, f5Lines, sweepSide, _gd, 8.0, 17.5);
 
       // ── LLM BETS — auto-log qualifying plays into llm_bets table ─────────
       try {
