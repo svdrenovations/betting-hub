@@ -1209,6 +1209,35 @@ The projTotal and f5ProjTotal are the most important numbers you produce — the
 
 
 // ── DETERMINISTIC CONFIDENCE FORMULA ─────────────────────────────────────────
+function computeMarketConfidence(market, { awayERA, homeERA, awayRecentERA, homeRecentERA, awayFIP, homeFIP, projMargin, projTotal, totalLine }) {
+  function blended(era, rec, fip) {
+    if (!era) return null;
+    return 0.5 * (fip || era) + 0.3 * era + 0.2 * (rec || era);
+  }
+  const ab = blended(awayERA, awayRecentERA, awayFIP);
+  const hb = blended(homeERA, homeRecentERA, homeFIP);
+  const eraGap = (ab != null && hb != null) ? Math.abs(ab - hb) : 0;
+  const plGap  = (projTotal != null && totalLine != null) ? Math.abs(projTotal - totalLine) : 0;
+
+  if (market === 'ml') {
+    if (eraGap >= 1.5 && eraGap < 2.0) return 'HIGH';
+    if (eraGap >= 1.0 && eraGap < 1.5) return 'MEDIUM';
+    return 'LOW';
+  }
+  if (market === 'rl') {
+    if (projMargin != null && projMargin < 0.75) return 'LOW';
+    if (eraGap >= 1.5 && eraGap < 2.0) return 'HIGH';
+    if (eraGap >= 1.0 && eraGap < 1.5) return 'MEDIUM';
+    return 'LOW';
+  }
+  if (market === 'total') {
+    if (plGap >= 1.0 && plGap < 1.5) return 'HIGH';
+    if (plGap >= 1.5) return 'MEDIUM';
+    return 'LOW';
+  }
+  return 'LOW';
+}
+
 function computeConfidence(analysis, lines) {
   if (!analysis) return 'LOW';
   let score = 0;
@@ -2068,6 +2097,17 @@ async function main() {
         ];
         for (const m of llmMarkets) {
           const ev = parseFloat(m.ev || 0);
+          const projMargin = (effectiveAnalysis.projAwayRuns != null && effectiveAnalysis.projHomeRuns != null)
+            ? Math.abs(parseFloat(effectiveAnalysis.projAwayRuns) - parseFloat(effectiveAnalysis.projHomeRuns))
+            : null;
+          const marketConf = computeMarketConfidence(m.market, {
+            awayERA: awayPitcherInfo?.era, homeERA: homePitcherInfo?.era,
+            awayRecentERA: awayPitcherInfo?.recentERA, homeRecentERA: homePitcherInfo?.recentERA,
+            awayFIP: awayPitcherInfo?.fip, homeFIP: homePitcherInfo?.fip,
+            projMargin,
+            projTotal: effectiveAnalysis.projTotal != null ? parseFloat(effectiveAnalysis.projTotal) : null,
+            totalLine: lines?.total != null ? parseFloat(lines.total) : null,
+          });
           const betRow = {
             game_id: game.id,
             game_date: new Date(game.commence_time).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }),
@@ -2082,7 +2122,7 @@ async function main() {
             proj_home_runs: effectiveAnalysis.projHomeRuns != null ? parseFloat(effectiveAnalysis.projHomeRuns) : null,
             proj_total: effectiveAnalysis.projTotal != null ? parseFloat(effectiveAnalysis.projTotal) : null,
             situations: (effectiveAnalysis.situations || []).filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase())),
-            confidence: effectiveAnalysis.confidence || 'LOW',
+            confidence: marketConf,
             rl_line: m.rl_line || null,
             total_line: m.total_line || null,
             skipped_side: m.skipped_side || null,
