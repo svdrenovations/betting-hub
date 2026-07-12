@@ -4582,6 +4582,7 @@ function renderLlmTracker() {
     }
     return '<tr>'
       +'<td class="mono" style="font-size:11px">'+(b.game_date||'—')+'</td>'
+      +'<td><input type="checkbox" class="llm-row-check" data-id="'+b.id+'" style="cursor:pointer;width:14px;height:14px"></td>'
       +'<td style="font-size:12px">'+b.away_team+' @ '+b.home_team+'</td>'
       +'<td class="mono" style="font-size:11px">'+((b.market||'').toUpperCase())+'</td>'
       +'<td style="font-size:12px" class="'+vCls+'">'+displayV+'</td>'
@@ -4597,7 +4598,24 @@ function renderLlmTracker() {
       +'</tr>';
   }).join('');
 
-  el.innerHTML = filterBar + '<table class="t-table" style="margin-top:12px"><thead><tr>'+th('game_date','Date')+th('away_team','Matchup')+th('market','Mkt')+th('verdict','Verdict')+'<th>Line</th>'+'<th>Skip result</th>'+th('ev','EV')+th('odds','Odds')+th('proj_away_runs','Pred')+'<th>Final</th>'+th('confidence','Conf')+th('result','Result')+th('profit_loss','P/L')+'</tr></thead><tbody>'+(rows||'<tr><td colspan="13" style="text-align:center;padding:18px;color:var(--text)">No bets</td></tr>')+'</tbody></table>';
+  el.innerHTML = filterBar + '<table class="t-table" style="margin-top:12px"><thead><tr><th><input type="checkbox" id="llm-check-all" onchange="document.querySelectorAll(\'.llm-row-check\').forEach(c=>c.checked=this.checked)" style="cursor:pointer;width:14px;height:14px"></th>'+th('game_date','Date')+th('away_team','Matchup')+th('market','Mkt')+th('verdict','Verdict')+'<th>Line</th>'+'<th>Skip result</th>'+th('ev','EV')+th('odds','Odds')+th('proj_away_runs','Pred')+'<th>Final</th>'+th('confidence','Conf')+th('result','Result')+th('profit_loss','P/L')+'</tr></thead><tbody>'+(rows||'<tr><td colspan="14" style="text-align:center;padding:18px;color:var(--text)">No bets</td></tr>')+'</tbody></table>';
+}
+
+async function deleteSelectedLlmBets() {
+  if (!requireUnlocked()) return;
+  const checked = [...document.querySelectorAll('.llm-row-check:checked')].map(c => c.dataset.id);
+  if (!checked.length) { alert('No rows selected.'); return; }
+  if (!confirm(`Delete ${checked.length} play${checked.length>1?'s':''}?`)) return;
+  try {
+    for (const id of checked) {
+      await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?id=eq.${id}`, {
+        method: 'DELETE',
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Prefer': 'return=minimal' }
+      });
+    }
+    llmBets = llmBets.filter(b => !checked.includes(b.id));
+    renderLlmTracker();
+  } catch(e) { alert('Error: ' + e.message); }
 }
 
 function llmSetSort(col) {
@@ -4866,6 +4884,7 @@ function renderLlmStats(bets, el) {
   <div class="topbar">
     <div class="topbar-left"><h2>LLM Tracker</h2><p id="llmtracker-subtitle">Auto-logged LLM plays</p></div>
     <div style="display:flex;gap:8px">
+      <button class="btn" onclick="deleteSelectedLlmBets()" style="background:var(--red);color:#fff">Delete selected</button>
       <button class="btn" onclick="settleLlmBetsClient(this)">Settle pending →</button>
       <button class="btn" onclick="exportLlmCSV()">Export CSV</button>
     </div>
