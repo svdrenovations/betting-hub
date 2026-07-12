@@ -4476,7 +4476,7 @@ function renderLlmTracker() {
   }
 
   const filtered = llmBets.filter(passes);
-  const isSkipFilter = f.verdict.length === 1 && f.verdict[0] === 'skip';
+  const isSkipFilter = llmFilter.verdict.length === 1 && llmFilter.verdict[0] === 'skip';
   const settled = filtered.filter(b => b.result && (isSkipFilter ? b.verdict === 'SKIP' : b.verdict !== 'SKIP'));
   const wins = settled.filter(b => b.result === 'win').length;
   const losses = settled.filter(b => b.result === 'loss').length;
