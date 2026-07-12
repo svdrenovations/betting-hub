@@ -3286,13 +3286,6 @@ function gameCardHTML(g){
 
   const skipSide = (side) => {
     if (!side) return null;
-    const s = side.replace(/^sweep:/,'');
-    if (s === 'AWAY') return teamAbbr(g.away_team);
-    if (s === 'HOME') return teamAbbr(g.home_team);
-    return side; // already a team name or OVER/UNDER
-  };
-  const skipSide = (side) => {
-    if (!side) return null;
     const s = (side||'').replace(/^sweep:/,'');
     if (s === 'AWAY') return teamAbbr(g.away_team);
     if (s === 'HOME') return teamAbbr(g.home_team);
