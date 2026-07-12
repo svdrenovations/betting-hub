@@ -3284,13 +3284,27 @@ function gameCardHTML(g){
   const isExpanded=expanded[g.id];
   const logged=loggedMarketsForGame(g);
 
+  const skipSide = (side) => {
+    if (!side) return null;
+    const s = side.replace(/^sweep:/,'');
+    if (s === 'AWAY') return teamAbbr(g.away_team);
+    if (s === 'HOME') return teamAbbr(g.home_team);
+    return side; // already a team name or OVER/UNDER
+  };
+  const skipSide = (side) => {
+    if (!side) return null;
+    const s = (side||'').replace(/^sweep:/,'');
+    if (s === 'AWAY') return teamAbbr(g.away_team);
+    if (s === 'HOME') return teamAbbr(g.home_team);
+    return side;
+  };
   const llmMlV=displayVerdict(g.ml_verdict,g),llmRlV=displayVerdict(g.rl_verdict,g),llmTotV=displayVerdict(g.total_verdict,g);
   const marketsHTML=g.analyzed
     ?`${projInline(g.proj_away_runs,g.proj_home_runs,false)}
       <div class="markets">
-        ${marketCell('ML',llmMlV,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged['ML'],false,g.ml_skipped_side)}
-        ${marketCell('RL',llmRlV,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged['RL'],false,g.rl_skipped_side)}
-        ${marketCell('TOTAL',llmTotV,g.total_ev,g.best_market==='total',g.total,g.proj_total,g.total_breakeven,g.id,logged['TOTAL'],false,g.tot_skipped_side)}
+        ${marketCell('ML',llmMlV,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged['ML'],false,skipSide(g.ml_skipped_side))}
+        ${marketCell('RL',llmRlV,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged['RL'],false,skipSide(g.rl_skipped_side))}
+        ${marketCell('TOTAL',llmTotV,g.total_ev,g.best_market==='total',g.total,g.proj_total,g.total_breakeven,g.id,logged['TOTAL'],false,skipSide(g.tot_skipped_side))}
       </div>
       ${kalshiPanelHTML(g,bets)}`
     :`<div class="markets" style="opacity:.4">${['ML','RL','TOTAL'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
