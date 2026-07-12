@@ -4476,14 +4476,16 @@ function renderLlmTracker() {
   }
 
   const filtered = llmBets.filter(passes);
-  const settled = filtered.filter(b => b.result && b.verdict !== 'SKIP');
+  const isSkipFilter = f.verdict.length === 1 && f.verdict[0] === 'skip';
+  const settled = filtered.filter(b => b.result && (isSkipFilter ? b.verdict === 'SKIP' : b.verdict !== 'SKIP'));
   const wins = settled.filter(b => b.result === 'win').length;
   const losses = settled.filter(b => b.result === 'loss').length;
   const pushes = settled.filter(b => b.result === 'push').length;
   const pl = settled.reduce((s,b) => s + parseFloat(b.profit_loss||0), 0);
   const pct = settled.length ? Math.round(wins/settled.length*100) : 0;
-  const pending = filtered.filter(b => !b.result && b.verdict !== 'SKIP').length;
-  sub.textContent = settled.length + ' settled · ' + wins + '-' + losses + (pushes?'-'+pushes+' push':'') + ' (' + pct + '%) · ' + (pl>=0?'+':'') + pl.toFixed(2) + 'u' + (pending ? ' · ' + pending + ' pending' : '');
+  const pending = filtered.filter(b => !b.result && (isSkipFilter ? b.verdict === 'SKIP' : b.verdict !== 'SKIP')).length;
+  const skipLabel = isSkipFilter ? ' [skip reference]' : '';
+  sub.textContent = settled.length + ' settled · ' + wins + '-' + losses + (pushes?'-'+pushes+' push':'') + ' (' + pct + '%) · ' + (pl>=0?'+':'') + pl.toFixed(2) + 'u' + skipLabel + (pending ? ' · ' + pending + ' pending' : '');
 
   const th = (col, label) => {
     const active = llmSort.col === col;
@@ -4612,7 +4614,7 @@ async function settleLlmBetsClient(btn) {
       if (!result) continue;
       const isSkip = bet.verdict === 'SKIP';
       const odds = parseFloat(bet.odds || -110);
-      const pl = isSkip ? null : (result === 'win' ? (odds > 0 ? +(odds/100).toFixed(2) : +(100/Math.abs(odds)).toFixed(2)) : result === 'loss' ? -1 : 0);
+      const pl = result === 'win' ? (odds > 0 ? +(odds/100).toFixed(2) : +(100/Math.abs(odds)).toFixed(2)) : result === 'loss' ? -1 : 0;
 
       const pr = await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?id=eq.${bet.id}`, {
         method: 'PATCH',
