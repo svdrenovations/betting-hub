@@ -178,7 +178,7 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
   { const side = pickSide([{ ev: evPct(pAway, lines.awayML), label: 'AWAY', p: pAway }, { ev: evPct(pHome, lines.homeML), label: 'HOME', p: pHome }]); if (side) { a.mlEV = side.ev; a.mlBreakeven = breakevenOdds(side.p); const mlOdds = side.label === 'AWAY' ? lines.awayML : lines.homeML; a.ml = vFor(side.ev, side.label, 'ml', mlOdds); } else { a.ml = 'SKIP'; } }
   const pAwayRL = a.rlAwayProb != null ? a.rlAwayProb / 100 : Math.max(0.02, pAway - 0.08);
   const pHomeRL = a.rlHomeProb != null ? a.rlHomeProb / 100 : Math.min(0.98, pHome + 0.08);
-  { const side = pickSide([{ ev: evPct(pAwayRL, lines.awayRLOdds), label: 'AWAY', p: pAwayRL }, { ev: evPct(pHomeRL, lines.homeRLOdds), label: 'HOME', p: pHomeRL }]); if (side) { a.rlEV = side.ev; a.rlBreakeven = breakevenOdds(side.p); a.rl = vFor(side.ev, side.label, 'rl', null); } else { a.rl = 'SKIP'; } }
+  { const side = pickSide([{ ev: evPct(pAwayRL, lines.awayRLOdds), label: 'AWAY', p: pAwayRL }, { ev: evPct(pHomeRL, lines.homeRLOdds), label: 'HOME', p: pHomeRL }]); if (side) { a.rlEV = side.ev; a.rlEvSide = side.label; a.rlBreakeven = breakevenOdds(side.p); a.rl = vFor(side.ev, side.label, 'rl', null); } else { a.rl = 'SKIP'; } }
   // If ML is SKIP, suppress RL too
   if (a.ml === 'SKIP') { a.rl = 'SKIP'; }
   // If ML and RL are on different sides, suppress both
@@ -187,16 +187,10 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
     const rlSide = a.rl.includes('AWAY') ? 'AWAY' : 'HOME';
     if (mlSide !== rlSide) { a.ml = 'SKIP'; a.rl = 'SKIP'; }
   }
-  // If RL is SKIP but has positive EV on opposite side from ML, suppress ML
-  if (a.ml !== 'SKIP' && a.rl === 'SKIP' && (a.rlEV||0) > 0) {
-    // Determine which side has the RL EV (the fav side has negative RL point)
-    const rlEvSide = (a.rlAwayProb != null && a.rlHomeProb != null)
-      ? (a.rlAwayProb > a.rlHomeProb ? 'AWAY' : 'HOME')
-      : null;
-    if (rlEvSide) {
-      const mlSide = a.ml.includes('AWAY') ? 'AWAY' : 'HOME';
-      if (mlSide !== rlEvSide) { a.ml = 'SKIP'; }
-    }
+  // If RL is SKIP but had positive EV on opposite side from ML, suppress ML
+  if (a.ml !== 'SKIP' && a.rl === 'SKIP' && (a.rlEV||0) > 0 && a.rlEvSide) {
+    const mlSide = a.ml.includes('AWAY') ? 'AWAY' : 'HOME';
+    if (mlSide !== a.rlEvSide) { a.ml = 'SKIP'; }
   }
   // LOW confidence ML suppression rules (data-driven)
   if (a.ml !== 'SKIP') {
