@@ -1726,6 +1726,37 @@ async function main() {
       } else if (awayPitcherInfo || homePitcherInfo) { pitcherStatus = 'partial'; }
       if (pitcherStatus === 'confirmed') console.log(`  ✓ Pitchers confirmed: ${awayPitcherInfo.name} @ ${homePitcherInfo.name} (gamePk ${awayPitcherInfo.gamePk})`);
 
+      // GATE 2b — doubleheader game 2: skip if game 1 still live OR more than 60 min before start
+      if (sg?.doubleHeader === 'Y' && sg?.gameNumber === 2) {
+        const minsToStart = (new Date(game.commence_time) - Date.now()) / 60000;
+        if (minsToStart > 60) {
+          console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — DH game 2, ${Math.round(minsToStart)}m until start; skipping`);
+          continue;
+        }
+        const game1 = scheduleGames.find(s => s.awayId === awayTeamId && s.homeId === homeTeamId && s.gameNumber === 1);
+        if (game1) {
+          // Re-fetch game 1 status in real-time — schedule cache may be stale
+          try {
+            const g1Res = await fetch(`https://statsapi.mlb.com/api/v1/game/${game1.gamePk}/linescore`);
+            if (g1Res.ok) {
+              const g1Data = await g1Res.json();
+              const g1State = g1Data.currentInningOrdinal ? 'Live' : 'Preview';
+              const isComplete = g1Data.isComplete === true;
+              if (!isComplete && (game1.status === 'Live' || g1State === 'Live')) {
+                console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — DH game 2, game 1 still live; skipping`);
+                continue;
+              }
+            }
+          } catch(e) {
+            // Fallback to cached status
+            if (game1.status === 'Live') {
+              console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — DH game 2, game 1 still live (cached); skipping`);
+              continue;
+            }
+          }
+        }
+      }
+
       // ── MINIMAL UPSERT — ensures a card exists for every game regardless of lineup status ──
       try {
         const _gd = new Date(game.commence_time).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
@@ -1782,37 +1813,6 @@ async function main() {
       // GATE 2 — both lineups must be confirmed
       const lineupsReady = (awayMatchups?.lineup?.length >= 9) && (homeMatchups?.lineup?.length >= 9);
       if (!lineupsReady) { console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — lineups not posted yet; skipping`); continue; }
-
-      // GATE 2b — doubleheader game 2: skip if game 1 still live OR more than 60 min before start
-      if (sg?.doubleHeader === 'Y' && sg?.gameNumber === 2) {
-        const minsToStart = (new Date(game.commence_time) - Date.now()) / 60000;
-        if (minsToStart > 60) {
-          console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — DH game 2, ${Math.round(minsToStart)}m until start; skipping`);
-          continue;
-        }
-        const game1 = scheduleGames.find(s => s.awayId === awayTeamId && s.homeId === homeTeamId && s.gameNumber === 1);
-        if (game1) {
-          // Re-fetch game 1 status in real-time — schedule cache may be stale
-          try {
-            const g1Res = await fetch(`https://statsapi.mlb.com/api/v1/game/${game1.gamePk}/linescore`);
-            if (g1Res.ok) {
-              const g1Data = await g1Res.json();
-              const g1State = g1Data.currentInningOrdinal ? 'Live' : 'Preview';
-              const isComplete = g1Data.isComplete === true;
-              if (!isComplete && (game1.status === 'Live' || g1State === 'Live')) {
-                console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — DH game 2, game 1 still live; skipping`);
-                continue;
-              }
-            }
-          } catch(e) {
-            // Fallback to cached status
-            if (game1.status === 'Live') {
-              console.log(`  ⏳ ${game.away_team} @ ${game.home_team} — DH game 2, game 1 still live (cached); skipping`);
-              continue;
-            }
-          }
-        }
-      }
       if (homeStatcast) console.log(`  Statcast ${homePitcherInfo.name}: velo ${homeStatcast.avgVelo} (${homeStatcast.veloTrend}), whiff ${homeStatcast.whiffRate}%, barrel ${homeStatcast.barrelRate}%`);
       if (awayMatchups?.avgOPS != null) console.log(`  Away lineup vs ${homePitcherInfo?.name}: OPS ${awayMatchups.avgOPS}, K% ${awayMatchups.kRate}`);
       else if (awayMatchups) console.log(`  Away lineup vs ${homePitcherInfo?.name}: no batter-vs-pitcher sample`);
