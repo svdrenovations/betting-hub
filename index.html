@@ -3006,6 +3006,9 @@ async function loadGames(forceRefresh=false){
         ml_confidence: ml?.confidence ?? null,
         rl_confidence: rl?.confidence ?? null,
         total_confidence: tot?.confidence ?? null,
+        ml_skip_reason: ml?.skip_reason ?? null,
+        rl_skip_reason: rl?.skip_reason ?? null,
+        total_skip_reason: tot?.skip_reason ?? null,
         situations: (ml?.situations || rl?.situations || tot?.situations || g.situations),
         ml_skipped_side: ml?.skipped_side ?? null,
         rl_skipped_side: rl?.skipped_side ?? null,
@@ -3056,7 +3059,7 @@ function sitFlagHTML(sits,fadeReason){
   return validFlags.map(f=>{const key=f.toLowerCase().replace(/[^a-z_]/g,'');const info=map[key]||['sf-none',f.toLowerCase().replace(/_/g,' ').substring(0,20)];let label=info[1];if(key==='fade'&&fr)label+=' · '+fr.replace(/,/g,', ');return`<span class="sit-flag ${info[0]}">${label}</span>`;}).join('');
 }
 
-function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged,noMLConfirm,skippedSide,confidence){
+function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged,noMLConfirm,skippedSide,confidence,skipReason){
   const v=verdict||'SKIP';
   const cls=v.startsWith('BET')?'mv-bet':v.includes('LEAN')?'mv-lean':v.includes('OVER')?'mv-over':v.includes('UNDER')?'mv-under':'mv-skip';
   const evHtml=ev!=null&&ev!==0?`<div class="ev-val ${ev>=0?'ev-pos':'ev-neg'}">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV</div>`:'';
@@ -3067,9 +3070,10 @@ function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged,
   const breakHtml=breakeven&&v!=='SKIP'?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>`:'';
   const flagHtml=noMLConfirm?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:2px">⚠️ no ML confirmation</div>`:'';
   const skipSideHtml=v==='SKIP'&&skippedSide?`<div style="font-size:10px;font-family:DM Mono,monospace;color:var(--amber);margin-top:1px">${skippedSide}</div>`:'';
+  const skipReasonHtml=v==='SKIP'&&skipReason?`<div style="font-size:9px;font-family:DM Mono,monospace;color:var(--text);margin-top:1px">${skipReason}</div>`:'';
   const clickable=`style="cursor:pointer" onclick="quickLogLLM('${gId}','${label}','${v}',${ev||0},'${line||''}','${breakeven||''}')"`;
   const check=logged?` <span style="color:var(--green);font-weight:700" title="Logged: ${String(logged).replace(/"/g,'&quot;')}">✓</span>`:'';
-  return`<div class="market-cell${isBest?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${confHtml}${skipSideHtml}${lineHtml}${breakHtml}${flagHtml}</div>`;
+  return`<div class="market-cell${isBest?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${confHtml}${skipSideHtml}${skipReasonHtml}${lineHtml}${breakHtml}${flagHtml}</div>`;
 }
 function projInline(a,h,isSim){
   if(a==null||h==null)return`<span style="margin-left:auto;color:var(--text);font-size:10px;font-family:DM Mono,monospace">${isSim?'sim pending':''}</span>`;
@@ -3301,9 +3305,9 @@ function gameCardHTML(g){
   const marketsHTML=g.analyzed
     ?`${projInline(g.proj_away_runs,g.proj_home_runs,false)}
       <div class="markets">
-        ${marketCell('ML',llmMlV,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged['ML'],false,skipSide(g.ml_skipped_side),g.ml_confidence)}
-        ${marketCell('RL',llmRlV,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged['RL'],false,skipSide(g.rl_skipped_side),g.rl_confidence)}
-        ${marketCell('TOTAL',llmTotV,g.total_ev,g.best_market==='total',g.total,g.proj_total,g.total_breakeven,g.id,logged['TOTAL'],false,skipSide(g.tot_skipped_side),g.total_confidence)}
+        ${marketCell('ML',llmMlV,g.ml_ev,g.best_market==='ml',null,null,g.ml_breakeven,g.id,logged['ML'],false,skipSide(g.ml_skipped_side),g.ml_confidence,g.ml_skip_reason)}
+        ${marketCell('RL',llmRlV,g.rl_ev,g.best_market==='rl',null,null,g.rl_breakeven,g.id,logged['RL'],false,skipSide(g.rl_skipped_side),g.rl_confidence,g.rl_skip_reason)}
+        ${marketCell('TOTAL',llmTotV,g.total_ev,g.best_market==='total',g.total,g.proj_total,g.total_breakeven,g.id,logged['TOTAL'],false,skipSide(g.tot_skipped_side),g.total_confidence,g.total_skip_reason)}
       </div>
       ${kalshiPanelHTML(g,bets)}`
     :`<div class="markets" style="opacity:.4">${['ML','RL','TOTAL'].map(m=>`<div class="market-cell"><div class="market-label">${m}</div><div class="market-val mv-skip">—</div></div>`).join('')}</div>`;
@@ -3565,7 +3569,9 @@ async function saveBet(){
   const book=document.getElementById('log-book').value;
   calcLiveEV();
   const ev=pendingLogEV!=null?pendingLogEV.toFixed(1):null;
-  const bet={id:Date.now(),date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,awayPitcher:g.away_pitcher,homePitcher:g.home_pitcher,type,odds:odds||'?',units,notes,ev,betLine:betLine||'',maxJuice:maxJuice||'',book:book||'',situations:(g.situations||[]).join(','),confidence:g.confidence||'',result:'pending'};
+  const mkKey=betMarketKey(type);
+  const marketConfidence=mkKey==='ML'?g.ml_confidence:mkKey==='RL'?g.rl_confidence:mkKey==='TOTAL'?g.total_confidence:g.confidence;
+  const bet={id:Date.now(),date:g.game_date,matchup:`${g.away_team} @ ${g.home_team}`,awayPitcher:g.away_pitcher,homePitcher:g.home_pitcher,type,odds:odds||'?',units,notes,ev,betLine:betLine||'',maxJuice:maxJuice||'',book:book||'',situations:(g.situations||[]).join(','),confidence:marketConfidence||'',result:'pending'};
   await saveBetToSupabase(bet);
   bets.unshift(bet);
   closeModal();
