@@ -1595,7 +1595,8 @@ function filterBarHTML(){
     +`<span class="filter-datelbl">from</span><input type="date" class="filter-date" value="${g.from||''}" onchange="setG('from',this.value)">`
     +`<span class="filter-datelbl">to</span><input type="date" class="filter-date" value="${g.to||''}" onchange="setG('to',this.value)">`
     +((g.from||g.to)?`<button class="filter-btn" onclick="clearDates()">clear dates</button>`:'')
-    +`</div>`;
+    +`</div>`
+    +trackerCalendarHTML(bets);
 }
 
 function kalshiFilterBarHTML() {
@@ -4471,6 +4472,41 @@ function llmCalendarHTML(bets) {
     <table style="border-collapse:collapse"><thead><tr>${dayNames.map(d=>`<th style="font-size:10px;color:var(--text);padding:2px 4px;text-align:center">${d}</th>`).join('')}</tr></thead>
     <tbody><tr>${cells}</tr></tbody></table>
     ${llmFilter.from?`<div style="text-align:center;margin-top:4px"><button class="filter-btn" style="font-size:10px;padding:2px 6px" onclick="llmFilter.from='';llmFilter.to='';renderLlmTracker()">Clear date</button></div>`:''}
+  </div>`;
+}
+
+let trackerCalMonth = null; // {year, month} currently displayed
+function trackerCalendarHTML(bets) {
+  const now = new Date();
+  if (!trackerCalMonth) trackerCalMonth = { year: now.getFullYear(), month: now.getMonth() };
+  const { year, month } = trackerCalMonth;
+  const dayNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthName = new Date(year, month).toLocaleString('default', { month: 'long', year: 'numeric' });
+  // Build set of dates with plays
+  const datesWithPlays = new Set((bets||[]).map(b => b.date||''));
+  let cells = '';
+  for (let i = 0; i < firstDay; i++) cells += '<td></td>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const hasPlays = datesWithPlays.has(dateStr);
+    const isSelected = gFilter.from === dateStr && gFilter.to === dateStr;
+    const style = `cursor:${hasPlays?'pointer':'default'};padding:4px;text-align:center;border-radius:4px;font-size:11px;font-family:DM Mono,monospace;`
+      + (isSelected ? 'background:var(--green);color:#000;font-weight:700;' : hasPlays ? 'color:var(--green);' : 'color:var(--text);opacity:0.4;');
+    const click = hasPlays ? `onclick="gFilter.from='${dateStr}';gFilter.to='${dateStr}';renderTracker();renderStats();"` : '';
+    cells += `<td ${click} style="${style}">${d}</td>`;
+    if ((firstDay + d) % 7 === 0 && d !== daysInMonth) cells += '</tr><tr>';
+  }
+  return `<div style="margin-top:8px;background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:10px;display:inline-block;min-width:200px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <button class="filter-btn" style="padding:2px 8px" onclick="trackerCalMonth.month--;if(trackerCalMonth.month<0){trackerCalMonth.month=11;trackerCalMonth.year--;}renderTracker()">‹</button>
+      <span style="font-size:12px;font-family:DM Mono,monospace;color:var(--text-primary)">${monthName}</span>
+      <button class="filter-btn" style="padding:2px 8px" onclick="trackerCalMonth.month++;if(trackerCalMonth.month>11){trackerCalMonth.month=0;trackerCalMonth.year++;}renderTracker()">›</button>
+    </div>
+    <table style="border-collapse:collapse"><thead><tr>${dayNames.map(d=>`<th style="font-size:10px;color:var(--text);padding:2px 4px;text-align:center">${d}</th>`).join('')}</tr></thead>
+    <tbody><tr>${cells}</tr></tbody></table>
+    ${gFilter.from?`<div style="text-align:center;margin-top:4px"><button class="filter-btn" style="font-size:10px;padding:2px 6px" onclick="clearDates()">Clear date</button></div>`:''}
   </div>`;
 }
 
