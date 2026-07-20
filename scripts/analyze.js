@@ -169,28 +169,28 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
     return true;
   };
   const vFor = (ev, label, market, odds) => {
-    if (ev == null || isNaN(ev) || ev < minEV) return 'SKIP';
-    if (inDeadZone(ev, market, odds)) return 'SKIP';
-    return `${ev >= betEV ? 'BET' : 'LEAN'} ${label}`;
+    if (ev == null || isNaN(ev) || ev < minEV) return { v: 'SKIP', reason: 'Below 8% EV' };
+    if (inDeadZone(ev, market, odds)) return { v: 'SKIP', reason: `Dead zone ${ev.toFixed(1)}%` };
+    return { v: `${ev >= betEV ? 'BET' : 'LEAN'} ${label}`, reason: null };
   };
   const pAway = (a.mlAwayProb != null ? a.mlAwayProb : (a.awayWinPct != null ? a.awayWinPct : 50)) / 100;
   const pHome = (a.mlHomeProb != null ? a.mlHomeProb : (a.homeWinPct != null ? a.homeWinPct : 50)) / 100;
-  { const side = pickSide([{ ev: evPct(pAway, lines.awayML), label: 'AWAY', p: pAway }, { ev: evPct(pHome, lines.homeML), label: 'HOME', p: pHome }]); if (side) { a.mlEV = side.ev; a.mlBreakeven = breakevenOdds(side.p); const mlOdds = side.label === 'AWAY' ? lines.awayML : lines.homeML; a.ml = vFor(side.ev, side.label, 'ml', mlOdds); } else { a.ml = 'SKIP'; } }
+  { const side = pickSide([{ ev: evPct(pAway, lines.awayML), label: 'AWAY', p: pAway }, { ev: evPct(pHome, lines.homeML), label: 'HOME', p: pHome }]); if (side) { a.mlEV = side.ev; a.mlBreakeven = breakevenOdds(side.p); const mlOdds = side.label === 'AWAY' ? lines.awayML : lines.homeML; const r = vFor(side.ev, side.label, 'ml', mlOdds); a.ml = r.v; a.mlSkipReason = r.reason; } else { a.ml = 'SKIP'; a.mlSkipReason = 'No edge'; } }
   const pAwayRL = a.rlAwayProb != null ? a.rlAwayProb / 100 : Math.max(0.02, pAway - 0.08);
   const pHomeRL = a.rlHomeProb != null ? a.rlHomeProb / 100 : Math.min(0.98, pHome + 0.08);
-  { const side = pickSide([{ ev: evPct(pAwayRL, lines.awayRLOdds), label: 'AWAY', p: pAwayRL }, { ev: evPct(pHomeRL, lines.homeRLOdds), label: 'HOME', p: pHomeRL }]); if (side) { a.rlEV = side.ev; a.rlEvSide = side.label; a.rlBreakeven = breakevenOdds(side.p); a.rl = vFor(side.ev, side.label, 'rl', null); } else { a.rl = 'SKIP'; } }
+  { const side = pickSide([{ ev: evPct(pAwayRL, lines.awayRLOdds), label: 'AWAY', p: pAwayRL }, { ev: evPct(pHomeRL, lines.homeRLOdds), label: 'HOME', p: pHomeRL }]); if (side) { a.rlEV = side.ev; a.rlEvSide = side.label; a.rlBreakeven = breakevenOdds(side.p); const r = vFor(side.ev, side.label, 'rl', null); a.rl = r.v; a.rlSkipReason = r.reason; } else { a.rl = 'SKIP'; a.rlSkipReason = 'No edge'; } }
   // If ML is SKIP, suppress RL too
-  if (a.ml === 'SKIP') { a.rl = 'SKIP'; }
+  if (a.ml === 'SKIP') { a.rl = 'SKIP'; a.rlSkipReason = 'ML skipped'; }
   // If ML and RL are on different sides, suppress both
   else if (a.ml !== 'SKIP' && a.rl !== 'SKIP') {
     const mlSide = a.ml.includes('AWAY') ? 'AWAY' : 'HOME';
     const rlSide = a.rl.includes('AWAY') ? 'AWAY' : 'HOME';
-    if (mlSide !== rlSide) { a.ml = 'SKIP'; a.rl = 'SKIP'; }
+    if (mlSide !== rlSide) { a.ml = 'SKIP'; a.rl = 'SKIP'; a.mlSkipReason = 'ML/RL conflict'; a.rlSkipReason = 'ML/RL conflict'; }
   }
   // If RL is SKIP but had positive EV on opposite side from ML, suppress ML
   if (a.ml !== 'SKIP' && a.rl === 'SKIP' && (a.rlEV||0) > 0 && a.rlEvSide) {
     const mlSide = a.ml.includes('AWAY') ? 'AWAY' : 'HOME';
-    if (mlSide !== a.rlEvSide) { a.ml = 'SKIP'; }
+    if (mlSide !== a.rlEvSide) { a.ml = 'SKIP'; a.mlSkipReason = 'RL conflict'; }
   }
   // LOW confidence ML suppression rules (data-driven)
   if (a.ml !== 'SKIP') {
@@ -199,15 +199,16 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
       const mlSide2 = a.ml.includes('AWAY') ? 'AWAY' : 'HOME';
       const mlOdds2 = parseFloat(mlSide2 === 'AWAY' ? lines.awayML : lines.homeML);
       if (!isNaN(mlOdds2)) {
+        const oddsStr = mlOdds2 > 0 ? `+${mlOdds2}` : `${mlOdds2}`;
         // LOW ML Fav: only keep -121 to -140
-        if (mlOdds2 < 0 && !(mlOdds2 >= -140 && mlOdds2 <= -121)) { a.ml = 'SKIP'; }
+        if (mlOdds2 < 0 && !(mlOdds2 >= -140 && mlOdds2 <= -121)) { a.ml = 'SKIP'; a.mlSkipReason = `LOW fav ${oddsStr}`; }
         // LOW ML Dog: suppress +161 and higher
-        if (mlOdds2 > 0 && mlOdds2 >= 161) { a.ml = 'SKIP'; }
+        if (mlOdds2 > 0 && mlOdds2 >= 161) { a.ml = 'SKIP'; a.mlSkipReason = `LOW dog ${oddsStr}`; }
       }
     }
   }  if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
     const faded = [];
-    for (const mkt of ['ml', 'rl']) { const v = a[mkt]; if (typeof v === 'string' && v !== 'SKIP' && v.endsWith(` ${sweepSide}`)) { faded.push(`${mkt.toUpperCase()} ${v}`); a[mkt] = 'SKIP'; } }
+    for (const mkt of ['ml', 'rl']) { const v = a[mkt]; if (typeof v === 'string' && v !== 'SKIP' && v.endsWith(` ${sweepSide}`)) { faded.push(`${mkt.toUpperCase()} ${v}`); a[mkt] = 'SKIP'; a[`${mkt}SkipReason`] = 'Sweep fade'; } }
     if (faded.length) a.sweepFade = `sweep fade (${sweepSide} in position to sweep) — stood down: ${faded.join(', ')}`;
   }
   const proj = parseFloat(a.projTotal);
@@ -216,12 +217,12 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
     a.totalLine = postedTotal;
     const pOver = totalsProbOver(postedTotal, proj);
     const side = pickSide([{ ev: evPct(pOver, lines.overOdds), label: 'OVER', p: pOver, dir: 'Over' }, { ev: evPct(1 - pOver, lines.underOdds), label: 'UNDER', p: 1 - pOver, dir: 'Under' }]);
-    if (side) { a.totalEV = side.ev; const be = breakevenOdds(side.p); a.totalBreakeven = be ? `${side.dir} ${postedTotal} @ ${be}` : null; a.totalJuiceSensitivity = buildJuiceTable(proj, side.dir); a.total = vFor(side.ev, side.label, 'total', null); }
-    else { a.total = 'SKIP'; }
-  } else { a.total = 'SKIP'; }
+    if (side) { a.totalEV = side.ev; const be = breakevenOdds(side.p); a.totalBreakeven = be ? `${side.dir} ${postedTotal} @ ${be}` : null; a.totalJuiceSensitivity = buildJuiceTable(proj, side.dir); const r = vFor(side.ev, side.label, 'total', null); a.total = r.v; a.totalSkipReason = r.reason; }
+    else { a.total = 'SKIP'; a.totalSkipReason = 'No edge'; }
+  } else { a.total = 'SKIP'; a.totalSkipReason = 'No projection'; }
   const f5proj = parseFloat(a.f5ProjTotal);
   const f5line = parseFloat(a.f5Line != null ? a.f5Line : (f5Lines && f5Lines.f5Total));
-  { const opts = []; if (f5proj > 0 && !isNaN(f5line)) { const pO = totalsProbOver(f5line, f5proj); opts.push({ ev: evPct(pO, f5Lines && f5Lines.f5OverOdds), label: 'OVER', p: pO, dir: 'Over' }); opts.push({ ev: evPct(1 - pO, f5Lines && f5Lines.f5UnderOdds), label: 'UNDER', p: 1 - pO, dir: 'Under' }); } opts.push({ ev: evPct(pAway, f5Lines && f5Lines.f5AwayML), label: 'AWAY' }); opts.push({ ev: evPct(pHome, f5Lines && f5Lines.f5HomeML), label: 'HOME' }); const side = pickSide(opts); if (side) { a.f5EV = side.ev; if (side.dir) { const be = breakevenOdds(side.p); a.f5Breakeven = be ? `${side.dir} ${f5line} @ ${be}` : null; a.f5JuiceSensitivity = buildJuiceTable(f5proj, side.dir, 3); } a.f5 = vFor(side.ev, side.label, 'f5', null); } else { a.f5 = 'SKIP'; } }
+  { const opts = []; if (f5proj > 0 && !isNaN(f5line)) { const pO = totalsProbOver(f5line, f5proj); opts.push({ ev: evPct(pO, f5Lines && f5Lines.f5OverOdds), label: 'OVER', p: pO, dir: 'Over' }); opts.push({ ev: evPct(1 - pO, f5Lines && f5Lines.f5UnderOdds), label: 'UNDER', p: 1 - pO, dir: 'Under' }); } opts.push({ ev: evPct(pAway, f5Lines && f5Lines.f5AwayML), label: 'AWAY' }); opts.push({ ev: evPct(pHome, f5Lines && f5Lines.f5HomeML), label: 'HOME' }); const side = pickSide(opts); if (side) { a.f5EV = side.ev; if (side.dir) { const be = breakevenOdds(side.p); a.f5Breakeven = be ? `${side.dir} ${f5line} @ ${be}` : null; a.f5JuiceSensitivity = buildJuiceTable(f5proj, side.dir, 3); } a.f5 = vFor(side.ev, side.label, 'f5', null).v; } else { a.f5 = 'SKIP'; } }
   const evByMarket = { ml: a.mlEV, rl: a.rlEV, total: a.totalEV, f5: a.f5EV };
   let bestMkt = null, bestEv = -Infinity;
   for (const k of ['ml','rl','total','f5']) { if (a[k] === 'SKIP') continue; const e = evByMarket[k]; if (e != null && !isNaN(e) && e > bestEv) { bestEv = e; bestMkt = k; } }
@@ -2145,6 +2146,7 @@ async function main() {
             proj_total: effectiveAnalysis.projTotal != null ? parseFloat(effectiveAnalysis.projTotal) : null,
             situations: (effectiveAnalysis.situations || []).filter(s => ['revenge','travel','sharp','weather','rest','series','fade','mustwin','debut'].includes((s||'').toLowerCase())),
             confidence: marketConf,
+            skip_reason: m.market === 'ml' ? effectiveAnalysis.mlSkipReason : m.market === 'rl' ? effectiveAnalysis.rlSkipReason : effectiveAnalysis.totalSkipReason,
             rl_line: m.rl_line || null,
             total_line: m.total_line || null,
             skipped_side: m.skipped_side || null,
@@ -2157,7 +2159,7 @@ async function main() {
             await fetch(`${SUPABASE_URL}/rest/v1/llm_bets?game_id=eq.${encodeURIComponent(game.id)}&market=eq.${m.market}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_SERVICE_KEY, 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` },
-              body: JSON.stringify({ verdict: betRow.verdict, ev: betRow.ev, odds: betRow.odds, proj_away_runs: betRow.proj_away_runs, proj_home_runs: betRow.proj_home_runs, proj_total: betRow.proj_total, situations: betRow.situations, confidence: betRow.confidence, rl_line: betRow.rl_line, total_line: betRow.total_line, skipped_side: betRow.skipped_side })
+              body: JSON.stringify({ verdict: betRow.verdict, ev: betRow.ev, odds: betRow.odds, proj_away_runs: betRow.proj_away_runs, proj_home_runs: betRow.proj_home_runs, proj_total: betRow.proj_total, situations: betRow.situations, confidence: betRow.confidence, skip_reason: betRow.skip_reason, rl_line: betRow.rl_line, total_line: betRow.total_line, skipped_side: betRow.skipped_side })
             });
           } else {
             await fetch(`${SUPABASE_URL}/rest/v1/llm_bets`, {
