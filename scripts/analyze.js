@@ -2110,7 +2110,7 @@ async function main() {
         const mlSkipSide = (effectiveAnalysis.ml||'')==='SKIP'
           ? (sweepFadeSide ? `sweep:${sweepFadeSide}` : ((effectiveAnalysis.mlEV||0)>0 ? (parseFloat(lines.awayML)>parseFloat(lines.homeML)?'HOME':'AWAY') : null)) : null;
         const rlSkipSide = (effectiveAnalysis.rl||'')==='SKIP'
-          ? (sweepFadeSide ? `sweep:${sweepFadeSide}` : ((effectiveAnalysis.rlEV||0)>0 ? (parseFloat(lines.awayRL)<0?'AWAY':'HOME') : null)) : null;
+          ? (sweepFadeSide ? `sweep:${sweepFadeSide}` : ((effectiveAnalysis.rlEV||0)>0 ? effectiveAnalysis.rlEvSide : null)) : null;
         const totSkipSide = (effectiveAnalysis.total||'')==='SKIP'
           ? ((effectiveAnalysis.totalEV||0)>0 ? 'OVER' : null) : null;
         const llmMarkets = [
