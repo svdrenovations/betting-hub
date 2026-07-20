@@ -3074,7 +3074,8 @@ function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged,
   const skipReasonHtml=v==='SKIP'&&skipReason?`<div style="font-size:9px;font-family:DM Mono,monospace;color:var(--text);margin-top:1px">${skipReason}</div>`:'';
   const clickable=`style="cursor:pointer" onclick="quickLogLLM('${gId}','${label}','${v}',${ev||0},'${line||''}','${breakeven||''}')"`;
   const check=logged?` <span style="color:var(--green);font-weight:700" title="Logged: ${String(logged).replace(/"/g,'&quot;')}">✓</span>`:'';
-  return`<div class="market-cell${isBest?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${skipSideHtml}${confHtml}${skipReasonHtml}${lineHtml}${breakHtml}${flagHtml}</div>`;
+  const isPlay=v.startsWith('BET')||v.includes('LEAN');
+  return`<div class="market-cell${isPlay?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${skipSideHtml}${confHtml}${skipReasonHtml}${lineHtml}${breakHtml}${flagHtml}</div>`;
 }
 function projInline(a,h,isSim){
   if(a==null||h==null)return`<span style="margin-left:auto;color:var(--text);font-size:10px;font-family:DM Mono,monospace">${isSim?'sim pending':''}</span>`;
