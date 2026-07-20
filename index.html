@@ -3065,7 +3065,7 @@ function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged,
   const evHtml=ev!=null&&ev!==0?`<div class="ev-val ${ev>=0?'ev-pos':'ev-neg'}">${ev>=0?'+':''}${parseFloat(ev).toFixed(1)}% EV</div>`:'';
   const confUC=(confidence||'').toUpperCase();
   const confColor=confUC==='HIGH'?'var(--green)':confUC==='MEDIUM'?'var(--amber)':confUC==='LOW'?'var(--blue)':null;
-  const confHtml=(confColor&&(v.startsWith('BET')||v.includes('LEAN')))?`<div style="font-size:9px;font-family:DM Mono,monospace;color:${confColor};margin-top:1px;font-weight:600">${confUC}</div>`:'';
+  const confHtml=(confColor&&(v.startsWith('BET')||v.includes('LEAN')||v==='SKIP'))?`<div style="font-size:9px;font-family:DM Mono,monospace;color:${confColor};margin-top:1px;font-weight:600">${confUC}</div>`:'';
   const lineHtml=line!=null&&projTotal!=null&&v!=='SKIP'?`<div style="font-size:9px;color:var(--text);font-family:DM Mono,monospace;margin-top:1px">line ${line} · proj ${parseFloat(projTotal).toFixed(1)}</div>`:'';
   const breakHtml=breakeven&&v!=='SKIP'?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:1px">max: ${breakeven}</div>`:'';
   const flagHtml=noMLConfirm?`<div style="font-size:9px;color:var(--amber);font-family:DM Mono,monospace;margin-top:2px">⚠️ no ML confirmation</div>`:'';
@@ -3073,7 +3073,7 @@ function marketCell(label,verdict,ev,isBest,line,projTotal,breakeven,gId,logged,
   const skipReasonHtml=v==='SKIP'&&skipReason?`<div style="font-size:9px;font-family:DM Mono,monospace;color:var(--text);margin-top:1px">${skipReason}</div>`:'';
   const clickable=`style="cursor:pointer" onclick="quickLogLLM('${gId}','${label}','${v}',${ev||0},'${line||''}','${breakeven||''}')"`;
   const check=logged?` <span style="color:var(--green);font-weight:700" title="Logged: ${String(logged).replace(/"/g,'&quot;')}">✓</span>`:'';
-  return`<div class="market-cell${isBest?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${confHtml}${skipSideHtml}${skipReasonHtml}${lineHtml}${breakHtml}${flagHtml}</div>`;
+  return`<div class="market-cell${isBest?' best':''}${logged?' logged':''}" ${clickable}><div class="market-label">${label}${check}</div><div class="market-val ${cls}">${v}</div>${evHtml}${skipSideHtml}${confHtml}${skipReasonHtml}${lineHtml}${breakHtml}${flagHtml}</div>`;
 }
 function projInline(a,h,isSim){
   if(a==null||h==null)return`<span style="margin-left:auto;color:var(--text);font-size:10px;font-family:DM Mono,monospace">${isSim?'sim pending':''}</span>`;
