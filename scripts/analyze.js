@@ -200,13 +200,30 @@ function deriveNumbers(a, lines, f5Lines, sweepSide, dateStr, minEV = VERDICT_LE
       const mlOdds2 = parseFloat(mlSide2 === 'AWAY' ? lines.awayML : lines.homeML);
       if (!isNaN(mlOdds2)) {
         const oddsStr = mlOdds2 > 0 ? `+${mlOdds2}` : `${mlOdds2}`;
-        // LOW ML Fav: only keep -121 to -140
-        if (mlOdds2 < 0 && !(mlOdds2 >= -140 && mlOdds2 <= -121)) { a.ml = 'SKIP'; a.mlSkipReason = `LOW fav ${oddsStr}`; }
+        // LOW ML Fav: only keep -121 to -140, and only if RL is BET/LEAN on the same side
+        if (mlOdds2 < 0) {
+          if (!(mlOdds2 >= -140 && mlOdds2 <= -121)) {
+            a.ml = 'SKIP'; a.mlSkipReason = `LOW fav ${oddsStr}`;
+          } else {
+            const rlIsPlay = a.rl !== 'SKIP' && (a.rl.startsWith('BET') || a.rl.includes('LEAN'));
+            const rlSide2 = rlIsPlay ? (a.rl.includes('AWAY') ? 'AWAY' : 'HOME') : null;
+            if (!rlIsPlay) { a.ml = 'SKIP'; a.mlSkipReason = `LOW fav ${oddsStr} — RL skip`; }
+            else if (rlSide2 !== mlSide2) { a.ml = 'SKIP'; a.mlSkipReason = `LOW fav ${oddsStr} — RL opposite`; }
+          }
+        }
         // LOW ML Dog: suppress +161 and higher
         if (mlOdds2 > 0 && mlOdds2 >= 161) { a.ml = 'SKIP'; a.mlSkipReason = `LOW dog ${oddsStr}`; }
       }
     }
-  }  if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
+  }
+
+  // Ensure RL is suppressed when ML is suppressed
+  if (a.ml === 'SKIP' && a.rl !== 'SKIP') {
+    a.rl = 'SKIP';
+    a.rlSkipReason = 'ML skipped';
+  }
+
+  if (sweepSide && (!dateStr || dateStr < SWEEP_FADE_UNTIL)) {
     const faded = [];
     for (const mkt of ['ml', 'rl']) { const v = a[mkt]; if (typeof v === 'string' && v !== 'SKIP' && v.endsWith(` ${sweepSide}`)) { faded.push(`${mkt.toUpperCase()} ${v}`); a[mkt] = 'SKIP'; a[`${mkt}SkipReason`] = 'Sweep fade'; } }
     if (faded.length) a.sweepFade = `sweep fade (${sweepSide} in position to sweep) — stood down: ${faded.join(', ')}`;
