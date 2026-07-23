@@ -4750,16 +4750,30 @@ async function settleLlmBetsClient(btn) {
 function exportLlmCSV() {
   if (!llmBets.length) return;
   const f = llmFilter;
+  function evBucket(ev) {
+    if (ev == null) return null;
+    const b = [
+      ['0\u20132.4%',0,2.5],['2.5\u20134.9%',2.5,5],['5\u20137.4%',5,7.5],['7.5\u20139.9%',7.5,10],
+      ['10\u201312.4%',10,12.5],['12.5\u201314.9%',12.5,15],['15\u201317.4%',15,17.5],['17.5\u201319.9%',17.5,20],
+      ['20\u201322.4%',20,22.5],['22.5\u201324.9%',22.5,25],['25%+',25,null]
+    ];
+    for (const [l,lo,hi] of b) { if (hi==null?ev>=lo:ev>=lo&&ev<hi) return l; }
+    return null;
+  }
   const toExport = llmBets.filter(b => {
     if (f.market.length && !f.market.includes(llmMarketKey(b))) return false;
-    if (f.verdict.length && !f.verdict.includes((b.verdict||'').toLowerCase().split(' ')[0])) return false;
-    if (f.ev.length) {
-      const ev = parseFloat(b.ev||0);
-      const inRange = f.ev.some(r => { const [lo,hi] = r.split('-').map(Number); return ev>=lo && (hi?ev<hi:true); });
-      if (!inRange) return false;
+    if (f.verdict.length) {
+      const v = b.verdict || 'SKIP';
+      const vType = v.startsWith('BET') ? 'BET' : v.startsWith('LEAN') ? 'LEAN' : 'SKIP';
+      if (!f.verdict.includes(vType)) return false;
     }
-    if (f.conf.length && !f.conf.includes((b.confidence||'').toLowerCase())) return false;
-    if (f.situation.length && !f.situation.some(s => (b.situations||[]).map(x=>(x||'').toLowerCase()).includes(s))) return false;
+    if (f.ev.length) {
+      const ev = parseFloat(b.ev);
+      const bkt = evBucket(isNaN(ev)?null:ev);
+      if (!bkt || !f.ev.includes(bkt)) return false;
+    }
+    if (f.conf.length && !f.conf.includes((b.confidence||'').toUpperCase())) return false;
+    if (f.situation.length && !f.situation.some(s => (b.situations||[]).includes(s))) return false;
     const gd = b.game_date||'';
     if (f.from && gd < f.from) return false;
     if (f.to && gd > f.to) return false;
